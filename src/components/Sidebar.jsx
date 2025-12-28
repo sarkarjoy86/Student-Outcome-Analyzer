@@ -1,4 +1,4 @@
-import { Upload, Network, Target, BarChart3 } from 'lucide-react'
+import { Upload, Network, Target, BarChart3, Award } from 'lucide-react'
 
 const Sidebar = ({ currentStep, setCurrentStep }) => {
   const menuItems = [
@@ -6,6 +6,8 @@ const Sidebar = ({ currentStep, setCurrentStep }) => {
     { id: 'coMapping', label: 'CO-PO Mapping', icon: Network },
     { id: 'kpi', label: 'KPI Config', icon: Target },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'allDetails', label: 'All Details', icon: BarChart3 },
+    { id: 'results', label: 'Results', icon: Award },
   ]
 
   return (
@@ -20,43 +22,29 @@ const Sidebar = ({ currentStep, setCurrentStep }) => {
       <nav className="space-y-2">
         {menuItems.map((item) => {
           const Icon = item.icon
-          const isActive = currentStep === item.id || (item.id === 'reports' && currentStep === 'allDetails')
+          const isActive = currentStep === item.id
           // Disable steps that require previous steps to be completed
-          const stepOrder = ['upload', 'coMapping', 'kpi', 'reports', 'allDetails']
+          const stepOrder = ['upload', 'coMapping', 'kpi', 'reports', 'allDetails', 'results']
           const currentIndex = stepOrder.indexOf(currentStep)
           const itemIndex = stepOrder.indexOf(item.id)
           const isDisabled = itemIndex > currentIndex + 1
           
           return (
-            <div key={item.id}>
-              <button
-                onClick={() => !isDisabled && setCurrentStep(item.id)}
-                disabled={isDisabled}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                  isActive
-                    ? 'bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold shadow-lg transform scale-105'
-                    : isDisabled
-                    ? 'text-gray-400 cursor-not-allowed opacity-50'
-                    : 'text-gray-700 hover:bg-green-50 hover:text-green-700 hover:shadow-md'
-                }`}
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
-              </button>
-              {item.id === 'reports' && (
-                <button
-                  onClick={() => setCurrentStep('allDetails')}
-                  className={`w-full flex items-center gap-3 px-4 py-2 ml-8 mt-2 rounded-xl transition-all duration-200 ${
-                    currentStep === 'allDetails'
-                      ? 'bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold shadow-lg'
-                      : 'text-gray-600 hover:bg-green-50 hover:text-green-700'
-                  }`}
-                >
-                  <BarChart3 size={18} />
-                  <span className="text-sm">All Details</span>
-                </button>
-              )}
-            </div>
+            <button
+              key={item.id}
+              onClick={() => !isDisabled && setCurrentStep(item.id)}
+              disabled={isDisabled}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                isActive
+                  ? 'bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold shadow-lg transform scale-105'
+                  : isDisabled
+                  ? 'text-gray-400 cursor-not-allowed opacity-50'
+                  : 'text-gray-700 hover:bg-green-50 hover:text-green-700 hover:shadow-md'
+              }`}
+            >
+              <Icon size={20} />
+              <span>{item.label}</span>
+            </button>
           )
         })}
       </nav>

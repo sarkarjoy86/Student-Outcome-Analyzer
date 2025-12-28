@@ -4,6 +4,7 @@ import ComprehensiveExcelUpload from './components/ComprehensiveExcelUpload'
 import COPOMapping from './components/COPOMapping'
 import KPIConfig from './components/KPIConfig'
 import ComprehensiveReports from './components/ComprehensiveReports'
+import Results from './components/Results'
 import { saveData, loadData, updateData } from './services/localStorageService'
 
 function App() {
@@ -124,6 +125,14 @@ function App() {
               kpiCO={kpiConfig.kpiCO}
               kpiPO={kpiConfig.kpiPO}
               initialViewMode="allDetails"
+            />
+          )}
+          {currentStep === 'results' && (
+            <Results
+              students={students}
+              marks={marksData}
+              assessments={assessments}
+              courseInfo={courseInfo}
             />
           )}
         </main>

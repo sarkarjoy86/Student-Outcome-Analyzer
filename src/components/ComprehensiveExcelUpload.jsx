@@ -12,6 +12,7 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
   const [courseTitle, setCourseTitle] = useState('')
   const [level, setLevel] = useState('')
   const [term, setTerm] = useState('')
+  const [semester, setSemester] = useState('')
   const [section, setSection] = useState('')
 
   const processFile = async (file) => {
@@ -80,6 +81,7 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
           courseTitle: courseTitle.trim(),
           level: level.trim() || null,
           term: term.trim() || null,
+          semester: semester.trim() || null,
           section: section.trim() || null,
         },
       }
@@ -132,7 +134,7 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Level <span className="text-gray-400 text-xs">(Optional)</span>
@@ -153,7 +155,19 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
                     type="text"
                     value={term}
                     onChange={(e) => setTerm(e.target.value)}
-                    placeholder="e.g., Fall 2024"
+                    placeholder="e.g., II"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white text-gray-700 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Semester <span className="text-gray-400 text-xs">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={semester}
+                    onChange={(e) => setSemester(e.target.value)}
+                    placeholder="e.g., Fall 2025"
                     className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white text-gray-700 font-medium"
                   />
                 </div>

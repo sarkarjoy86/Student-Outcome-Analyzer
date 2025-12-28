@@ -295,10 +295,11 @@ const ComprehensiveReports = ({
           </div>
           <button
             onClick={handleDownload}
-            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105"
+            className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105"
+            title="Download Report"
           >
             <Download size={20} />
-            Download Report
+            <span>Download Report</span>
           </button>
         </div>
 
@@ -347,10 +348,10 @@ const ComprehensiveReports = ({
               </h2>
               <button
                 onClick={() => downloadChartAsJPG('co-attainment-chart', 'CO_Attainment')}
-                className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                title="Download chart"
               >
                 <Download size={16} />
-                Download
               </button>
             </div>
             <div>
@@ -374,6 +375,7 @@ const ComprehensiveReports = ({
                 />
                 <YAxis 
                   domain={[0, 100]} 
+                  ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
                   tick={{ fill: '#1a5f3f', fontWeight: 'bold' }}
                   axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }}
                   label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }}
@@ -414,18 +416,18 @@ const ComprehensiveReports = ({
           </div>
 
           {/* PO Attainment Charts - Enhanced */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div id="po-bar-chart" className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div id="po-bar-chart" className="lg:col-span-3 bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
                   PROGRAM OUTCOMES (POs)
                 </h2>
                 <button
                   onClick={() => downloadChartAsJPG('po-bar-chart', 'PO_Attainment_Bar')}
-                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                  className="flex items-center justify-center p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
+                  title="Download chart"
                 >
                   <Download size={16} />
-                  Download
                 </button>
               </div>
               <div>
@@ -449,6 +451,7 @@ const ComprehensiveReports = ({
                   />
                   <YAxis 
                     domain={[0, 100]} 
+                    ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
                     tick={{ fill: '#1a5f3f', fontWeight: 'bold' }}
                     axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }}
                   />
@@ -487,17 +490,17 @@ const ComprehensiveReports = ({
               </div>
             </div>
 
-            <div id="po-radar-chart" className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+            <div id="po-radar-chart" className="lg:col-span-2 bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
                   PO Attainment Distribution (Radar Chart)
                 </h2>
                 <button
                   onClick={() => downloadChartAsJPG('po-radar-chart', 'PO_Attainment_Radar')}
-                  className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                  className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                  title="Download chart"
                 >
                   <Download size={16} />
-                  Download
                 </button>
               </div>
               <div>
@@ -677,18 +680,19 @@ const ComprehensiveReports = ({
                 
                 return (
                   <div key={studentId} className="space-y-6">
-                    <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+                    <div id={`student-chart-${studentId}`} className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
                       <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent mb-4">
                         {student.name} ({student.id})
                       </h2>
                       
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div id={`co-pie-${studentId}`}>
+                        <div>
                           <div className="flex items-center justify-between mb-3">
                             <h3 className="text-xl font-semibold text-gray-700">CO Attainment</h3>
                             <button
-                              onClick={() => downloadChartAsJPG(`co-pie-${studentId}`, `CO_Attainment_${student.name.replace(/\s+/g, '_')}`)}
-                              className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                              onClick={() => downloadChartAsJPG(`student-chart-${studentId}`, `CO_Attainment_${student.name.replace(/\s+/g, '_')}_${student.id}`)}
+                              className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                              title="Download chart"
                             >
                               <Download size={14} />
                             </button>
@@ -716,12 +720,13 @@ const ComprehensiveReports = ({
                           </div>
                         </div>
                         
-                        <div id={`po-radar-${studentId}`}>
+                        <div>
                           <div className="flex items-center justify-between mb-3">
                             <h3 className="text-xl font-semibold text-gray-700">PO Attainment</h3>
                             <button
-                              onClick={() => downloadChartAsJPG(`po-radar-${studentId}`, `PO_Attainment_${student.name.replace(/\s+/g, '_')}`)}
-                              className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                              onClick={() => downloadChartAsJPG(`student-chart-${studentId}`, `PO_Attainment_${student.name.replace(/\s+/g, '_')}_${student.id}`)}
+                              className="flex items-center justify-center p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
+                              title="Download chart"
                             >
                               <Download size={14} />
                             </button>
@@ -795,10 +800,10 @@ const ComprehensiveReports = ({
                   </h2>
                   <button
                     onClick={() => downloadChartAsJPG('comparison-line-chart', 'Student_Comparison_Line')}
-                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                    className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                    title="Download chart"
                   >
                     <Download size={16} />
-                    Download
                   </button>
                 </div>
                 <div>
@@ -824,6 +829,7 @@ const ComprehensiveReports = ({
                     />
                     <YAxis 
                       domain={[0, 100]} 
+                      ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
                       tick={{ fill: '#1a5f3f', fontWeight: 'bold' }}
                       axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }}
                       label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }}
@@ -866,10 +872,10 @@ const ComprehensiveReports = ({
                   </h2>
                   <button
                     onClick={() => downloadChartAsJPG('comparison-area-chart', 'Student_Comparison_Area')}
-                    className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                    className="flex items-center justify-center p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
+                    title="Download chart"
                   >
                     <Download size={16} />
-                    Download
                   </button>
                 </div>
                 <div>
@@ -894,6 +900,7 @@ const ComprehensiveReports = ({
                     />
                     <YAxis 
                       domain={[0, 100]} 
+                      ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
                       tick={{ fill: '#1a5f3f', fontWeight: 'bold' }}
                       axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }}
                       label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }}
@@ -936,9 +943,9 @@ const ComprehensiveReports = ({
       {viewMode === 'allDetails' && (
         <div className="space-y-6">
           {/* CO Mark Allocations and COs to POs Mapping - Side by Side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-10 gap-4">
             {/* CO Mark Allocations */}
-            <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+            <div className="lg:col-span-3 bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
               <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent mb-4">
                 Marks Allocations for Different COs
               </h2>
@@ -977,7 +984,7 @@ const ComprehensiveReports = ({
             </div>
 
             {/* COs to POs Mapping Table */}
-            <div className="bg-gradient-to-br from-white to-purple-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-purple-100">
+            <div className="lg:col-span-7 bg-gradient-to-br from-white to-purple-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-purple-100">
               <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-700 to-purple-500 bg-clip-text text-transparent mb-4">
                 COs to POs Mapping
               </h2>
@@ -1063,8 +1070,8 @@ const ComprehensiveReports = ({
                     assessments.assignments.forEach(a => allQuestions.push({ ...a, type: 'Assignment' }))
                     if (assessments.attendance) allQuestions.push({ ...assessments.attendance, name: 'Attendance', type: 'Attendance' })
                     if (assessments.performance) {
-                      // Ensure Performance is assigned to CO2
-                      const performanceCO = assessments.performance.co || 'CO2'
+                      // Show N/A if Performance is not assigned to any CO
+                      const performanceCO = assessments.performance.co || 'N/A'
                       allQuestions.push({ ...assessments.performance, name: 'Performance', type: 'Performance', co: performanceCO })
                     }
                     
@@ -1116,9 +1123,7 @@ const ComprehensiveReports = ({
                       assessments.assignments.forEach(a => allAssessments.push({ ...a, type: 'assignments' }))
                       if (assessments.attendance) allAssessments.push({ ...assessments.attendance, name: 'Attendance', type: 'attendance' })
                       if (assessments.performance) {
-                        // Ensure Performance is assigned to CO2
-                        const performanceCO = assessments.performance.co || 'CO2'
-                        allAssessments.push({ ...assessments.performance, name: 'Performance', type: 'performance', co: performanceCO })
+                        allAssessments.push({ ...assessments.performance, name: 'Performance', type: 'performance' })
                       }
                       return allAssessments.map((a, idx) => (
                         <th
@@ -1126,7 +1131,9 @@ const ComprehensiveReports = ({
                           className="px-4 py-3 text-center text-sm font-semibold text-gray-700 border border-gray-200 min-w-[100px]"
                         >
                           <div className="text-center">{a.name}</div>
-                          <div className="text-xs text-gray-500 text-center">({a.co || ''})</div>
+                          {a.co && (
+                            <div className="text-xs text-gray-500 text-center">({a.co})</div>
+                          )}
                         </th>
                       ))
                     })()}
@@ -1141,8 +1148,8 @@ const ComprehensiveReports = ({
                     assessments.assignments.forEach(a => allAssessments.push({ ...a, type: 'assignments' }))
                     if (assessments.attendance) allAssessments.push({ ...assessments.attendance, name: 'Attendance', type: 'attendance' })
                     if (assessments.performance) {
-                      // Ensure Performance is assigned to CO2
-                      const performanceCO = assessments.performance.co || 'CO2'
+                      // Show N/A if Performance is not assigned to any CO
+                      const performanceCO = assessments.performance.co || 'N/A'
                       allAssessments.push({ ...assessments.performance, name: 'Performance', type: 'performance', co: performanceCO })
                     }
                     

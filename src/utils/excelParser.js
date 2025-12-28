@@ -136,8 +136,10 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
       return cellStr.match(/^CT-\d+$/) || 
              cellStr.match(/^Q\d+$/) ||
              cellStr === 'ASSIGNMENT' || 
+             cellStr.includes('ASSIGNMENT') ||
              cellStr.includes('ATTENDANCE') || 
-             cellStr.includes('PERFORMANCE')
+             cellStr.includes('PERFORMANCE') ||
+             cellStr.includes('PERF')
     })
     
     if (hasAssessmentNames && nameRow === -1) {
@@ -216,11 +218,11 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
           maxMarks: maxMark,
           co: coValue, // Keep empty if no CO assigned
         }
-      } else if (nameUpper.includes('PERFORMANCE')) {
+      } else if (nameUpper.includes('PERFORMANCE') || nameUpper.includes('PERF')) {
         // Read CO from Excel, don't default to CO2
         // If no CO is assigned, it will remain empty
         config.performance = {
-          name: name,
+          name: 'Performance', // Standardize the name
           maxMarks: maxMark,
           co: coValue, // Keep empty if no CO assigned
         }
@@ -374,7 +376,7 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
       key: 'performance_Performance', 
       name: 'Performance', 
       type: 'performance',
-      searchPatterns: ['PERFORMANCE']
+      searchPatterns: ['PERFORMANCE', 'PERF', 'PERFORM']
     })
   }
   
@@ -422,7 +424,16 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
       // Try all search patterns for this assessment
       let matched = false
       for (const pattern of expected.searchPatterns) {
-        if (headerUpper === pattern || 
+        // For Performance and Attendance, be more flexible with matching
+        if (expected.type === 'performance' || expected.type === 'attendance') {
+          // Match if header contains the pattern (case-insensitive)
+          if (headerUpper.includes(pattern) || pattern.includes(headerUpper)) {
+            assessmentColMap[expected.key] = col
+            usedCols.add(col)
+            matched = true
+            break
+          }
+        } else if (headerUpper === pattern || 
             headerUpper.includes(pattern) ||
             pattern.includes(headerUpper)) {
           assessmentColMap[expected.key] = col
