@@ -190,6 +190,7 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
       if (!name || maxMark === 0) continue
 
       const nameUpper = name.toUpperCase()
+      // Only set CO if it's a valid number, otherwise leave as empty string
       const coValue = !isNaN(coNum) && coNum >= 1 && coNum <= 12 ? `CO${Math.floor(coNum)}` : ''
 
       // Store column position for this assessment
@@ -200,25 +201,28 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
         config.cts.push({
           name: name,
           maxMarks: maxMark,
-          co: coValue || 'CO1',
+          co: coValue, // Don't default - keep as assigned in Excel or empty
         })
       } else if (nameUpper === 'ASSIGNMENT' || nameUpper.includes('ASSIGNMENT')) {
         config.assignments.push({
           name: name,
           maxMarks: maxMark,
-          co: coValue || 'CO3',
+          co: coValue, // Don't default - keep as assigned in Excel or empty
         })
       } else if (nameUpper.includes('ATTENDANCE')) {
+        // Only add if attendance exists in Excel with max marks
         config.attendance = {
+          name: name,
           maxMarks: maxMark,
-          co: coValue || '', // Keep empty if no CO assigned
+          co: coValue, // Keep empty if no CO assigned
         }
       } else if (nameUpper.includes('PERFORMANCE')) {
-        // Use CO from Excel, don't default to CO2
-        // If no CO is assigned, it will remain empty (N/A)
+        // Read CO from Excel, don't default to CO2
+        // If no CO is assigned, it will remain empty
         config.performance = {
+          name: name,
           maxMarks: maxMark,
-          co: coValue || '', // Keep empty if no CO assigned
+          co: coValue, // Keep empty if no CO assigned
         }
       } else if (nameUpper.match(/^Q\d+$/)) {
         // Determine if this Q belongs to Mid Term or Final based on context
@@ -231,14 +235,14 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
           config.midTerm.push({
             name: name,
             maxMarks: maxMark,
-            co: coValue || 'CO1',
+            co: coValue,
           })
         } else {
           // Remaining Qs go to Final
           config.final.push({
             name: name,
             maxMarks: maxMark,
-            co: coValue || 'CO1',
+            co: coValue,
           })
         }
       }
@@ -356,8 +360,8 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
     searchPatterns: [asg.name.toUpperCase(), 'ASSIGNMENT']
   }))
   
-  // Add Attendance and Performance (after Assignments) - only if they exist in config
-  if (assessments.attendance && assessments.attendance.maxMarks > 0) {
+  // Add Attendance and Performance (after Assignments)
+  if (assessments.attendance) {
     expectedOrder.push({ 
       key: 'attendance_Attendance', 
       name: 'Attendance', 
@@ -365,7 +369,7 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
       searchPatterns: ['ATTENDANCE']
     })
   }
-  if (assessments.performance && assessments.performance.maxMarks > 0) {
+  if (assessments.performance) {
     expectedOrder.push({ 
       key: 'performance_Performance', 
       name: 'Performance', 

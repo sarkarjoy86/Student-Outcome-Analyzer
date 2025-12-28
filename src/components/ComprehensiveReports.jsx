@@ -24,6 +24,7 @@ import {
 import { Download, Users, TrendingUp } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { calculateAllAttainments, getCOMarkAllocations } from '../utils/comprehensiveCalculations'
+import { downloadChartAsJPG } from '../utils/chartDownload'
 
 // University color scheme: Green, Gold/Yellow, Blue
 const UNIVERSITY_COLORS = {
@@ -327,9 +328,17 @@ const ComprehensiveReports = ({
               <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
                 COURSE OUTCOMES (COs)
               </h2>
+              <button
+                onClick={() => downloadChartAsJPG('co-attainment-chart', 'CO_Attainment')}
+                className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+              >
+                <Download size={16} />
+                Download
+              </button>
             </div>
-            <ResponsiveContainer width="100%" height={450}>
-              <BarChart data={coChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <div id="co-attainment-chart">
+              <ResponsiveContainer width="100%" height={450}>
+                <BarChart data={coChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                 <defs>
                   <linearGradient id="colorPassMarks" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9}/>
@@ -382,16 +391,27 @@ const ComprehensiveReports = ({
                 />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
 
           {/* PO Attainment Charts - Enhanced */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent mb-4">
-                PROGRAM OUTCOMES (POs)
-              </h2>
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={poChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
+                  PROGRAM OUTCOMES (POs)
+                </h2>
+                <button
+                  onClick={() => downloadChartAsJPG('po-bar-chart', 'PO_Attainment_Bar')}
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                >
+                  <Download size={16} />
+                  Download
+                </button>
+              </div>
+              <div id="po-bar-chart">
+                <ResponsiveContainer width="100%" height={400}>
+                  <BarChart data={poChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                   <defs>
                     <linearGradient id="colorPOPassMarks" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9}/>
@@ -443,14 +463,25 @@ const ComprehensiveReports = ({
                   />
                 </BarChart>
               </ResponsiveContainer>
+              </div>
             </div>
 
             <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent mb-4">
-                PO Attainment Distribution (Radar Chart)
-              </h2>
-              <ResponsiveContainer width="100%" height={400}>
-                <RadarChart data={poRadarData}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
+                  PO Attainment Distribution (Radar Chart)
+                </h2>
+                <button
+                  onClick={() => downloadChartAsJPG('po-radar-chart', 'PO_Attainment_Radar')}
+                  className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                >
+                  <Download size={16} />
+                  Download
+                </button>
+              </div>
+              <div id="po-radar-chart">
+                <ResponsiveContainer width="100%" height={400}>
+                  <RadarChart data={poRadarData}>
                   <PolarGrid stroke="#e5e7eb" />
                   <PolarAngleAxis 
                     dataKey="subject" 
@@ -481,6 +512,7 @@ const ComprehensiveReports = ({
                   <Legend />
                 </RadarChart>
               </ResponsiveContainer>
+              </div>
             </div>
           </div>
 
@@ -631,45 +663,65 @@ const ComprehensiveReports = ({
                       
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div>
-                          <h3 className="text-xl font-semibold text-gray-700 mb-3">CO Attainment</h3>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <PieChart>
-                              <Pie
-                                data={coData}
-                                dataKey="value"
-                                nameKey="name"
-                                cx="50%"
-                                cy="50%"
-                                outerRadius={80}
-                                label={(entry) => `${entry.value.toFixed(1)}`}
-                              >
-                                {coData.map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                              </Pie>
-                              <Tooltip formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
-                              <Legend />
-                            </PieChart>
-                          </ResponsiveContainer>
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-xl font-semibold text-gray-700">CO Attainment</h3>
+                            <button
+                              onClick={() => downloadChartAsJPG(`co-pie-${studentId}`, `CO_Attainment_${student.name.replace(/\s+/g, '_')}`)}
+                              className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                            >
+                              <Download size={14} />
+                            </button>
+                          </div>
+                          <div id={`co-pie-${studentId}`}>
+                            <ResponsiveContainer width="100%" height={300}>
+                              <PieChart>
+                                <Pie
+                                  data={coData}
+                                  dataKey="value"
+                                  nameKey="name"
+                                  cx="50%"
+                                  cy="50%"
+                                  outerRadius={80}
+                                  label={(entry) => `${entry.value.toFixed(1)}`}
+                                >
+                                  {coData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
+                                <Legend />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
                         </div>
                         
                         <div>
-                          <h3 className="text-xl font-semibold text-gray-700 mb-3">PO Attainment</h3>
-                          <ResponsiveContainer width="100%" height={300}>
-                            <RadarChart data={poData}>
-                              <PolarGrid />
-                              <PolarAngleAxis dataKey="name" />
-                              <PolarRadiusAxis angle={90} domain={[0, 100]} />
-                              <Radar
-                                name="PO Attainment"
-                                dataKey="value"
-                                stroke="#4f46e5"
-                                fill="#4f46e5"
-                                fillOpacity={0.6}
-                              />
-                              <Tooltip />
-                            </RadarChart>
-                          </ResponsiveContainer>
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-xl font-semibold text-gray-700">PO Attainment</h3>
+                            <button
+                              onClick={() => downloadChartAsJPG(`po-radar-${studentId}`, `PO_Attainment_${student.name.replace(/\s+/g, '_')}`)}
+                              className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                            >
+                              <Download size={14} />
+                            </button>
+                          </div>
+                          <div id={`po-radar-${studentId}`}>
+                            <ResponsiveContainer width="100%" height={300}>
+                              <RadarChart data={poData}>
+                                <PolarGrid />
+                                <PolarAngleAxis dataKey="name" />
+                                <PolarRadiusAxis angle={90} domain={[0, 100]} />
+                                <Radar
+                                  name="PO Attainment"
+                                  dataKey="value"
+                                  stroke="#4f46e5"
+                                  fill="#4f46e5"
+                                  fillOpacity={0.6}
+                                />
+                                <Tooltip />
+                              </RadarChart>
+                            </ResponsiveContainer>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -716,11 +768,21 @@ const ComprehensiveReports = ({
           {selectedStudents.length > 0 && (
             <div className="space-y-6">
               <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent mb-4">
-                  Student Comparison - Line Chart
-                </h2>
-                <ResponsiveContainer width="100%" height={400}>
-                  <LineChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
+                    Student Comparison - Line Chart
+                  </h2>
+                  <button
+                    onClick={() => downloadChartAsJPG('comparison-line-chart', 'Student_Comparison_Line')}
+                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md"
+                  >
+                    <Download size={16} />
+                    Download
+                  </button>
+                </div>
+                <div id="comparison-line-chart">
+                  <ResponsiveContainer width="100%" height={400}>
+                    <LineChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <defs>
                       {selectedStudents.map((studentId, index) => {
                         const student = students.find((s) => s.id === studentId)
@@ -773,14 +835,25 @@ const ComprehensiveReports = ({
                     })}
                   </LineChart>
                 </ResponsiveContainer>
+                </div>
               </div>
 
               <div className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent mb-4">
-                  Student Comparison - Area Chart
-                </h2>
-                <ResponsiveContainer width="100%" height={400}>
-                  <AreaChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
+                    Student Comparison - Area Chart
+                  </h2>
+                  <button
+                    onClick={() => downloadChartAsJPG('comparison-area-chart', 'Student_Comparison_Area')}
+                    className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-md"
+                  >
+                    <Download size={16} />
+                    Download
+                  </button>
+                </div>
+                <div id="comparison-area-chart">
+                  <ResponsiveContainer width="100%" height={400}>
+                    <AreaChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <defs>
                       {selectedStudents.map((studentId, index) => {
                         const color = COLORS[index % COLORS.length]
@@ -832,6 +905,7 @@ const ComprehensiveReports = ({
                     })}
                   </AreaChart>
                 </ResponsiveContainer>
+                </div>
               </div>
             </div>
           )}

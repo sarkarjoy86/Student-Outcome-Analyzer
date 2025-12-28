@@ -1,7 +1,7 @@
 /**
  * Utility function to download charts as high-quality JPG images
  * @param {string} chartId - The ID of the chart container element
- * @param {string} filename - The filename for the downloaded image
+ * @param {string} filename - The filename for the downloaded image (without extension)
  */
 export const downloadChartAsJPG = (chartId, filename = 'chart') => {
   try {
@@ -94,4 +94,3 @@ export const downloadChartAsJPG = (chartId, filename = 'chart') => {
     console.error('Error downloading chart:', error)
   }
 }
-
