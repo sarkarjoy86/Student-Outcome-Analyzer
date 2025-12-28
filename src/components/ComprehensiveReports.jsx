@@ -323,7 +323,7 @@ const ComprehensiveReports = ({
       {viewMode === 'overview' && (
         <>
           {/* CO Attainment Chart - Enhanced */}
-          <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+          <div id="co-attainment-chart" className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
                 COURSE OUTCOMES (COs)
@@ -336,7 +336,7 @@ const ComprehensiveReports = ({
                 Download
               </button>
             </div>
-            <div id="co-attainment-chart">
+            <div>
               <ResponsiveContainer width="100%" height={450}>
                 <BarChart data={coChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                 <defs>
@@ -396,7 +396,7 @@ const ComprehensiveReports = ({
 
           {/* PO Attainment Charts - Enhanced */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
+            <div id="po-bar-chart" className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
                   PROGRAM OUTCOMES (POs)
@@ -409,7 +409,7 @@ const ComprehensiveReports = ({
                   Download
                 </button>
               </div>
-              <div id="po-bar-chart">
+              <div>
                 <ResponsiveContainer width="100%" height={400}>
                   <BarChart data={poChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                   <defs>
@@ -466,7 +466,7 @@ const ComprehensiveReports = ({
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+            <div id="po-radar-chart" className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
                   PO Attainment Distribution (Radar Chart)
@@ -479,7 +479,7 @@ const ComprehensiveReports = ({
                   Download
                 </button>
               </div>
-              <div id="po-radar-chart">
+              <div>
                 <ResponsiveContainer width="100%" height={400}>
                   <RadarChart data={poRadarData}>
                   <PolarGrid stroke="#e5e7eb" />
@@ -662,7 +662,7 @@ const ComprehensiveReports = ({
                       </h2>
                       
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div>
+                        <div id={`co-pie-${studentId}`}>
                           <div className="flex items-center justify-between mb-3">
                             <h3 className="text-xl font-semibold text-gray-700">CO Attainment</h3>
                             <button
@@ -672,7 +672,7 @@ const ComprehensiveReports = ({
                               <Download size={14} />
                             </button>
                           </div>
-                          <div id={`co-pie-${studentId}`}>
+                          <div>
                             <ResponsiveContainer width="100%" height={300}>
                               <PieChart>
                                 <Pie
@@ -695,7 +695,7 @@ const ComprehensiveReports = ({
                           </div>
                         </div>
                         
-                        <div>
+                        <div id={`po-radar-${studentId}`}>
                           <div className="flex items-center justify-between mb-3">
                             <h3 className="text-xl font-semibold text-gray-700">PO Attainment</h3>
                             <button
@@ -705,7 +705,7 @@ const ComprehensiveReports = ({
                               <Download size={14} />
                             </button>
                           </div>
-                          <div id={`po-radar-${studentId}`}>
+                          <div>
                             <ResponsiveContainer width="100%" height={300}>
                               <RadarChart data={poData}>
                                 <PolarGrid />
@@ -767,7 +767,7 @@ const ComprehensiveReports = ({
 
           {selectedStudents.length > 0 && (
             <div className="space-y-6">
-              <div className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
+              <div id="comparison-line-chart" className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-green-500 bg-clip-text text-transparent">
                     Student Comparison - Line Chart
@@ -780,7 +780,7 @@ const ComprehensiveReports = ({
                     Download
                   </button>
                 </div>
-                <div id="comparison-line-chart">
+                <div>
                   <ResponsiveContainer width="100%" height={400}>
                     <LineChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <defs>
@@ -838,7 +838,7 @@ const ComprehensiveReports = ({
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
+              <div id="comparison-area-chart" className="bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent">
                     Student Comparison - Area Chart
@@ -851,7 +851,7 @@ const ComprehensiveReports = ({
                     Download
                   </button>
                 </div>
-                <div id="comparison-area-chart">
+                <div>
                   <ResponsiveContainer width="100%" height={400}>
                     <AreaChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <defs>
