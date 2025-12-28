@@ -388,10 +388,6 @@ const ComprehensiveReports = ({
                   formatter={(value) => [`${parseFloat(value).toFixed(1)}%`, '']}
                   labelFormatter={(label) => `${label}`}
                 />
-                <Legend 
-                  wrapperStyle={{ paddingTop: '20px' }}
-                  iconType="rect"
-                />
                 <Bar 
                   dataKey={`Above Pass Marks (${targetPassMarks}%)`}
                   fill="url(#colorPassMarks)" 
@@ -465,10 +461,6 @@ const ComprehensiveReports = ({
                     }}
                     formatter={(value) => `${parseFloat(value).toFixed(1)}%`}
                     labelFormatter={(label) => `${label}`}
-                  />
-                  <Legend 
-                    wrapperStyle={{ paddingTop: '20px' }}
-                    iconType="rect"
                   />
                   <Bar 
                     dataKey={`Above Pass Marks (${targetPassMarks}%)`}
@@ -702,14 +694,14 @@ const ComprehensiveReports = ({
                             </button>
                           </div>
                           <div>
-                            <ResponsiveContainer width="100%" height={300}>
+                            <ResponsiveContainer width="100%" height={450}>
                               <PieChart>
                                 <Pie
                                   data={coData}
                                   dataKey="value"
                                   nameKey="name"
                                   cx="50%"
-                                  cy="50%"
+                                  cy="45%"
                                   outerRadius={80}
                                   label={(entry) => `${entry.value.toFixed(1)}`}
                                 >
@@ -718,7 +710,7 @@ const ComprehensiveReports = ({
                                   ))}
                                 </Pie>
                                 <Tooltip formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
-                                <Legend />
+                                <Legend wrapperStyle={{ paddingTop: '20px' }} />
                               </PieChart>
                             </ResponsiveContainer>
                           </div>
@@ -735,7 +727,7 @@ const ComprehensiveReports = ({
                             </button>
                           </div>
                           <div>
-                            <ResponsiveContainer width="100%" height={300}>
+                            <ResponsiveContainer width="100%" height={350}>
                               <RadarChart data={poData}>
                                 <PolarGrid />
                                 <PolarAngleAxis dataKey="name" />
