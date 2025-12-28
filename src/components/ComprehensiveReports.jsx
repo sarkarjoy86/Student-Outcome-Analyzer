@@ -51,6 +51,23 @@ const COLORS = [
   '#06b6d4',
 ]
 
+// Custom Legend Component to show color indicators
+const ColorLegend = ({ items }) => {
+  return (
+    <div className="flex flex-wrap gap-4 justify-center mt-4 pt-4 border-t border-gray-200">
+      {items.map((item, index) => (
+        <div key={index} className="flex items-center gap-2">
+          <div
+            className="w-4 h-4 rounded"
+            style={{ backgroundColor: item.color }}
+          />
+          <span className="text-sm font-medium text-gray-700">{item.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const ComprehensiveReports = ({
   students = [],
   marks = {},
@@ -391,6 +408,12 @@ const ComprehensiveReports = ({
                 />
               </BarChart>
             </ResponsiveContainer>
+            <ColorLegend 
+              items={[
+                { label: `Above Pass Marks (${targetPassMarks}%)`, color: UNIVERSITY_COLORS.lightBlue },
+                { label: `Above KPI (${kpiCO}%)`, color: UNIVERSITY_COLORS.lightGold }
+              ]}
+            />
             </div>
           </div>
 
@@ -463,6 +486,12 @@ const ComprehensiveReports = ({
                   />
                 </BarChart>
               </ResponsiveContainer>
+              <ColorLegend 
+                items={[
+                  { label: `Above Pass Marks (${targetPassMarks}%)`, color: UNIVERSITY_COLORS.lightBlue },
+                  { label: `Above KPI (${kpiPO}%)`, color: UNIVERSITY_COLORS.lightGold }
+                ]}
+              />
               </div>
             </div>
 

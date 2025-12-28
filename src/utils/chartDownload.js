@@ -18,6 +18,29 @@ export const downloadChartAsJPG = (containerId, filename = 'chart') => {
       // Clone container styles
       const clonedContainer = container.cloneNode(true)
       
+      // Remove download button from cloned container
+      const downloadButton = clonedContainer.querySelector('button')
+      if (downloadButton) {
+        downloadButton.style.display = 'none'
+      }
+      
+      // Fix title text rendering - remove gradient styling for better text capture
+      const titleElement = clonedContainer.querySelector('h2, h3')
+      if (titleElement) {
+        // Store original classes
+        const originalClass = titleElement.className
+        // Remove gradient classes that don't render in html2canvas
+        titleElement.className = titleElement.className
+          .replace(/bg-gradient-to-\w+/g, '')
+          .replace(/from-\w+-\d+/g, '')
+          .replace(/to-\w+-\d+/g, '')
+          .replace(/bg-clip-text/g, '')
+          .replace(/text-transparent/g, '')
+        // Apply solid text color for rendering
+        titleElement.style.color = '#1a5f3f'
+        titleElement.style.fontWeight = 'bold'
+      }
+      
       // Create temporary wrapper
       const tempWrapper = document.createElement('div')
       tempWrapper.style.position = 'absolute'
