@@ -8,5 +8,5 @@ export default defineConfig({
     port: 8080,
     strictPort: false,
   },
-  base: '/Student-Outcome-Analyzer',
+  base: '/Student-Outcome-Analyzer/',
 })

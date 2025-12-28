@@ -131,3 +131,29 @@ The system now expects Excel files with:
 - Visualization features unchanged
 - Individual student tracking unchanged
 
+## Deployment Status ✅
+
+### Live Website
+- **URL**: https://sarkarjoy86.github.io/Student-Outcome-Analyzer/
+- **Deployment Date**: December 28, 2025
+- **Platform**: GitHub Pages
+- **Build Tool**: Vite + React
+- **Status**: Successfully deployed and live
+
+### Deployment Details
+- Production build deployed using `npm run deploy`
+- All assets minified and optimized for GitHub Pages
+- Base path configured correctly in `vite.config.js`
+- Website accessible from the GitHub Pages URL
+
+### How to Deploy Updates
+```bash
+# Make changes to the code
+# Then run:
+npm run deploy
+
+# This automatically:
+# 1. Builds the project (npm run build)
+# 2. Deploys to gh-pages branch
+# 3. Website updates automatically on GitHub Pages
+```

@@ -16,13 +16,12 @@ const getAllAssessments = (assessments) => {
     all.push({ ...assessments.attendance, name: 'Attendance', type: 'attendance' })
   }
   if (assessments.performance) {
-    // Ensure Performance is always assigned to CO2 if not explicitly set
-    const performanceCO = assessments.performance.co || 'CO2'
+    // Use CO from Excel, don't default to CO2
     all.push({ 
       ...assessments.performance, 
       name: 'Performance', 
       type: 'performance',
-      co: performanceCO
+      co: assessments.performance.co || '' // Keep empty if no CO assigned
     })
   }
   

@@ -160,6 +160,16 @@ The system uses **localStorage** for data persistence. All data is automatically
 - Individual student data is tracked for detailed analysis and comparison
 - Data persists across page reloads and browser sessions
 
+## 🌐 Live Website
+
+**The application is now deployed and live!**
+
+- **URL**: https://sarkarjoy86.github.io/Student-Outcome-Analyzer/
+- **Deployment Method**: GitHub Pages
+- **Status**: ✅ Active and accessible
+
+You can access the live website directly without needing to run the development server locally.
+
 ## License
 
 MIT

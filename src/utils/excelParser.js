@@ -111,8 +111,8 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
     midTerm: [],
     final: [],
     assignments: [],
-    attendance: { maxMarks: 10, co: '' },
-    performance: { maxMarks: 10, co: '' },
+    attendance: null, // Only set if found in Excel
+    performance: null, // Only set if found in Excel
   }
   
   // Track column positions in the configuration section
@@ -211,15 +211,14 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
       } else if (nameUpper.includes('ATTENDANCE')) {
         config.attendance = {
           maxMarks: maxMark,
-          co: coValue || '',
+          co: coValue || '', // Keep empty if no CO assigned
         }
       } else if (nameUpper.includes('PERFORMANCE')) {
-        // Performance is always part of CO2 according to requirements
-        // If CO value is not found or is invalid, default to CO2
-        const performanceCO = (coValue && coValue !== '') ? coValue : 'CO2'
+        // Use CO from Excel, don't default to CO2
+        // If no CO is assigned, it will remain empty (N/A)
         config.performance = {
           maxMarks: maxMark,
-          co: performanceCO,
+          co: coValue || '', // Keep empty if no CO assigned
         }
       } else if (nameUpper.match(/^Q\d+$/)) {
         // Determine if this Q belongs to Mid Term or Final based on context
@@ -357,8 +356,8 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
     searchPatterns: [asg.name.toUpperCase(), 'ASSIGNMENT']
   }))
   
-  // Add Attendance and Performance (after Assignments)
-  if (assessments.attendance) {
+  // Add Attendance and Performance (after Assignments) - only if they exist in config
+  if (assessments.attendance && assessments.attendance.maxMarks > 0) {
     expectedOrder.push({ 
       key: 'attendance_Attendance', 
       name: 'Attendance', 
@@ -366,7 +365,7 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
       searchPatterns: ['ATTENDANCE']
     })
   }
-  if (assessments.performance) {
+  if (assessments.performance && assessments.performance.maxMarks > 0) {
     expectedOrder.push({ 
       key: 'performance_Performance', 
       name: 'Performance', 
