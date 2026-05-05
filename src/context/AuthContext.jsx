@@ -1,0 +1,272 @@
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+
+const AuthContext = createContext(null);
+const ADMIN_EMAIL = "admin@gmail.com";
+const ADMIN_PASSWORD = "Admin@123";
+const ADMIN_SESSION_KEY = "obe-admin-session";
+
+function parseErrorMessage(error, fallback) {
+  if (error?.responseMessage) return error.responseMessage;
+  if (error?.message) return error.message;
+  return fallback;
+}
+
+function normalizeEmail(email = "") {
+  return String(email)
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+async function apiRequest(path, options = {}) {
+  const { headers, ...rest } = options;
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: { 
+      "Content-Type": "application/json", 
+      ...(headers || {}) 
+    },
+    ...rest,
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || "Request failed.");
+    error.responseMessage = data.message;
+    throw error;
+  }
+
+  return data;
+}
+
+function getAdminHeaders() {
+  return {
+    "x-admin-email": ADMIN_EMAIL,
+    "x-admin-password": ADMIN_PASSWORD,
+  };
+}
+
+function isAdminSessionActive() {
+  return localStorage.getItem(ADMIN_SESSION_KEY) === "true";
+}
+
+function setAdminSession(active) {
+  if (active) {
+    localStorage.setItem(ADMIN_SESSION_KEY, "true");
+  } else {
+    localStorage.removeItem(ADMIN_SESSION_KEY);
+  }
+}
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [message, setMessage] = useState({ type: "", text: "" });
+
+  useEffect(() => {
+    if (!message.text) return undefined;
+    const timer = setTimeout(() => setMessage({ type: "", text: "" }), 2800);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  const setSuccess = (text) => setMessage({ type: "success", text });
+  const setError = (text) => setMessage({ type: "error", text });
+
+  const loadAdminUsers = async () => {
+    const data = await apiRequest("/api/auth/admin/users", {
+      headers: getAdminHeaders(),
+    });
+    setUsers(data.users || []);
+  };
+
+  const refreshAuth = async () => {
+    setAuthLoading(true);
+    try {
+      if (isAdminSessionActive()) {
+        setUser({
+          id: "admin-local",
+          fullName: "System Admin",
+          email: ADMIN_EMAIL,
+          role: "admin",
+        });
+        await loadAdminUsers();
+        return;
+      }
+      const status = await apiRequest("/api/auth/status");
+      if (!status.authenticated) {
+        setUser(null);
+        setUsers([]);
+        return;
+      }
+      const me = await apiRequest("/api/auth/me");
+      setUser(me.user || null);
+      setUsers([]);
+    } catch {
+      setUser(null);
+      setUsers([]);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshAuth();
+  }, []);
+
+  const login = async (payload) => {
+    setActionLoading(true);
+    try {
+      const normalizedEmail = normalizeEmail(payload.email);
+      if (
+        normalizedEmail === ADMIN_EMAIL &&
+        payload.password === ADMIN_PASSWORD
+      ) {
+        setAdminSession(true);
+        setUser({
+          id: "admin-local",
+          fullName: "System Admin",
+          email: ADMIN_EMAIL,
+          role: "admin",
+        });
+        await loadAdminUsers();
+        setSuccess("Admin login successful.");
+        return;
+      }
+      setAdminSession(false);
+      const data = await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: normalizedEmail,
+          password: payload.password,
+        }),
+      });
+      setUser(data.user || null);
+      setUsers([]);
+      setSuccess("Login successful.");
+    } catch (error) {
+      setError(parseErrorMessage(error, "Login failed."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    setActionLoading(true);
+    try {
+      if (isAdminSessionActive()) {
+        setAdminSession(false);
+      } else {
+        await apiRequest("/api/auth/logout", { method: "POST" });
+      }
+      setUser(null);
+      setUsers([]);
+      setSuccess("Logged out successfully.");
+    } catch (error) {
+      setError(parseErrorMessage(error, "Logout failed."));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const changePassword = async ({ oldPassword = "", newPassword = "" }) => {
+    setActionLoading(true);
+    try {
+      const data = await apiRequest("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ oldPassword, newPassword }),
+      });
+      setSuccess(data.message || "Password changed successfully.");
+      return data;
+    } catch (error) {
+      setError(parseErrorMessage(error, "Password change failed."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const createUser = async ({ email = "", password = "", fullName = "" }) => {
+    setActionLoading(true);
+    try {
+      const normalizedEmail = normalizeEmail(email);
+      if (!normalizedEmail) throw new Error("Email is required.");
+      
+      const data = await apiRequest("/api/auth/admin/users", {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({
+          fullName: fullName.trim(),
+          email: normalizedEmail,
+          password,
+        }),
+      });
+      
+      setSuccess(data.message || "User created successfully.");
+      
+      try {
+        await loadAdminUsers();
+      } catch (loadError) {
+        console.error("User created but failed to refresh list:", loadError);
+      }
+      
+      return data.user;
+    } catch (error) {
+      setError(parseErrorMessage(error, "Failed to create user."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const adminResetPassword = async ({ email = "", newPassword = "" }) => {
+    setActionLoading(true);
+    try {
+      const normalizedEmail = normalizeEmail(email);
+      if (!normalizedEmail) throw new Error("Email is required.");
+      const data = await apiRequest("/api/auth/admin/users/reset-password", {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({ email: normalizedEmail, newPassword }),
+      });
+      await loadAdminUsers();
+      setSuccess(data.message || "User password updated successfully.");
+      return data;
+    } catch (error) {
+      setError(parseErrorMessage(error, "Password reset failed."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const value = useMemo(
+    () => ({
+      user,
+      users,
+      authLoading,
+      actionLoading,
+      message,
+      login,
+      logout,
+      changePassword,
+      createUser,
+      adminResetPassword,
+      refreshAuth,
+      adminCredentials: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    }),
+    [user, users, authLoading, actionLoading, message],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth must be used inside AuthProvider");
+  return context;
+}
