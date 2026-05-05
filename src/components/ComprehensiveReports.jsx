@@ -368,14 +368,14 @@ const ComprehensiveReports = ({
                 </div>
                 <div>
                   <ResponsiveContainer width="100%" height={450}>
-                    <BarChart data={(() => { return Array.from({ length: 12 }, (_, i) => { const co = `CO${i + 1}`; let below50 = 0, between50_79 = 0, above80 = 0; const hasData = students.some(s => (calculations.studentCOs[s.id]?.[co] || 0) > 0); if (!hasData) return null; students.forEach(s => { const score = calculations.studentCOs[s.id]?.[co] || 0; if (score > 0 && score < 50) below50++; else if (score >= 50 && score < 80) between50_79++; else if (score >= 80) above80++; }); const total = students.length; return { name: co, 'Below 50%': parseFloat(((below50 / total) * 100).toFixed(1)), '50\u201379%': parseFloat(((between50_79 / total) * 100).toFixed(1)), '\u226580%': parseFloat(((above80 / total) * 100).toFixed(1)) }; }).filter(Boolean); })()} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}>
+                    <BarChart data={(() => { return Array.from({ length: 12 }, (_, i) => { const co = `CO${i + 1}`; let below40 = 0, between40_79 = 0, above80 = 0; const hasData = students.some(s => (calculations.studentCOs[s.id]?.[co] || 0) > 0); if (!hasData) return null; students.forEach(s => { const score = calculations.studentCOs[s.id]?.[co] || 0; if (score > 0 && score < 40) below40++; else if (score >= 40 && score < 80) between40_79++; else if (score >= 80) above80++; }); const total = students.length; return { name: co, 'Below 40%': Math.round((below40 / total) * 100), '40\u201379%': Math.round((between40_79 / total) * 100), '\u226580%': Math.round((above80 / total) * 100) }; }).filter(Boolean); })()} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                       <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 11 }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
                       <YAxis domain={[0, 100]} ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: '% of Students', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold', fontSize: 11 } }} />
-                      <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }} formatter={(value) => `${value}%`} />
+                      <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }} formatter={(value) => `${Math.round(value)}%`} />
                       <Legend wrapperStyle={{ paddingTop: '12px' }} />
-                      <Bar dataKey="Below 50%" stackId="a" fill="#ef4444" />
-                      <Bar dataKey={'50\u201379%'} stackId="a" fill="#f59e0b" />
+                      <Bar dataKey="Below 40%" stackId="a" fill="#ef4444" />
+                      <Bar dataKey={'40\u201379%'} stackId="a" fill="#f59e0b" />
                       <Bar dataKey={'\u226580%'} stackId="a" fill="#22c55e" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
