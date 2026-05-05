@@ -36,5 +36,11 @@ export function clearAuthCookie(res) {
 }
 
 export function getTokenFromRequest(req) {
+  // First check Authorization header (for cross-domain/GitHub Pages)
+  const authHeader = req.headers?.authorization
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7)
+  }
+  // Fallback to cookie (for local dev)
   return req.cookies?.[COOKIE_NAME]
 }

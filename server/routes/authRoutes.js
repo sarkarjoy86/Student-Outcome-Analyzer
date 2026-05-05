@@ -104,6 +104,7 @@ router.post("/signup", async (req, res) => {
 
     return res.status(201).json({
       message: "Sign up successful.",
+      token,
       user: {
         id: createdUser._id,
         fullName: createdUser.fullName,
@@ -133,6 +134,7 @@ router.post("/login", async (req, res) => {
       clearAuthCookie(res);
       return res.status(200).json({
         message: "Admin login successful.",
+        token: null,
         user: {
           id: "admin-local",
           fullName: "System Admin",
@@ -161,6 +163,7 @@ router.post("/login", async (req, res) => {
 
     return res.status(200).json({
       message: "Login successful.",
+      token,
       user: {
         id: user._id,
         fullName: user.fullName,

@@ -4,6 +4,7 @@ const AuthContext = createContext(null);
 const ADMIN_EMAIL = "admin@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
 const ADMIN_SESSION_KEY = "obe-admin-session";
+const AUTH_TOKEN_KEY = "obe-auth-token";
 
 // API base URL: use Render backend in production, local proxy in dev
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -23,12 +24,31 @@ function normalizeEmail(email = "") {
     .toLowerCase();
 }
 
+function getStoredToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function setStoredToken(token) {
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
 async function apiRequest(path, options = {}) {
   const { headers, ...rest } = options;
+  const token = getStoredToken();
+  const authHeaders = {};
+  if (token) {
+    authHeaders["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: { 
       "Content-Type": "application/json", 
+      ...authHeaders,
       ...(headers || {}) 
     },
     ...rest,
@@ -99,15 +119,26 @@ export function AuthProvider({ children }) {
         await loadAdminUsers();
         return;
       }
-      const status = await apiRequest("/api/auth/status");
-      if (!status.authenticated) {
+
+      // Check if we have a stored token
+      const token = getStoredToken();
+      if (!token) {
         setUser(null);
         setUsers([]);
         return;
       }
-      const me = await apiRequest("/api/auth/me");
-      setUser(me.user || null);
-      setUsers([]);
+
+      // Verify token is still valid by calling /me
+      try {
+        const me = await apiRequest("/api/auth/me");
+        setUser(me.user || null);
+        setUsers([]);
+      } catch {
+        // Token is invalid or expired, clear it
+        setStoredToken(null);
+        setUser(null);
+        setUsers([]);
+      }
     } catch {
       setUser(null);
       setUsers([]);
@@ -129,6 +160,7 @@ export function AuthProvider({ children }) {
         payload.password === ADMIN_PASSWORD
       ) {
         setAdminSession(true);
+        setStoredToken(null);
         setUser({
           id: "admin-local",
           fullName: "System Admin",
@@ -147,6 +179,12 @@ export function AuthProvider({ children }) {
           password: payload.password,
         }),
       });
+
+      // Store token from response for cross-domain auth
+      if (data.token) {
+        setStoredToken(data.token);
+      }
+
       setUser(data.user || null);
       setUsers([]);
       setSuccess("Login successful.");
@@ -164,8 +202,13 @@ export function AuthProvider({ children }) {
       if (isAdminSessionActive()) {
         setAdminSession(false);
       } else {
-        await apiRequest("/api/auth/logout", { method: "POST" });
+        try {
+          await apiRequest("/api/auth/logout", { method: "POST" });
+        } catch {
+          // Ignore logout API errors — we clear locally regardless
+        }
       }
+      setStoredToken(null);
       setUser(null);
       setUsers([]);
       setSuccess("Logged out successfully.");
