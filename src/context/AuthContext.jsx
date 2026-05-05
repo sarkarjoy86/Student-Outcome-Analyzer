@@ -5,6 +5,9 @@ const ADMIN_EMAIL = "admin@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
 const ADMIN_SESSION_KEY = "obe-admin-session";
 
+// API base URL: use Render backend in production, local proxy in dev
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 function parseErrorMessage(error, fallback) {
   if (error?.responseMessage) return error.responseMessage;
   if (error?.message) return error.message;
@@ -22,7 +25,7 @@ function normalizeEmail(email = "") {
 
 async function apiRequest(path, options = {}) {
   const { headers, ...rest } = options;
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: { 
       "Content-Type": "application/json", 

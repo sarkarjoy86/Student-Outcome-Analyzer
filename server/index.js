@@ -9,11 +9,25 @@ dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT || 5000
-const CLIENT_URL = process.env.CLIENT_URL || 'http://127.0.0.1:8080'
+
+// Allow multiple origins: local dev + GitHub Pages
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_URL || 'http://127.0.0.1:8080',
+  'http://127.0.0.1:3000',
+  'http://localhost:3000',
+  'https://sarkarjoy86.github.io',
+]
 
 app.use(
   cors({
-    origin: CLIENT_URL,
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true)
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true)
+      }
+      return callback(new Error('Not allowed by CORS'))
+    },
     credentials: true,
   })
 )
