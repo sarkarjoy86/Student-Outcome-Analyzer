@@ -41,39 +41,74 @@ const getAllAssessments = (assessments) => {
  * Excel Formula: Sum of ((Student Mark / Max Mark) * (Assessment Max / Total CO Max)) * 100
  * Using IF(MaxMark=0, 0.00000001, MaxMark) to avoid division by zero
  */
-export const calculateStudentCO = (studentId, co, marks, assessments) => {
+export const calculateStudentCO = (studentId, co, marks, assessments, metadataMap = {}, studentDbId) => {
   const allAssessments = getAllAssessments(assessments)
+  const normCo = co.replace(/\s+/g, '').toUpperCase()
 
-  // Filter assessments for this CO
-  const relevantAssessments = allAssessments.filter((a) => a.co === co)
-
-  if (relevantAssessments.length === 0) return 0
-
-  // Calculate total max marks for this CO
-  const totalCOMaxMarks = relevantAssessments.reduce(
-    (sum, a) => sum + (parseFloat(a.maxMarks) || 0),
-    0
-  )
+  // 1. Calculate total max marks for this CO
+  let totalCOMaxMarks = 0
+  allAssessments.forEach(a => {
+    const aId = a._id ? a._id.toString() : ''
+    const questions = metadataMap[aId]
+    if (questions && questions.length > 0) {
+      questions.forEach(q => {
+        const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
+        if (coKey === normCo) {
+          totalCOMaxMarks += parseFloat(q.maxMarks) || 0
+        }
+      })
+    } else {
+      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (coKey === normCo) {
+        totalCOMaxMarks += parseFloat(a.maxMarks) || 0
+      }
+    }
+  })
 
   if (totalCOMaxMarks === 0) return 0
 
-  // Calculate CO percentage using Excel formula
-  let coPercentage = 0
+  // 2. Calculate obtained marks for this CO for this student
+  let totalObtained = 0
+  allAssessments.forEach(a => {
+    const aId = a._id ? a._id.toString() : ''
+    
+    // Check marks using either database ObjectId (studentDbId) or student roll/id (studentId)
+    let sMarks = null
+    if (studentDbId && marks[studentDbId]?.[aId]) {
+      sMarks = marks[studentDbId][aId]
+    } else if (marks[studentId]?.[aId]) {
+      sMarks = marks[studentId][aId]
+    } else {
+      // Fallback: maybe flat marks mapped by assessment type & name
+      const key = `${a.type}_${a.name}`
+      const studentMark = parseFloat(marks[studentId]?.[key] || 0) || 0
+      const assessmentMax = parseFloat(a.maxMarks) || 0
+      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (coKey === normCo) {
+        totalObtained += studentMark
+      }
+      return
+    }
 
-  relevantAssessments.forEach((assessment) => {
-    const key = `${assessment.type}_${assessment.name}`
-    const studentMark = parseFloat(marks[studentId]?.[key] || 0) || 0
-    const assessmentMax = parseFloat(assessment.maxMarks) || 0
-
-    // Excel formula: (StudentMark / IF(MaxMark=0, 0.00000001, MaxMark)) * (AssessmentMax / TotalCOMax)
-    const maxMarks = assessmentMax === 0 ? 0.00000001 : assessmentMax
-    const studentRatio = studentMark / maxMarks
-    const weight = assessmentMax / totalCOMaxMarks
-
-    coPercentage += studentRatio * weight
+    const questions = metadataMap[aId]
+    if (questions && questions.length > 0) {
+      questions.forEach(q => {
+        const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
+        if (coKey === normCo) {
+          const obtainedMark = parseFloat(sMarks.questionMarks?.[q.questionNumber] ?? 0) || 0
+          totalObtained += obtainedMark
+        }
+      })
+    } else {
+      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (coKey === normCo) {
+        const obtainedMark = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+        totalObtained += obtainedMark
+      }
+    }
   })
 
-  return coPercentage * 100
+  return (totalObtained / totalCOMaxMarks) * 100
 }
 
 /**
@@ -111,7 +146,7 @@ export const calculateStudentPO = (studentId, po, assessments, coMapping, studen
 /**
  * Calculate all COs for all students
  */
-export const calculateAllStudentCOs = (students, marks, assessments) => {
+export const calculateAllStudentCOs = (students, marks, assessments, metadataMap = {}) => {
   const studentCOs = {}
 
   students.forEach((student) => {
@@ -122,7 +157,9 @@ export const calculateAllStudentCOs = (students, marks, assessments) => {
         student.id,
         coKey,
         marks,
-        assessments
+        assessments,
+        metadataMap,
+        student._id
       )
     }
   })
@@ -200,10 +237,11 @@ export const calculateAllAttainments = (
   coMapping,
   targetPassMarks = 40,
   kpiCO = 50,
-  kpiPO = 50
+  kpiPO = 50,
+  metadataMap = {}
 ) => {
   // Calculate individual student COs
-  const studentCOs = calculateAllStudentCOs(students, marks, assessments)
+  const studentCOs = calculateAllStudentCOs(students, marks, assessments, metadataMap)
 
   // Calculate individual student POs
   const studentPOs = calculateAllStudentPOs(
@@ -278,17 +316,32 @@ export const calculateAllAttainments = (
 /**
  * Get total marks allocated to each CO
  */
-export const getCOMarkAllocations = (assessments) => {
+export const getCOMarkAllocations = (assessments, metadataMap = {}) => {
   const allocations = {}
   const allAssessments = getAllAssessments(assessments)
 
   for (let co = 1; co <= 12; co++) {
     const coKey = `CO${co}`
-    const coAssessments = allAssessments.filter((a) => a.co === coKey)
-    allocations[coKey] = coAssessments.reduce(
-      (sum, a) => sum + (parseFloat(a.maxMarks) || 0),
-      0
-    )
+    
+    let totalCOMaxMarks = 0
+    allAssessments.forEach(a => {
+      const aId = a._id ? a._id.toString() : ''
+      const questions = metadataMap[aId]
+      if (questions && questions.length > 0) {
+        questions.forEach(q => {
+          const normCo = (q.co || '').replace(/\s+/g, '').toUpperCase()
+          if (normCo === coKey) {
+            totalCOMaxMarks += parseFloat(q.maxMarks) || 0
+          }
+        })
+      } else {
+        const normCo = (a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (normCo === coKey) {
+          totalCOMaxMarks += parseFloat(a.maxMarks) || 0
+        }
+      }
+    })
+    allocations[coKey] = totalCOMaxMarks
   }
 
   return allocations

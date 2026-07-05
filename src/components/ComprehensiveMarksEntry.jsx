@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Save, ArrowLeft } from 'lucide-react'
+import { useState, useEffect } from "react";
+import { Save, ArrowLeft, AlertCircle, CheckCircle } from "lucide-react";
 
 const ComprehensiveMarksEntry = ({
   students,
@@ -10,88 +10,115 @@ const ComprehensiveMarksEntry = ({
 }) => {
   const [marks, setMarks] = useState(() => {
     if (existingMarks && Object.keys(existingMarks).length > 0) {
-      return existingMarks
+      return existingMarks;
     }
-    return {}
-  })
+    return {};
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
-  const [activeTab, setActiveTab] = useState('cts')
+  const [activeTab, setActiveTab] = useState("cts");
 
   useEffect(() => {
     // Initialize marks structure
-    const updatedMarks = { ...marks }
-    let hasChanges = false
+    const updatedMarks = { ...marks };
+    let hasChanges = false;
 
     students.forEach((student) => {
       if (!updatedMarks[student.id]) {
-        updatedMarks[student.id] = {}
-        hasChanges = true
+        updatedMarks[student.id] = {};
+        hasChanges = true;
       }
 
       // Initialize all assessment marks
       const allAssessments = [
-        ...(assessments.cts || []).map((a) => ({ ...a, type: 'cts' })),
-        ...(assessments.midTerm || []).map((a) => ({ ...a, type: 'midTerm' })),
-        ...(assessments.final || []).map((a) => ({ ...a, type: 'final' })),
-        ...(assessments.assignments || []).map((a) => ({ ...a, type: 'assignments' })),
-      ]
+        ...(assessments.cts || []).map((a) => ({ ...a, type: "cts" })),
+        ...(assessments.midTerm || []).map((a) => ({ ...a, type: "midTerm" })),
+        ...(assessments.final || []).map((a) => ({ ...a, type: "final" })),
+        ...(assessments.assignments || []).map((a) => ({
+          ...a,
+          type: "assignments",
+        })),
+      ];
 
       if (assessments.attendance) {
-        allAssessments.push({ ...assessments.attendance, name: 'Attendance', type: 'attendance' })
+        allAssessments.push({
+          ...assessments.attendance,
+          name: "Attendance",
+          type: "attendance",
+        });
       }
       if (assessments.performance) {
-        allAssessments.push({ ...assessments.performance, name: 'Performance', type: 'performance' })
+        allAssessments.push({
+          ...assessments.performance,
+          name: "Performance",
+          type: "performance",
+        });
       }
       if (assessments.presentation) {
-        allAssessments.push({ ...assessments.presentation, name: 'Presentation', type: 'presentation' })
+        allAssessments.push({
+          ...assessments.presentation,
+          name: "Presentation",
+          type: "presentation",
+        });
       }
 
       allAssessments.forEach((assessment) => {
-        const key = `${assessment.type}_${assessment.name}`
+        const key = `${assessment.type}_${assessment.name}`;
         if (!(key in updatedMarks[student.id])) {
-          updatedMarks[student.id][key] = ''
-          hasChanges = true
+          updatedMarks[student.id][key] = "";
+          hasChanges = true;
         }
-      })
-    })
+      });
+    });
 
     if (hasChanges) {
-      setMarks(updatedMarks)
+      setMarks(updatedMarks);
     }
-  }, [students, assessments])
+  }, [students, assessments]);
 
   const updateMark = (studentId, key, value) => {
     setMarks((prev) => ({
       ...prev,
       [studentId]: {
         ...prev[studentId],
-        [key]: value === '' ? '' : parseFloat(value) || 0,
+        [key]: value === "" ? "" : parseFloat(value) || 0,
       },
-    }))
-  }
+    }));
+  };
 
   const getAssessmentList = (type) => {
-    if (type === 'cts') return assessments?.cts || []
-    if (type === 'midTerm') return assessments?.midTerm || []
-    if (type === 'final') return assessments?.final || []
-    if (type === 'assignments') return assessments?.assignments || []
-    if (type === 'attendance' && assessments?.attendance)
-      return [{ ...assessments.attendance, name: 'Attendance' }]
-    if (type === 'performance' && assessments?.performance)
-      return [{ ...assessments.performance, name: 'Performance' }]
-    if (type === 'presentation' && assessments?.presentation)
-      return [{ ...assessments.presentation, name: 'Presentation' }]
-    return []
-  }
+    if (type === "cts") return assessments?.cts || [];
+    if (type === "midTerm") return assessments?.midTerm || [];
+    if (type === "final") return assessments?.final || [];
+    if (type === "assignments") return assessments?.assignments || [];
+    if (type === "attendance" && assessments?.attendance)
+      return [{ ...assessments.attendance, name: "Attendance" }];
+    if (type === "performance" && assessments?.performance)
+      return [{ ...assessments.performance, name: "Performance" }];
+    if (type === "presentation" && assessments?.presentation)
+      return [{ ...assessments.presentation, name: "Presentation" }];
+    return [];
+  };
 
   const renderMarksTable = (type) => {
-    const assessmentList = getAssessmentList(type)
+    const assessmentList = getAssessmentList(type);
     if (assessmentList.length === 0) {
       return (
         <div className="text-center py-8 text-gray-500">
-          No {type === 'cts' ? 'Class Tests' : type === 'midTerm' ? 'Mid Term' : type === 'final' ? 'Final' : type === 'assignments' ? 'Assignments' : type} configured yet
+          No{" "}
+          {type === "cts"
+            ? "Class Tests"
+            : type === "midTerm"
+              ? "Mid Term"
+              : type === "final"
+                ? "Final"
+                : type === "assignments"
+                  ? "Assignments"
+                  : type}{" "}
+          configured yet
         </div>
-      )
+      );
     }
 
     return (
@@ -129,22 +156,27 @@ const ComprehensiveMarksEntry = ({
                     {student.name}
                   </td>
                   {assessmentList.map((assessment) => {
-                    const key = `${type}_${assessment.name}`
-                    const value = marks[student.id]?.[key] ?? ''
+                    const key = `${type}_${assessment.name}`;
+                    const value = marks[student.id]?.[key] ?? "";
                     return (
-                      <td key={assessment.name} className="px-2 py-2 border-r border-gray-100">
+                      <td
+                        key={assessment.name}
+                        className="px-2 py-2 border-r border-gray-100"
+                      >
                         <input
                           type="number"
                           min="0"
                           max={assessment.maxMarks}
                           step="0.5"
                           value={value}
-                          onChange={(e) => updateMark(student.id, key, e.target.value)}
+                          onChange={(e) =>
+                            updateMark(student.id, key, e.target.value)
+                          }
                           className="w-full px-2 py-1 text-center text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                           placeholder="0"
                         />
                       </td>
-                    )
+                    );
                   })}
                 </tr>
               ))}
@@ -152,27 +184,109 @@ const ComprehensiveMarksEntry = ({
           </table>
         </div>
       </div>
-    )
-  }
+    );
+  };
+
+  const handleSaveMarks = async () => {
+    setSaveError("");
+
+    // Validate marks structure
+    const studentIds = Object.keys(marks);
+    if (studentIds.length === 0) {
+      setSaveError("No students found in marks data.");
+      return;
+    }
+
+    let totalMarks = 0;
+    let emptyStudents = 0;
+
+    for (const studentId of studentIds) {
+      const studentMarks = marks[studentId];
+      if (!studentMarks || Object.keys(studentMarks).length === 0) {
+        emptyStudents++;
+      } else {
+        totalMarks += Object.values(studentMarks).filter(
+          (m) => m !== "" && m !== null && m !== undefined && !isNaN(m),
+        ).length;
+      }
+    }
+
+    if (totalMarks === 0) {
+      setSaveError(
+        "No marks entered. Please enter at least some marks before saving.",
+      );
+      return;
+    }
+
+    if (emptyStudents > 0) {
+      console.warn(
+        `${emptyStudents} students have no marks entered, but proceeding...`,
+      );
+    }
+
+    setSaving(true);
+    try {
+      console.log("Saving marks with structure:", {
+        studentCount: studentIds.length,
+        totalMarks,
+        emptyStudents,
+      });
+      onComplete(marks);
+    } catch (err) {
+      setSaveError(err.message || "Failed to save marks.");
+      setSaving(false);
+    }
+  };
 
   const tabs = [
-    { id: 'cts', label: 'Class Tests', count: assessments?.cts?.length || 0 },
-    { id: 'midTerm', label: 'Mid Term', count: assessments?.midTerm?.length || 0 },
-    { id: 'final', label: 'Final', count: assessments?.final?.length || 0 },
-    { id: 'assignments', label: 'Assignments', count: assessments?.assignments?.length || 0 },
-    { id: 'attendance', label: 'Attendance', count: assessments?.attendance ? 1 : 0 },
-    { id: 'performance', label: 'Performance', count: assessments?.performance ? 1 : 0 },
-    { id: 'presentation', label: 'Presentation', count: assessments?.presentation ? 1 : 0 },
-  ]
+    { id: "cts", label: "Class Tests", count: assessments?.cts?.length || 0 },
+    {
+      id: "midTerm",
+      label: "Mid Term",
+      count: assessments?.midTerm?.length || 0,
+    },
+    { id: "final", label: "Final", count: assessments?.final?.length || 0 },
+    {
+      id: "assignments",
+      label: "Assignments",
+      count: assessments?.assignments?.length || 0,
+    },
+    {
+      id: "attendance",
+      label: "Attendance",
+      count: assessments?.attendance ? 1 : 0,
+    },
+    {
+      id: "performance",
+      label: "Performance",
+      count: assessments?.performance ? 1 : 0,
+    },
+    {
+      id: "presentation",
+      label: "Presentation",
+      count: assessments?.presentation ? 1 : 0,
+    },
+  ];
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-gray-800 mb-2">Marks Entry</h2>
         <p className="text-gray-600">
-          Enter marks for each student by assessment type. You can save and continue later.
+          Enter marks for each student by assessment type. You can save and
+          continue later.
         </p>
       </div>
+
+      {saveError && (
+        <div className="flex gap-3 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">Error</p>
+            <p className="text-sm">{saveError}</p>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-gray-200">
@@ -180,10 +294,11 @@ const ComprehensiveMarksEntry = ({
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 font-semibold transition-colors ${activeTab === tab.id
-                ? 'border-b-2 border-indigo-600 text-indigo-600'
-                : 'text-gray-600 hover:text-gray-800'
-              }`}
+            className={`px-4 py-2 font-semibold transition-colors ${
+              activeTab === tab.id
+                ? "border-b-2 border-indigo-600 text-indigo-600"
+                : "text-gray-600 hover:text-gray-800"
+            }`}
           >
             {tab.label} ({tab.count})
           </button>
@@ -196,22 +311,23 @@ const ComprehensiveMarksEntry = ({
       <div className="flex gap-4">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
+          disabled={saving}
+          className="flex items-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <ArrowLeft size={20} />
           Back
         </button>
         <button
-          onClick={() => onComplete(marks)}
-          className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
+          onClick={handleSaveMarks}
+          disabled={saving}
+          className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Save size={20} />
-          Save & Continue to Calculations
+          {saving ? "Saving..." : "Save & Continue to Calculations"}
         </button>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default ComprehensiveMarksEntry
-
+export default ComprehensiveMarksEntry;

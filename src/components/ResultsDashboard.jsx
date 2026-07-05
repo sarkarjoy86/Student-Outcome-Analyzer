@@ -19,6 +19,12 @@ import { Download, Edit } from 'lucide-react'
 import { calculateAllAttainments } from '../utils/calculations'
 import MarksEntry from './MarksEntry'
 
+const sortAlphaNum = (a, b) => {
+  const aNum = parseInt(a.replace(/^\D+/g, ''), 10) || 0
+  const bNum = parseInt(b.replace(/^\D+/g, ''), 10) || 0
+  return aNum - bNum
+}
+
 const ResultsDashboard = ({
   students,
   examConfig,
@@ -34,37 +40,24 @@ const ResultsDashboard = ({
   )
 
   // Prepare data for CO Bar Chart
-  const coChartData = [
-    {
-      name: 'CO1',
-      attainment: calculations.coAttainment.CO1.percentage.toFixed(2),
-      value: parseFloat(calculations.coAttainment.CO1.percentage.toFixed(2)),
-    },
-    {
-      name: 'CO2',
-      attainment: calculations.coAttainment.CO2.percentage.toFixed(2),
-      value: parseFloat(calculations.coAttainment.CO2.percentage.toFixed(2)),
-    },
-    {
-      name: 'CO3',
-      attainment: calculations.coAttainment.CO3.percentage.toFixed(2),
-      value: parseFloat(calculations.coAttainment.CO3.percentage.toFixed(2)),
-    },
-    {
-      name: 'CO4',
-      attainment: calculations.coAttainment.CO4.percentage.toFixed(2),
-      value: parseFloat(calculations.coAttainment.CO4.percentage.toFixed(2)),
-    },
-  ]
+  const coChartData = Object.keys(calculations.coAttainment)
+    .sort(sortAlphaNum)
+    .map((co) => ({
+      name: co,
+      attainment: calculations.coAttainment[co].percentage.toFixed(2),
+      value: parseFloat(calculations.coAttainment[co].percentage.toFixed(2)),
+    }))
 
   // Prepare data for PO Chart
-  const poChartData = Object.keys(calculations.poAttainment).map((po) => ({
-    po: po,
-    name: calculations.poAttainment[po].name,
-    value: parseFloat(
-      calculations.poAttainment[po].percentage.toFixed(2)
-    ),
-  }))
+  const poChartData = Object.keys(calculations.poAttainment)
+    .sort(sortAlphaNum)
+    .map((po) => ({
+      po: po,
+      name: calculations.poAttainment[po].name,
+      value: parseFloat(
+        calculations.poAttainment[po].percentage.toFixed(2)
+      ),
+    }))
 
   // Prepare PO Radar data
   const poRadarData = [
@@ -90,17 +83,21 @@ const ResultsDashboard = ({
     const summaryData = {
       examType: examConfig.examType,
       totalStudents: students.length,
-      coAttainment: Object.keys(calculations.coAttainment).map((co) => ({
-        co,
-        percentage: calculations.coAttainment[co].percentage.toFixed(2),
-        attainedCount: calculations.coAttainment[co].attainedCount,
-        totalStudents: calculations.coAttainment[co].totalStudents,
-      })),
-      poAttainment: Object.keys(calculations.poAttainment).map((po) => ({
-        po,
-        name: calculations.poAttainment[po].name,
-        percentage: calculations.poAttainment[po].percentage.toFixed(2),
-      })),
+      coAttainment: Object.keys(calculations.coAttainment)
+        .sort(sortAlphaNum)
+        .map((co) => ({
+          co,
+          percentage: calculations.coAttainment[co].percentage.toFixed(2),
+          attainedCount: calculations.coAttainment[co].attainedCount,
+          totalStudents: calculations.coAttainment[co].totalStudents,
+        })),
+      poAttainment: Object.keys(calculations.poAttainment)
+        .sort(sortAlphaNum)
+        .map((po) => ({
+          po,
+          name: calculations.poAttainment[po].name,
+          percentage: calculations.poAttainment[po].percentage.toFixed(2),
+        })),
     }
 
     // Convert to JSON string for download
@@ -296,8 +293,10 @@ const ResultsDashboard = ({
                 </tr>
               </thead>
               <tbody>
-                {['CO1', 'CO2', 'CO3', 'CO4'].map((co) => {
-                  const coData = calculations.coAttainment[co]
+                {Object.keys(calculations.coAttainment)
+                  .sort(sortAlphaNum)
+                  .map((co) => {
+                    const coData = calculations.coAttainment[co]
                   const status =
                     coData.percentage >= calculations.constants.departmentGoal
                       ? '✅ Meets Goal'
@@ -369,7 +368,7 @@ const ResultsDashboard = ({
               </thead>
               <tbody>
                 {Object.keys(calculations.poAttainment)
-                  .sort()
+                  .sort(sortAlphaNum)
                   .map((po) => {
                     const poData = calculations.poAttainment[po]
                     const status =

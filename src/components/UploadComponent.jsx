@@ -79,7 +79,7 @@ const UploadComponent = ({ onStudentsUploaded }) => {
     }
 
     if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-      reader.readAsArrayBuffer(file)reader.readAsArrayBuffer(file)
+      reader.readAsArrayBuffer(file)
     } else if (file.name.endsWith('.csv')) {
       const csvReader = new FileReader()
       csvReader.onload = (e) => {

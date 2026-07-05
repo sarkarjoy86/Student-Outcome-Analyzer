@@ -335,6 +335,26 @@ router.post("/admin/users", async (req, res) => {
   }
 });
 
+router.delete("/admin/users/:id", async (req, res) => {
+  const dbReady = await ensureDatabase(res);
+  if (!dbReady) return;
+  if (!requireAdminRequest(req, res)) return;
+  try {
+    const userId = req.params.id;
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    if (targetUser.role === "admin") {
+      return res.status(403).json({ message: "Cannot delete admin accounts." });
+    }
+    await User.findByIdAndDelete(userId);
+    return res.status(200).json({ message: "Teacher deleted successfully." });
+  } catch {
+    return res.status(500).json({ message: "Server error. Please try again." });
+  }
+});
+
 router.post("/admin/users/reset-password", async (req, res) => {
   const dbReady = await ensureDatabase(res);
   if (!dbReady) return;

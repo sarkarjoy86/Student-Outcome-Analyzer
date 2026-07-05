@@ -155,7 +155,7 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-4 rounded-lg">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Attendance
+                  Attendance Max Marks
                 </label>
                 <div className="space-y-3">
                   <input
@@ -172,25 +172,11 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     placeholder="Max Marks"
                   />
-                  <select
-                    value={assessments.attendance.co}
-                    onChange={(e) =>
-                      updateSpecialAssessment('attendance', 'co', e.target.value)
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select CO (Optional)</option>
-                    {Array.from({ length: 12 }, (_, i) => (
-                      <option key={`CO${i + 1}`} value={`CO${i + 1}`}>
-                        CO{i + 1}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
               <div className="bg-white p-4 rounded-lg">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Performance
+                  Class Performance Max Marks
                 </label>
                 <div className="space-y-3">
                   <input
@@ -207,20 +193,6 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     placeholder="Max Marks"
                   />
-                  <select
-                    value={assessments.performance.co}
-                    onChange={(e) =>
-                      updateSpecialAssessment('performance', 'co', e.target.value)
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select CO</option>
-                    {Array.from({ length: 12 }, (_, i) => (
-                      <option key={`CO${i + 1}`} value={`CO${i + 1}`}>
-                        CO{i + 1}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
             </div>
@@ -234,7 +206,7 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-4 rounded-lg">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Presentation
+                  Presentation Max Marks
                 </label>
                 <div className="space-y-3">
                   <input
@@ -251,20 +223,6 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     placeholder="Max Marks"
                   />
-                  <select
-                    value={assessments.presentation.co}
-                    onChange={(e) =>
-                      updateSpecialAssessment('presentation', 'co', e.target.value)
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select CO</option>
-                    {Array.from({ length: 12 }, (_, i) => (
-                      <option key={`CO${i + 1}`} value={`CO${i + 1}`}>
-                        CO{i + 1}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
             </div>

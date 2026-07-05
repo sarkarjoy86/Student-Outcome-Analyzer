@@ -290,6 +290,24 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const deleteUser = async (userId) => {
+    setActionLoading(true);
+    try {
+      const data = await apiRequest(`/api/auth/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: getAdminHeaders(),
+      });
+      await loadAdminUsers();
+      setSuccess(data.message || "Teacher deleted successfully.");
+      return data;
+    } catch (error) {
+      setError(parseErrorMessage(error, "Failed to delete teacher."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const value = useMemo(
     () => ({
       user,
@@ -301,6 +319,7 @@ export function AuthProvider({ children }) {
       logout,
       changePassword,
       createUser,
+      deleteUser,
       adminResetPassword,
       refreshAuth,
       adminCredentials: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },

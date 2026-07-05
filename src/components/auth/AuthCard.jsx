@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { Eye, EyeOff } from 'lucide-react'
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -13,24 +14,24 @@ function DeskIllustration() {
       {/* Shelf supports */}
       <rect x="80" y="60" width="4" height="56" fill="#cbd5e1" />
       <rect x="356" y="60" width="4" height="56" fill="#cbd5e1" />
-      
+
       {/* Books on top shelf */}
       <rect x="100" y="35" width="12" height="25" rx="2" fill="#818cf8" />
       <rect x="116" y="30" width="14" height="30" rx="2" fill="#6366f1" />
       <rect x="134" y="38" width="10" height="22" rx="2" fill="#a5b4fc" />
-      
+
       {/* Clock */}
       <circle cx="200" cy="45" r="12" fill="white" stroke="#cbd5e1" strokeWidth="2" />
       <line x1="200" y1="45" x2="200" y2="37" stroke="#475569" strokeWidth="1.5" strokeLinecap="round" />
       <line x1="200" y1="45" x2="206" y2="45" stroke="#475569" strokeWidth="1.5" strokeLinecap="round" />
-      
+
       {/* Cat figurine on shelf */}
       <ellipse cx="250" cy="50" rx="8" ry="10" fill="#94a3b8" />
       <circle cx="247" cy="44" r="2" fill="#334155" />
       <circle cx="253" cy="44" r="2" fill="#334155" />
       <path d="M244 38 L246 44" stroke="#94a3b8" strokeWidth="2" />
       <path d="M256 38 L254 44" stroke="#94a3b8" strokeWidth="2" />
-      
+
       {/* Books on bottom shelf */}
       <rect x="100" y="80" width="16" height="30" rx="2" fill="#818cf8" />
       <rect x="120" y="85" width="14" height="25" rx="2" fill="#c7d2fe" />
@@ -38,20 +39,20 @@ function DeskIllustration() {
       <rect x="280" y="82" width="14" height="28" rx="2" fill="#a5b4fc" />
       <rect x="298" y="85" width="12" height="25" rx="2" fill="#818cf8" />
       <rect x="314" y="80" width="16" height="30" rx="2" fill="#c7d2fe" />
-      
+
       {/* Plant on left */}
       <rect x="60" y="310" width="30" height="35" rx="4" fill="#e2e8f0" />
       <ellipse cx="75" cy="295" rx="20" ry="18" fill="#6366f1" opacity="0.8" />
       <ellipse cx="65" cy="288" rx="12" ry="14" fill="#818cf8" opacity="0.9" />
       <ellipse cx="85" cy="290" rx="14" ry="12" fill="#6366f1" opacity="0.7" />
-      
+
       {/* Desk */}
       <rect x="120" y="310" width="300" height="12" rx="3" fill="#e2e8f0" />
-      
+
       {/* Desk legs */}
       <rect x="140" y="322" width="8" height="100" rx="2" fill="#cbd5e1" />
       <rect x="392" y="322" width="8" height="100" rx="2" fill="#cbd5e1" />
-      
+
       {/* Drawers */}
       <rect x="260" y="322" width="100" height="90" rx="4" fill="#334155" />
       <rect x="265" y="328" width="90" height="20" rx="2" fill="#475569" />
@@ -60,13 +61,13 @@ function DeskIllustration() {
       <circle cx="310" cy="338" r="3" fill="#94a3b8" />
       <circle cx="310" cy="364" r="3" fill="#94a3b8" />
       <circle cx="310" cy="390" r="3" fill="#94a3b8" />
-      
+
       {/* Monitor */}
       <rect x="170" y="210" width="160" height="100" rx="8" fill="#1e293b" />
       <rect x="178" y="218" width="144" height="84" rx="4" fill="#e0e7ff" />
       <rect x="235" y="310" width="30" height="15" rx="2" fill="#94a3b8" />
       <rect x="220" y="322" width="60" height="6" rx="3" fill="#cbd5e1" />
-      
+
       {/* Monitor content - code lines */}
       <rect x="190" y="232" width="60" height="4" rx="2" fill="#818cf8" />
       <rect x="190" y="242" width="80" height="4" rx="2" fill="#6366f1" opacity="0.6" />
@@ -74,35 +75,35 @@ function DeskIllustration() {
       <rect x="190" y="262" width="100" height="4" rx="2" fill="#818cf8" opacity="0.5" />
       <rect x="190" y="272" width="70" height="4" rx="2" fill="#6366f1" opacity="0.7" />
       <rect x="190" y="282" width="50" height="4" rx="2" fill="#a5b4fc" opacity="0.6" />
-      
+
       {/* Keyboard */}
       <rect x="180" y="295" width="80" height="15" rx="4" fill="#f1f5f9" stroke="#e2e8f0" />
-      
+
       {/* Person - chair */}
       <ellipse cx="155" cy="370" rx="35" ry="15" fill="#6366f1" />
       <rect x="122" y="350" width="8" height="70" rx="4" fill="#4f46e5" />
       <rect x="118" y="415" width="75" height="8" rx="4" fill="#6366f1" opacity="0.5" />
-      
+
       {/* Person - body */}
       <rect x="140" y="270" width="35" height="80" rx="12" fill="#475569" />
-      
+
       {/* Person - head */}
       <circle cx="158" cy="245" r="22" fill="#fcd9bd" />
       {/* Hair bun */}
       <circle cx="158" cy="218" r="10" fill="#334155" />
       <path d="M140 240 Q138 220 150 215 Q158 210 166 215 Q178 220 176 240" fill="#334155" />
-      
+
       {/* Person - arms */}
       <path d="M165 290 Q185 280 195 295" stroke="#475569" strokeWidth="8" strokeLinecap="round" fill="none" />
-      
+
       {/* Person - legs */}
       <rect x="142" y="345" width="12" height="50" rx="4" fill="#1e293b" />
       <rect x="158" y="345" width="12" height="50" rx="4" fill="#1e293b" />
-      
+
       {/* Person - shoes */}
       <ellipse cx="148" cy="398" rx="10" ry="5" fill="#334155" />
       <ellipse cx="164" cy="398" rx="10" ry="5" fill="#334155" />
-      
+
       {/* Plant pot on right */}
       <rect x="420" y="340" width="40" height="45" rx="4" fill="white" stroke="#e2e8f0" strokeWidth="2" />
       <rect x="415" y="335" width="50" height="8" rx="4" fill="white" stroke="#e2e8f0" strokeWidth="2" />
@@ -120,6 +121,7 @@ function DeskIllustration() {
 export default function AuthCard() {
   const { login, actionLoading, message } = useAuth()
   const [showCheckmark, setShowCheckmark] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -221,15 +223,29 @@ export default function AuthCard() {
             </div>
             <div className="auth-field">
               <label className="auth-label" htmlFor="auth-password">Password</label>
-              <input
-                id="auth-password"
-                type="password"
-                value={formData.password}
-                onChange={(event) => changeField('password', event.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Enter your password"
-                className="auth-input"
-              />
+              <div className="relative w-full">
+                <input
+                  id="auth-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={(event) => changeField('password', event.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Enter your password"
+                  className="auth-input pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none flex items-center justify-center"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
             </div>
 
             <button
@@ -248,11 +264,10 @@ export default function AuthCard() {
           {/* Error / Success Messages */}
           {(localError || message.text) && (
             <p
-              className={`auth-message ${
-                localError || message.type === 'error'
+              className={`auth-message ${localError || message.type === 'error'
                   ? 'auth-message-error'
                   : 'auth-message-success'
-              }`}
+                }`}
             >
               {localError || message.text}
             </p>

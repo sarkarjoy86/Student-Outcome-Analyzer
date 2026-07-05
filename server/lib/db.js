@@ -1,4 +1,9 @@
 import mongoose from 'mongoose'
+import dns from 'dns'
+
+// Force Google Public DNS – the local resolver may refuse SRV queries
+// which are required by the mongodb+srv:// connection string.
+dns.setServers(['8.8.8.8', '8.8.4.4'])
 
 let isConnected = false
 

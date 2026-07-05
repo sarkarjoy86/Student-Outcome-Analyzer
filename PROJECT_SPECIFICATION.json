@@ -1,0 +1,329 @@
+{
+  "projectMetadata": {
+    "name": "OBE Course Outcome Attainment System",
+    "version": "1.0.0",
+    "type": "Full-stack Web Application",
+    "description": "A comprehensive React application for tracking and visualizing Course Outcome (CO) and Program Outcome (PO) attainment in Outcome-Based Education (OBE) systems. Automates the entire process from student data upload to comprehensive reporting.",
+    "author": "Capstone Project Team",
+    "license": "MIT"
+  },
+  "techStack": {
+    "frontend": {
+      "framework": "React 18",
+      "buildTool": "Vite 5.0.8",
+      "cssFramework": "Tailwind CSS 3.3.6",
+      "iconLibrary": "Lucide React 0.294.0",
+      "charting": "Recharts 2.10.3",
+      "fileHandling": "XLSX 0.18.5",
+      "htmlToImage": "html2canvas 1.4.1"
+    },
+    "backend": {
+      "runtime": "Node.js",
+      "framework": "Express 5.2.1",
+      "database": "MongoDB (Mongoose 9.6.0)",
+      "authentication": "JWT (jsonwebtoken 9.0.3)",
+      "passwordHashing": "bcryptjs 3.0.3",
+      "cors": "CORS 2.8.6",
+      "cookieParser": "cookie-parser 1.4.7",
+      "environment": "dotenv 17.4.2"
+    },
+    "devTools": {
+      "taskRunner": "concurrently 9.2.1",
+      "fileWatcher": "nodemon 3.1.14",
+      "css": {
+        "autoprefixer": "10.4.16",
+        "postcss": "8.4.32"
+      },
+      "deployment": "gh-pages 6.3.0"
+    }
+  },
+  "projectStructure": {
+    "root": {
+      "configFiles": [
+        "package.json",
+        "vite.config.js",
+        "tailwind.config.js",
+        "postcss.config.js",
+        "index.html"
+      ],
+      "documentation": [
+        "README.md",
+        "IMPLEMENTATION_SUMMARY.md",
+        "CHANGES_SUMMARY.md"
+      ]
+    },
+    "server": {
+      "path": "server/",
+      "main": "index.js",
+      "structure": {
+        "config": "Configuration files for database and environment",
+        "middleware": {
+          "auth.js": "Authentication middleware for JWT verification"
+        },
+        "models": {
+          "User.js": "MongoDB User schema with registration and login"
+        },
+        "routes": {
+          "authRoutes.js": "Authentication endpoints (register, login, verify, refresh)"
+        },
+        "utils": {
+          "auth.js": "JWT token generation and verification utilities"
+        },
+        "lib": {
+          "db.js": "MongoDB connection setup"
+        }
+      }
+    },
+    "src": {
+      "path": "src/",
+      "main": "main.jsx",
+      "styling": "index.css",
+      "rootComponent": "App.jsx",
+      "components": {
+        "category": "Feature Components",
+        "uploadFlow": [
+          "ComprehensiveExcelUpload.jsx - Main Excel/CSV file upload with parsing",
+          "UploadComponent.jsx - Reusable upload component"
+        ],
+        "workflow": [
+          "CourseInfo.jsx - Course details entry (Code, Title, Department, Year, Semester, Section)",
+          "COPOMapping.jsx - Interactive 12x12 matrix for CO-PO mapping",
+          "AssessmentConfig.jsx - Configure assessment types (CTs, Mid, Final, Assignments, Attendance, Performance)",
+          "ComprehensiveMarksEntry.jsx - Tabbed interface for marks entry by assessment type",
+          "KPIConfig.jsx - Set KPI values (Target Pass Marks, KPI for COs, KPI for POs)",
+          "ComprehensiveReports.jsx - Display all reports and visualizations"
+        ],
+        "reportVisualization": [
+          "Results.jsx - Comprehensive report visualization with charts and tables",
+          "ResultsDashboard.jsx - Dashboard overview"
+        ],
+        "authentication": [
+          "AuthCard.jsx - Login/Register card component"
+        ],
+        "admin": [
+          "AdminDashboard.jsx - Admin control panel"
+        ],
+        "other": [
+          "Sidebar.jsx - Navigation sidebar",
+          "ProfileAvatar.jsx - User profile display"
+        ]
+      },
+      "utilities": {
+        "calculations.js": "Basic calculation utilities",
+        "comprehensiveCalculations.js": "Excel-formula-based CO/PO attainment calculations",
+        "excelParser.js": "Parse and extract data from Excel files",
+        "chartDownload.js": "Export charts and reports"
+      },
+      "services": {
+        "localStorageService.js": "Data persistence using browser localStorage"
+      },
+      "context": {
+        "AuthContext.jsx": "Global authentication state management"
+      }
+    }
+  },
+  "features": {
+    "core": [
+      "Upload student data from Excel (.xlsx, .xls) or CSV files",
+      "Extract Student ID and Name from uploaded files",
+      "Enter and manage course information",
+      "Create interactive CO-PO mapping (12x12 matrix)",
+      "Configure multiple assessment types with CO allocation",
+      "Comprehensive marks entry with validation",
+      "Excel-formula-based automated calculations",
+      "Advanced data visualization (bar, radar, pie, line charts)",
+      "Individual student performance tracking",
+      "Comprehensive reporting with multiple views"
+    ],
+    "dataVisualization": [
+      "Bar charts for CO/PO attainment with dual metrics",
+      "Radar charts for PO visualization",
+      "Pie charts for individual student CO performance",
+      "Line charts for multi-student comparison"
+    ],
+    "reporting": [
+      "Overview: Class-level CO and PO attainment",
+      "Individual Student: Detailed performance with visualizations",
+      "Compare Students: Multi-student comparison",
+      "Export reports as JSON",
+      "Download visualizations as images"
+    ],
+    "authentication": [
+      "User registration with email validation",
+      "Secure login with JWT tokens",
+      "Password hashing with bcryptjs",
+      "Protected routes",
+      "User profile management"
+    ],
+    "dataPersistence": [
+      "Browser localStorage for immediate data access",
+      "MongoDB database for persistent storage",
+      "Firebase Firestore integration (optional)"
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "step": 1,
+        "name": "Upload Students",
+        "description": "Upload Excel/CSV file with Student ID and Name columns",
+        "component": "ComprehensiveExcelUpload.jsx",
+        "output": "students array with ID and Name"
+      },
+      {
+        "step": 2,
+        "name": "Course Information",
+        "description": "Enter course details (Code, Title, Department, Academic Year, Semester, Section)",
+        "component": "CourseInfo.jsx",
+        "output": "courseInfo object"
+      },
+      {
+        "step": 3,
+        "name": "CO-PO Mapping",
+        "description": "Map 12 Course Outcomes to 12 Program Outcomes using interactive matrix",
+        "component": "COPOMapping.jsx",
+        "output": "coMapping 12x12 matrix"
+      },
+      {
+        "step": 4,
+        "name": "Assessment Configuration",
+        "description": "Configure assessment types and their max marks with CO allocation",
+        "component": "AssessmentConfig.jsx",
+        "output": "assessments array with config for each type"
+      },
+      {
+        "step": 5,
+        "name": "Marks Entry",
+        "description": "Enter student marks for each assessment type in tabbed interface",
+        "component": "ComprehensiveMarksEntry.jsx",
+        "output": "marksData object with all student marks"
+      },
+      {
+        "step": 6,
+        "name": "KPI Configuration",
+        "description": "Set Target Pass Marks (default: 40%), KPI for COs (default: 50%), KPI for POs (default: 50%)",
+        "component": "KPIConfig.jsx",
+        "output": "kpiConfig object"
+      },
+      {
+        "step": 7,
+        "name": "Reports",
+        "description": "View comprehensive reports with multiple visualization types",
+        "component": "ComprehensiveReports.jsx",
+        "output": "Visualizations and downloadable reports"
+      }
+    ]
+  },
+  "calculations": {
+    "coAttainment": {
+      "formula": "CO Score = Sum of ((Student Mark / Max Mark) × (Assessment Max / Total CO Max)) × 100",
+      "description": "For each assessment mapped to a CO: Calculate student's percentage (Student Mark / Assessment Max Marks), Calculate weight (Assessment Max Marks / Total Max Marks for that CO), Multiply percentage × weight, Sum all assessments and multiply by 100"
+    },
+    "poAttainment": {
+      "formula": "PO Score = Weighted Average of related CO scores",
+      "description": "Weight = Total marks allocated to each CO"
+    },
+    "classLevelMetrics": {
+      "passMarksPercentage": "% Above Pass Marks = (Count of students > Pass Marks / Total students) × 100",
+      "kpiPercentage": "% Above KPI = (Count of students > KPI / Total students) × 100"
+    }
+  },
+  "dataStructure": {
+    "student": {
+      "id": "string",
+      "name": "string"
+    },
+    "courseInfo": {
+      "code": "string",
+      "title": "string",
+      "department": "string",
+      "academicYear": "string",
+      "semester": "string",
+      "section": "string"
+    },
+    "assessment": {
+      "type": "string (CT, MidTerm, Final, Assignment, Attendance, Performance)",
+      "maxMarks": "number",
+      "coAllocations": "object mapping CO indices to marks"
+    },
+    "marks": {
+      "studentId": {
+        "assessmentType": "number (actual marks)"
+      }
+    },
+    "coMapping": "12x12 boolean matrix (rows=COs, cols=POs)",
+    "kpiConfig": {
+      "targetPassMarks": "number (percentage)",
+      "kpiCO": "number (percentage)",
+      "kpiPO": "number (percentage)"
+    }
+  },
+  "dependencies": {
+    "frontend": {
+      "react": "^18.2.0",
+      "react-dom": "^18.2.0",
+      "vite": "^5.0.8",
+      "@vitejs/plugin-react": "^4.2.1",
+      "tailwindcss": "^3.3.6",
+      "autoprefixer": "^10.4.16",
+      "postcss": "^8.4.32",
+      "lucide-react": "^0.294.0",
+      "recharts": "^2.10.3",
+      "xlsx": "^0.18.5",
+      "html2canvas": "^1.4.1",
+      "concurrently": "^9.2.1"
+    },
+    "backend": {
+      "express": "^5.2.1",
+      "mongoose": "^9.6.0",
+      "jsonwebtoken": "^9.0.3",
+      "bcryptjs": "^3.0.3",
+      "cors": "^2.8.6",
+      "cookie-parser": "^1.4.7",
+      "dotenv": "^17.4.2"
+    },
+    "devTools": {
+      "nodemon": "^3.1.14",
+      "concurrently": "^9.2.1"
+    }
+  },
+  "setupInstructions": {
+    "prerequisites": [
+      "Node.js (v16 or higher)",
+      "npm or yarn package manager",
+      "MongoDB instance (local or cloud-based like MongoDB Atlas)",
+      "Code editor (VS Code recommended)"
+    ],
+    "installation": [
+      "Clone the repository",
+      "Run: npm install (installs all dependencies)",
+      "Create .env file in root and server directories with required environment variables",
+      "Start development: npm run dev (runs both client and server concurrently)",
+      "Access at http://localhost:3000"
+    ],
+    "buildAndDeploy": [
+      "Build for production: npm run build",
+      "Output goes to 'dist' folder",
+      "Deploy to GitHub Pages: npm run deploy"
+    ]
+  },
+  "environmentVariables": {
+    "server": [
+      "MONGODB_URI: Connection string for MongoDB",
+      "JWT_SECRET: Secret key for JWT token generation",
+      "PORT: Server port (default: 5000)"
+    ],
+    "frontend": [
+      "VITE_API_URL: Backend API URL"
+    ]
+  },
+  "importantNotes": [
+    "Data persists in browser localStorage automatically",
+    "Firebase integration is optional (can be configured in src/config/firebase.js)",
+    "Calculations are based on Excel formulas and match Excel behavior exactly",
+    "All charts are interactive and support downloading as images",
+    "Authentication is JWT-based with secure token storage",
+    "The system is fully responsive and works on desktop and tablets",
+    "Sidebar provides main navigation between workflow steps"
+  ]
+}
