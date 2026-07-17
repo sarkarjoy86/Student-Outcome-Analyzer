@@ -82,15 +82,24 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
     }
   }
 
+  const getDynamicPublicLink = () => {
+    const id = survey?.surveyId || survey?._id
+    if (!id) return ''
+    const base = window.location.origin + window.location.pathname
+    const cleanBase = base.endsWith('/') ? base : base + '/'
+    return `${cleanBase}?feedbackId=${id}`
+  }
+
   const handleCopyLink = async () => {
-    if (!survey?.publicLink) return
+    const link = getDynamicPublicLink()
+    if (!link) return
     try {
-      await navigator.clipboard.writeText(survey.publicLink)
+      await navigator.clipboard.writeText(link)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
       const ta = document.createElement('textarea')
-      ta.value = survey.publicLink
+      ta.value = link
       document.body.appendChild(ta)
       ta.select()
       document.execCommand('copy')
@@ -357,7 +366,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
             <div className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-mono text-xs text-gray-700 truncate select-all">
-              {survey.publicLink || 'No link generated.'}
+              {getDynamicPublicLink() || 'No link generated.'}
             </div>
             
             <button
@@ -373,27 +382,31 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             </button>
           </div>
 
-          {survey.qrCode && (
-            <div className="flex items-center gap-6 pt-3 border-t border-gray-100">
-              <img 
-                src={survey.qrCode} 
-                alt="Survey QR Code" 
-                className="w-20 h-20 border p-1 bg-white rounded-lg"
-              />
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-gray-800">QR Code Access</p>
-                <p className="text-[11px] text-gray-400 max-w-md">Students can scan this QR code with their mobile devices or tablets to open and complete the questionnaire class-wide.</p>
-                <a 
-                  href={survey.qrCode} 
-                  target="_blank" 
-                  rel="noreferrer" 
-                  className="text-xs text-emerald-700 hover:underline font-medium inline-block"
-                >
-                  Open QR Image Link
-                </a>
+          {survey.qrCode && (() => {
+            const dynamicLink = getDynamicPublicLink()
+            const dynamicQr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(dynamicLink)}`
+            return (
+              <div className="flex items-center gap-6 pt-3 border-t border-gray-100">
+                <img 
+                  src={dynamicQr} 
+                  alt="Survey QR Code" 
+                  className="w-20 h-20 border p-1 bg-white rounded-lg"
+                />
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-gray-800">QR Code Access</p>
+                  <p className="text-[11px] text-gray-400 max-w-md">Students can scan this QR code with their mobile devices or tablets to open and complete the questionnaire class-wide.</p>
+                  <a 
+                    href={dynamicQr} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="text-xs text-emerald-700 hover:underline font-medium inline-block"
+                  >
+                    Open QR Image Link
+                  </a>
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
         </div>
       )}
 

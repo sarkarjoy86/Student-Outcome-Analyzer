@@ -631,35 +631,51 @@ export default function CourseEvaluationManager({ offering, user }) {
               </button>
             </div>
 
-            <div className="flex flex-col items-center bg-gray-50/50 rounded-xl p-4 border border-gray-200">
-              <img
-                src={publishModal.qrCode}
-                alt="QR Code"
-                className="w-48 h-48 border border-white rounded-lg shadow-sm"
-              />
-              <span className="text-[11px] text-gray-400 font-bold uppercase mt-2">
-                Print QR Code for student access
-              </span>
-            </div>
+            {(() => {
+              const getDynamicPublicLink = () => {
+                const id = publishModal.evaluationId || publishModal._id
+                if (!id) return ''
+                const base = window.location.origin + window.location.pathname
+                const cleanBase = base.endsWith('/') ? base : base + '/'
+                return `${cleanBase}?feedbackId=${id}`
+              }
+              const dynamicLink = getDynamicPublicLink()
+              const dynamicQr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(dynamicLink)}`
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-500">Student Access Link</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={publishModal.publicLink}
-                  className="flex-1 bg-gray-50 px-3 py-2 rounded-lg text-xs font-semibold text-gray-600 border border-gray-200 focus:outline-none"
-                />
-                <button
-                  onClick={() => handleCopyLink(publishModal.publicLink)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
-                >
-                  {copied ? <Check size={14} /> : <Clipboard size={14} />}
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-            </div>
+              return (
+                <>
+                  <div className="flex flex-col items-center bg-gray-50/50 rounded-xl p-4 border border-gray-200">
+                    <img
+                      src={dynamicQr}
+                      alt="QR Code"
+                      className="w-48 h-48 border border-white rounded-lg shadow-sm"
+                    />
+                    <span className="text-[11px] text-gray-400 font-bold uppercase mt-2">
+                      Print QR Code for student access
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-500">Student Access Link</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={dynamicLink}
+                        className="flex-1 bg-gray-50 px-3 py-2 rounded-lg text-xs font-semibold text-gray-600 border border-gray-200 focus:outline-none"
+                      />
+                      <button
+                        onClick={() => handleCopyLink(dynamicLink)}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+                      >
+                        {copied ? <Check size={14} /> : <Clipboard size={14} />}
+                        {copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )
+            })()}
 
             <div className="flex gap-4 text-xs font-bold text-gray-500 border-t pt-4">
               <p>Opens: <span className="text-gray-800">{new Date(publishModal.openDate).toLocaleDateString()}</span></p>
