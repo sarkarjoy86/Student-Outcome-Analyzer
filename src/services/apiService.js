@@ -543,7 +543,7 @@ export const apiService = {
   },
 
   async updateSurvey(id, payload) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -551,33 +551,33 @@ export const apiService = {
   },
 
   async deleteSurvey(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
     return handleResponse(res);
   },
 
   async publishSurvey(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/publish`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/publish`, {
       method: "POST",
     });
     return handleResponse(res);
   },
 
   async resetSurveyDefaults(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/reset-defaults`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/reset-defaults`, {
       method: "POST",
     });
     return handleResponse(res);
   },
 
   async getPublicSurvey(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}`);
     return handleResponse(res);
   },
 
   async verifyStudent(id, studentId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}/verify-student`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}/verify-student`, {
       method: "POST",
       body: JSON.stringify({ studentId }),
     });
@@ -585,7 +585,7 @@ export const apiService = {
   },
 
   async submitSurveyResponse(id, payload) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}/submit`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}/submit`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -593,7 +593,7 @@ export const apiService = {
   },
 
   async getSurveyAnalytics(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/analytics`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/analytics`);
     return handleResponse(res);
   },
 
