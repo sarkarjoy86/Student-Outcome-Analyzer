@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { apiService } from '../services/apiService'
+import { useState, useEffect, useMemo } from 'react'
+import { apiService } from '../../services/apiService'
 import {
   BookOpen,
   Users,
@@ -22,10 +22,13 @@ import {
   FileDown,
   Printer,
   Download,
-  AlertCircle
+  AlertCircle,
+  MessageSquare,
+  Calendar
 } from 'lucide-react'
-import QuestionPaperEditor from './QuestionPaperEditor'
-import ComprehensiveReports from './ComprehensiveReports'
+import QuestionPaperEditor from '../marks/QuestionPaperEditor'
+import ComprehensiveReports from '../reports/ComprehensiveReports'
+import CourseSurvey from '../survey/CourseSurvey'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -42,6 +45,36 @@ const PO_NAMES = {
   PO12: 'Life-long learning',
 }
 
+const PO_COLORS = {
+  PO1: 'bg-orange-200',
+  PO2: 'bg-purple-200',
+  PO3: 'bg-green-700',
+  PO4: 'bg-orange-300',
+  PO5: 'bg-purple-700',
+  PO6: 'bg-blue-700',
+  PO7: 'bg-green-300',
+  PO8: 'bg-red-200',
+  PO9: 'bg-teal-200',
+  PO10: 'bg-orange-500',
+  PO11: 'bg-blue-200',
+  PO12: 'bg-purple-800',
+}
+
+const PO_TEXT_COLORS = {
+  PO1: 'text-gray-800',
+  PO2: 'text-gray-800',
+  PO3: 'text-white',
+  PO4: 'text-gray-800',
+  PO5: 'text-white',
+  PO6: 'text-white',
+  PO7: 'text-gray-800',
+  PO8: 'text-gray-800',
+  PO9: 'text-gray-800',
+  PO10: 'text-white',
+  PO11: 'text-gray-800',
+  PO12: 'text-white',
+}
+
 const getQBankGroupName = (paper) => {
   const name = paper?.assessment?.name || ''
   if (/^ct[- ]?\d+/i.test(name) || name.toLowerCase() === 'cts' || paper?.assessment?.type === 'cts') {
@@ -50,7 +83,24 @@ const getQBankGroupName = (paper) => {
   return name
 }
 
-export default function TeacherDashboard({ offering, onBackToDashboard, user }) {
+const getQBankSessionName = (paper) => {
+  const sem = paper?.courseOffering?.semester
+  if (!sem) return ''
+  const name = sem.semesterName || ''
+  const year = sem.academicYear || paper.courseOffering?.academicYear || ''
+  if (year && !name.includes(String(year))) {
+    return `${name} ${year}`
+  }
+  return name
+}
+
+export default function TeacherDashboard({ offering: propOffering, onBackToDashboard, user }) {
+  const [offering, setOffering] = useState(propOffering)
+
+  useEffect(() => {
+    setOffering(propOffering)
+  }, [propOffering])
+
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem("teacherActiveTab") || "overview";
   });
@@ -76,7 +126,9 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
 
   // CO-PO Mapping States
   const [coMapping, setCoMapping] = useState({})
-
+  const [dbCourseOutcomes, setDbCourseOutcomes] = useState([])
+  const [dbProgramOutcomes, setDbProgramOutcomes] = useState([])
+ 
   // Attainment States
   const [attainmentData, setAttainmentData] = useState({
     coAttainments: [],
@@ -84,7 +136,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
     kpiConfig: { targetPassMarks: 40, kpiCO: 50, kpiPO: 50 }
   })
   const [kpiInput, setKpiInput] = useState({ targetPassMarks: 40, kpiCO: 50, kpiPO: 50 })
-
+ 
   // Question Paper Editor State
   const [activeAssessmentForPaper, setActiveAssessmentForPaper] = useState(null)
 
@@ -106,21 +158,86 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
 
   // Recent activity logs
   const [activities, setActivities] = useState([])
+  const [activityFilter, setActivityFilter] = useState('today')
+  const [expandedActivities, setExpandedActivities] = useState({})
+
+  const filteredActivities = useMemo(() => {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+
+    return activities.filter(act => {
+      if (activityFilter === 'all') return true
+      if (!act.createdAt) return true
+      const actDate = new Date(act.createdAt)
+      const actDateStart = new Date(actDate)
+      actDateStart.setHours(0, 0, 0, 0)
+
+      const diffTime = todayStart - actDateStart
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24))
+
+      if (activityFilter === 'today') {
+        return diffDays === 0
+      }
+      if (activityFilter === 'yesterday') {
+        return diffDays === 1 || diffDays === 2
+      }
+      if (activityFilter === '1week') {
+        return diffDays >= 3 && diffDays <= 9
+      }
+      if (activityFilter === '15days') {
+        return diffDays >= 10 && diffDays <= 24
+      }
+      if (activityFilter === '1month') {
+        return diffDays >= 25 && diffDays <= 54
+      }
+      if (activityFilter === 'older') {
+        return diffDays >= 55
+      }
+      return true
+    })
+  }, [activities, activityFilter])
+
+  const groupedActivities = useMemo(() => {
+    const groups = {}
+    filteredActivities.forEach(act => {
+      const action = (act.action || '').trim().toLowerCase()
+      let label = 'Activity'
+      if (action.includes('survey')) label = 'Survey'
+      else if (action.includes('marks')) label = 'Marks'
+      else if (action.includes('assessment')) label = 'Assessment'
+      else if (action.includes('paper') || action.includes('question')) label = 'Paper'
+      else if (action.includes('mapping') || action.includes('kpi')) label = 'Config'
+
+      if (!groups[label]) {
+        groups[label] = {
+          category: label,
+          items: []
+        }
+      }
+      groups[label].items.push(act)
+    })
+    return Object.values(groups)
+  }, [filteredActivities])
 
   useEffect(() => {
     setQBankPath({ type: null, session: null, section: null })
     loadAllData()
-  }, [offering])
+  }, [propOffering])
 
   const loadAllData = async () => {
     setLoading(true)
     try {
+      // 0. Fetch latest offering details
+      const offeringRes = await apiService.getCourseOffering(propOffering._id)
+      const currentOffering = offeringRes.offering || propOffering
+      setOffering(currentOffering)
+
       // 1. Fetch Students
-      const studentRes = await apiService.getTeacherStudents(offering._id)
+      const studentRes = await apiService.getTeacherStudents(currentOffering._id)
       setStudents(studentRes.students || [])
 
       // 2. Fetch Assessments
-      const assessmentsRes = await apiService.getAssessments(offering._id)
+      const assessmentsRes = await apiService.getAssessments(currentOffering._id)
       // Resolve structured assessments from general array (filter out any that do not have an _id)
       const flatAssessments = [
         ...(assessmentsRes.assessments?.cts || []),
@@ -142,7 +259,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
       setAssessments(flatAssessments)
 
       // 3. Fetch CO-PO Mapping from Course Master Mapping (Read-Only)
-      const rawMapping = offering.course?.coPoMapping || {}
+      const rawMapping = currentOffering.course?.coPoMapping || {}
       const normalizedCoMapping = {}
       Object.keys(rawMapping).forEach(coKey => {
         const normCo = coKey.replace(/\s+/g, '').toUpperCase()
@@ -164,21 +281,78 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
       // 5. Fetch Question Bank (Filtered by current Course ID)
       const qBankRes = await apiService.getQuestionBank(offering.course?._id)
       setQBankPapers(qBankRes.papers || [])
-
-      // 6. Generate recent activities
-      const acts = [
-        { id: 1, msg: `Course Dashboard opened for ${offering.course?.courseCode}`, time: 'Just now' }
-      ]
-      if (flatAssessments.length > 0) {
-        acts.push({ id: 2, msg: `${flatAssessments.length} assessments loaded.`, time: '5 mins ago' })
+ 
+      // 6. Fetch database CO-PO descriptions
+      try {
+        const coRes = await apiService.getCourseOutcomes(offering.course?._id)
+        setDbCourseOutcomes(coRes.outcomes || coRes || [])
+      } catch (err) {
+        console.error('Failed to load course outcomes from database:', err)
       }
-      setActivities(acts)
+ 
+      try {
+        const poRes = await apiService.getProgramOutcomes()
+        setDbProgramOutcomes(poRes.programOutcomes || poRes || [])
+      } catch (err) {
+        console.error('Failed to load program outcomes from database:', err)
+      }
+ 
+      // 7. Fetch recent activities from database
+      try {
+        const actRes = await apiService.getRecentActivities(offering._id)
+        if (actRes && actRes.activities) {
+          const formattedActs = actRes.activities.map(act => {
+            const diffMs = Date.now() - new Date(act.createdAt).getTime()
+            const diffMins = Math.floor(diffMs / 60000)
+            const diffHours = Math.floor(diffMins / 60)
+            const diffDays = Math.floor(diffHours / 24)
+
+            let relativeTime = 'Just now'
+            if (diffDays > 0) {
+              relativeTime = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+            } else if (diffHours > 0) {
+              relativeTime = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+            } else if (diffMins > 0) {
+              relativeTime = `${diffMins} min${diffMins > 1 ? 's' : ''} ago`
+            }
+
+            return {
+              id: act._id,
+              msg: act.description,
+              time: relativeTime,
+              createdAt: act.createdAt,
+              action: act.action
+            }
+          })
+          setActivities(formattedActs)
+        } else {
+          setActivities([])
+        }
+      } catch (err) {
+        console.error('Failed to load recent activities from database:', err)
+        setActivities([
+          { id: 1, msg: `Course Dashboard opened for ${offering.course?.courseCode}`, time: 'Just now' }
+        ])
+      }
 
     } catch (err) {
       console.error(err)
       alert('Error loading dashboard data: ' + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleResetActivities = async () => {
+    if (!window.confirm('Are you sure you want to clear all recent activity logs for this course? This action cannot be undone.')) {
+      return
+    }
+    try {
+      await apiService.resetRecentActivities(offering._id)
+      setActivities([])
+    } catch (err) {
+      console.error(err)
+      alert('Failed to reset course activity logs: ' + err.message)
     }
   }
 
@@ -318,35 +492,6 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
     }
   }
 
-  // Toggle CO-PO mapping matrix cell
-  const handleCoPoCellClick = (co, po) => {
-    setCoMapping(prev => {
-      const coMap = prev[co] || {}
-      const newVal = coMap[po] === 1 ? 0 : 1
-      return {
-        ...prev,
-        [co]: {
-          ...coMap,
-          [po]: newVal
-        }
-      }
-    })
-  }
-
-  // Save modified CO-PO mapping
-  const saveCoPoMapping = async () => {
-    setSaving(true)
-    try {
-      await apiService.updateCoPoMapping(offering._id, coMapping)
-      alert('CO-PO Mapping updated successfully for this Course Offering!')
-      loadAllData()
-    } catch (err) {
-      alert('Failed to update mapping: ' + err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
   // Save modified KPI configuration
   const saveKpiConfig = async () => {
     setSaving(true)
@@ -481,13 +626,14 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
       <div className="no-print bg-white rounded-xl shadow-md border border-gray-150 p-2 flex flex-wrap gap-1">
         {[
           { id: 'overview', label: 'Course Overview', icon: BookOpen },
+          { id: 'coMapping', label: 'CO-PO Mapping', icon: Network },
           { id: 'students', label: 'Students', icon: Users },
           { id: 'assessments', label: 'Assessments', icon: ClipboardList },
           { id: 'questionBank', label: 'Question Bank', icon: FolderOpen },
           { id: 'marksEntry', label: 'Marks Entry', icon: CheckSquare },
-          { id: 'coMapping', label: 'CO-PO Mapping', icon: Network },
           { id: 'attainment', label: 'Attainment', icon: Award },
           { id: 'reports', label: 'Reports', icon: BarChart3 },
+          { id: 'evaluation', label: 'Course Survey', icon: MessageSquare },
         ].map(tab => {
           const Icon = tab.icon
           const isActive = activeTab === tab.id
@@ -589,38 +735,133 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                 </div>
               </div>
 
-              {/* Right panel: Activities */}
+              {/* Right panel: Recent Activities */}
               <div className="space-y-6">
                 <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">Recent Activities</h3>
-                  <div className="flow-root">
-                    <ul className="-mb-8">
-                      {activities.map((act, actIdx) => (
-                        <li key={act.id}>
-                          <div className="relative pb-8">
-                            {actIdx !== activities.length - 1 ? (
-                              <span className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true" />
-                            ) : null}
-                            <div className="relative flex space-x-3">
-                              <div>
-                                <span className="h-8 w-8 rounded-full bg-green-50 border border-green-200 flex items-center justify-center text-green-700">
-                                  <ChevronRight size={14} />
-                                </span>
-                              </div>
-                              <div className="flex-1 min-w-0 pt-1.5 flex justify-between space-x-4">
-                                <div>
-                                  <p className="text-sm font-semibold text-gray-800">{act.msg}</p>
-                                </div>
-                                <div className="text-right text-xs whitespace-nowrap text-gray-400">
-                                  <time>{act.time}</time>
-                                </div>
-                              </div>
+                  {(() => {
+                    const getActivityIconAndColor = (actionType) => {
+                      const action = (actionType || '').trim().toLowerCase()
+                      if (action.includes('survey')) {
+                        return { bg: 'bg-emerald-50 border-emerald-250 text-emerald-700', label: 'Survey' }
+                      }
+                      if (action.includes('marks')) {
+                        return { bg: 'bg-teal-50 border-teal-250 text-teal-700', label: 'Marks' }
+                      }
+                      if (action.includes('assessment')) {
+                        return { bg: 'bg-blue-50 border-blue-250 text-blue-700', label: 'Assessment' }
+                      }
+                      if (action.includes('paper') || action.includes('question')) {
+                        return { bg: 'bg-indigo-50 border-indigo-250 text-indigo-700', label: 'Paper' }
+                      }
+                      if (action.includes('mapping') || action.includes('kpi')) {
+                        return { bg: 'bg-amber-50 border-amber-250 text-amber-700', label: 'Config' }
+                      }
+                      return { bg: 'bg-gray-50 border-gray-250 text-gray-600', label: 'Activity' }
+                    }
+
+                    return (
+                      <>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-3 gap-2">
+                          <h3 className="text-base font-extrabold text-gray-800">Recent Activities</h3>
+                          <select
+                            value={activityFilter}
+                            onChange={(e) => setActivityFilter(e.target.value)}
+                            className="text-[11px] bg-gray-50 border border-gray-200 text-gray-700 px-2.5 py-1 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold select-none cursor-pointer"
+                          >
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday (Day 1 - 2)</option>
+                            <option value="1week">1 Week (Day 3 - 9)</option>
+                            <option value="15days">15 Days (Day 10 - 24)</option>
+                            <option value="1month">1 Month (Day 25 - 54)</option>
+                            <option value="older">Older (Day 55+)</option>
+                            <option value="all">All</option>
+                          </select>
+                        </div>
+
+                        <div 
+                          className="overflow-y-auto pr-1 space-y-4" 
+                          style={{ 
+                            maxHeight: '385px', 
+                            scrollbarWidth: 'thin', 
+                            scrollbarColor: '#10b981 transparent' 
+                          }}
+                        >
+                          {groupedActivities.length === 0 ? (
+                            <div className="text-center py-8">
+                              <p className="text-xs text-gray-400 italic">No recent activities found.</p>
                             </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                          ) : (
+                            <div className="space-y-4 pt-1">
+                              {groupedActivities.map((group) => {
+                                const isExpanded = expandedActivities[group.category] !== false
+                                const badge = getActivityIconAndColor(group.category)
+
+                                return (
+                                  <div key={group.category} className="space-y-2">
+                                    {/* Category header (Clickable to toggle) */}
+                                    <div 
+                                      onClick={() => setExpandedActivities(prev => ({ ...prev, [group.category]: !isExpanded }))}
+                                      className="flex items-center justify-between cursor-pointer hover:bg-gray-50 p-2 rounded-xl border border-gray-150 transition-colors select-none"
+                                    >
+                                      <div className="flex items-center gap-2.5">
+                                        <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[9px] font-extrabold border shadow-sm ${badge.bg}`}>
+                                          {badge.label[0]}
+                                        </span>
+                                        <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">
+                                          {group.category} Modules
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.25 rounded-md font-extrabold">
+                                          {group.items.length}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <ChevronRight 
+                                          size={14} 
+                                          className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-95' : ''}`} 
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* Sub-Timeline of Module activities */}
+                                    {isExpanded && (
+                                      <div className="relative border-l border-dotted border-gray-300 ml-[23px] pl-4 mt-2 mb-3 space-y-4">
+                                        {group.items.map((act) => (
+                                          <div key={act.id} className="relative select-none text-[11px] leading-relaxed">
+                                            {/* Sub timeline bullet dot */}
+                                            <span className="absolute -left-[19px] top-[5px] h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                            
+                                            <div className="text-gray-700 font-medium break-words">
+                                              {act.msg}
+                                            </div>
+                                            
+                                            <div className="text-[9px] text-gray-400 mt-0.5 font-semibold flex items-center gap-1">
+                                              <Calendar size={8} className="text-gray-300" />
+                                              <span>{act.time}</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Reset button at the bottom */}
+                        <div className="pt-3 border-t border-gray-100 flex justify-end">
+                          <button
+                            onClick={handleResetActivities}
+                            className="text-[10px] font-bold text-red-500 hover:text-red-700 flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-red-55 transition-colors cursor-pointer select-none"
+                          >
+                            <Trash2 size={11} />
+                            Reset Course Activities
+                          </button>
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             </div>
@@ -1128,7 +1369,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                   {/* LEVEL 2: Select Session */}
                   {qBankPath.type && !qBankPath.session && (() => {
                     const papersForType = qBankPapers.filter(p => getQBankGroupName(p) === qBankPath.type)
-                    const uniqueSessions = [...new Set(papersForType.map(p => p.courseOffering?.semester?.semesterName).filter(Boolean))].sort()
+                    const uniqueSessions = [...new Set(papersForType.map(p => getQBankSessionName(p)).filter(Boolean))].sort()
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {uniqueSessions.map(sessionName => (
@@ -1148,7 +1389,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-[11px] bg-blue-105 text-blue-850 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
-                                {papersForType.filter(p => p.courseOffering?.semester?.semesterName === sessionName).length}
+                                {papersForType.filter(p => getQBankSessionName(p) === sessionName).length}
                               </span>
                               <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
                             </div>
@@ -1162,7 +1403,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                   {qBankPath.type && qBankPath.session && !qBankPath.section && (() => {
                     const papersForSession = qBankPapers.filter(
                       p => getQBankGroupName(p) === qBankPath.type &&
-                        p.courseOffering?.semester?.semesterName === qBankPath.session
+                        getQBankSessionName(p) === qBankPath.session
                     )
                     const uniqueSections = [...new Set(papersForSession.map(p => p.courseOffering?.section).filter(Boolean))].sort()
                     return (
@@ -1198,7 +1439,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                   {qBankPath.type && qBankPath.session && qBankPath.section && (() => {
                     const finalPapers = qBankPapers.filter(
                       p => getQBankGroupName(p) === qBankPath.type &&
-                        p.courseOffering?.semester?.semesterName === qBankPath.session &&
+                        getQBankSessionName(p) === qBankPath.session &&
                         p.courseOffering?.section === qBankPath.section
                     )
                     return (
@@ -1219,7 +1460,7 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
                                   <div>Teacher: <span className="font-bold text-gray-800">{paper.courseOffering?.teacher?.fullName || 'System'}</span></div>
-                                  <div>Semester: <span className="font-bold text-gray-800">{paper.courseOffering?.semester?.semesterName}</span></div>
+                                  <div>Semester: <span className="font-bold text-gray-800">{getQBankSessionName(paper)}</span></div>
                                   <div>Max Marks: <span className="font-bold text-gray-800">{paper.assessment?.maxMarks}</span></div>
                                   <div>Questions: <span className="font-bold text-gray-800">{paper.assessment?.numQuestions || 0}</span></div>
                                 </div>
@@ -1463,204 +1704,346 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
           )}
 
           {/* TAB 6: CO-PO MAPPING */}
-          {activeTab === 'coMapping' && (
-            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-6">
-              <div className="text-center border-b pb-4">
-                <h3 className="text-xl font-extrabold text-gray-800">Course Outcome (CO) - Program Outcome (PO) Mapping</h3>
-                <p className="text-sm text-gray-500 mt-1 font-semibold">This mapping is allocated to this course by the Administrator and is read-only.</p>
-              </div>
+          {activeTab === 'coMapping' && (() => {
+            const coListSorted = Array.from({ length: 12 }, (_, i) => `CO${i + 1}`)
+            const poListSorted = Array.from({ length: 12 }, (_, i) => `PO${i + 1}`)
 
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse border border-gray-200">
-                  <thead>
-                    <tr className="bg-gray-50 text-xs font-bold text-gray-600 border-b">
-                      <th className="border p-2">CO \\ PO</th>
-                      {Array.from({ length: 12 }, (_, i) => {
-                        const poNum = `PO${i + 1}`
+            return (
+              <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-6">
+                <div className="text-center border-b pb-4">
+                  <h3 className="text-xl font-extrabold text-gray-800">Course Outcome (CO) - Program Outcome (PO) Mapping</h3>
+                  <p className="text-sm text-gray-500 mt-1 font-semibold">This mapping is allocated to this course by the Administrator and is read-only.</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse border border-gray-200">
+                    <thead>
+                      <tr className="bg-gray-50 text-xs font-bold text-gray-600 border-b">
+                        <th className="border p-3 min-w-[90px] text-gray-700 bg-gray-100 font-extrabold text-sm">CO \\ PO</th>
+                        {poListSorted.map((poNum) => {
+                          const dbPoDescription = dbProgramOutcomes.find(p => p.code.replace(/\s+/g, '').toUpperCase() === poNum)?.description || PO_NAMES[poNum]
+                          const colorClass = PO_COLORS[poNum] || 'bg-gray-50'
+                          const textColorClass = PO_TEXT_COLORS[poNum] || 'text-gray-700'
+                          return (
+                            <th
+                              key={poNum}
+                              className={`border p-2 text-center min-w-[95px] ${colorClass} ${textColorClass}`}
+                              title={dbPoDescription}
+                            >
+                              <div className="font-black text-[11px] mb-0.5">{poNum}</div>
+                              <div className="text-[9px] font-semibold leading-snug break-words max-w-[90px] mx-auto opacity-95">
+                                {dbPoDescription}
+                              </div>
+                            </th>
+                          )
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coListSorted.map((coNum) => {
                         return (
-                          <th key={poNum} className="border p-2 text-center" title={PO_NAMES[poNum]}>
-                            <div>{poNum}</div>
-                            <div className="text-[8px] font-medium text-gray-400 truncate max-w-[60px]">{PO_NAMES[poNum]}</div>
-                          </th>
+                          <tr key={coNum} className="hover:bg-green-50/20">
+                            <td className="border px-4 py-2.5 font-bold text-blue-700 bg-blue-50/30">{coNum}</td>
+                            {poListSorted.map((poNum) => {
+                              const isMapped = coMapping[coNum]?.[poNum] === 1
+                              return (
+                                <td
+                                  key={poNum}
+                                  className={`border p-2 text-center cursor-default transition-all duration-150 select-none ${isMapped
+                                    ? 'bg-green-500 text-white font-extrabold shadow-inner'
+                                    : 'bg-yellow-50/50 text-transparent'
+                                    }`}
+                                >
+                                  {isMapped ? '✓' : ''}
+                                </td>
+                              )
+                            })}
+                          </tr>
                         )
                       })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: 12 }, (_, i) => {
-                      const coNum = `CO${i + 1}`
+
+                      {/* Totals Row */}
+                      <tr className="bg-gray-150/70 border-t-2 border-gray-300">
+                        <td className="border px-4 py-3 font-extrabold text-gray-700 bg-gray-200 text-sm">Total</td>
+                        {poListSorted.map((poNum) => {
+                          let total = 0
+                          coListSorted.forEach((coNum) => {
+                            if (coMapping[coNum]?.[poNum] === 1) {
+                              total++
+                            }
+                          })
+                          return (
+                            <td
+                              key={poNum}
+                              className="border p-2 text-center font-extrabold text-gray-800 bg-gray-100/50 text-sm"
+                            >
+                              {total}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Outcomes Details Section from Database */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 border-t pt-6 mt-8">
+                  {/* CO Details */}
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-extrabold text-gray-800 flex items-center gap-2 border-b pb-2">
+                      <span className="p-1 px-2.5 text-[10px] bg-blue-100 text-blue-700 rounded-md font-black">CO</span>
+                      Course Outcomes (CO) Details
+                    </h4>
+                    {dbCourseOutcomes.length === 0 ? (
+                      <p className="text-sm text-gray-400 font-semibold italic">No Course Outcomes loaded from the database for this course.</p>
+                    ) : (
+                      <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2">
+                        {dbCourseOutcomes.map((co) => (
+                          <div key={co._id || co.code} className="p-3.5 bg-gray-50/30 hover:bg-blue-50/20 border border-gray-150 rounded-xl transition-all duration-200">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="font-black text-blue-700 text-sm bg-blue-50/50 px-2 py-0.5 rounded-md">{co.code}</span>
+                            </div>
+                            <p className="text-xs text-gray-600 font-medium leading-relaxed">{co.description}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* PO Details */}
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-extrabold text-gray-800 flex items-center gap-2 border-b pb-2">
+                      <span className="p-1 px-2.5 text-[10px] bg-green-100 text-green-700 rounded-md font-black">PO</span>
+                      Mapped Program Outcomes (PO) Details
+                    </h4>
+                    {(() => {
+                      const mappedPoKeys = new Set()
+                      Object.keys(coMapping).forEach((coCode) => {
+                        // Filter to only look at COs actually defined for the course (in dbCourseOutcomes)
+                        if (dbCourseOutcomes.length > 0) {
+                          const hasCoInDb = dbCourseOutcomes.some(
+                            (c) => c.code.replace(/\s+/g, '').toUpperCase() === coCode
+                          )
+                          if (!hasCoInDb) return
+                        }
+
+                        Object.keys(coMapping[coCode] || {}).forEach((poCode) => {
+                          if (coMapping[coCode][poCode] === 1) {
+                            mappedPoKeys.add(poCode)
+                          }
+                        })
+                      })
+
+                      // Order mapped PO keys numerically
+                      const sortedPoKeys = Array.from(mappedPoKeys).sort((a, b) => {
+                        const numA = parseInt(a.replace(/^\D+/g, ''), 10) || 0
+                        const numB = parseInt(b.replace(/^\D+/g, ''), 10) || 0
+                        return numA - numB
+                      })
+
+                      if (sortedPoKeys.length === 0) {
+                        return (
+                          <p className="text-sm text-gray-400 font-semibold italic">No Program Outcomes are currently mapped.</p>
+                        )
+                      }
+
                       return (
-                        <tr key={coNum} className="hover:bg-green-50/20">
-                          <td className="border px-4 py-2.5 font-bold text-blue-700">{coNum}</td>
-                          {Array.from({ length: 12 }, (_, j) => {
-                            const poNum = `PO${j + 1}`
-                            const isMapped = coMapping[coNum]?.[poNum] === 1
+                        <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2">
+                          {sortedPoKeys.map((poKey) => {
+                            const dbPo = dbProgramOutcomes.find((po) => po.code === poKey)
+                            const poDesc = dbPo?.description || PO_NAMES[poKey] || 'N/A'
                             return (
-                              <td
-                                key={poNum}
-                                className={`border p-2 text-center cursor-default transition-all duration-150 ${isMapped
-                                  ? 'bg-green-500 text-white font-extrabold shadow-inner'
-                                  : 'bg-yellow-50/50 text-transparent'
-                                  }`}
-                              >
-                                {isMapped ? '✓' : ''}
-                              </td>
+                              <div key={poKey} className="p-3.5 bg-gray-50/30 hover:bg-green-50/20 border border-gray-150 rounded-xl transition-all duration-200">
+                                <div className="flex items-center gap-2 mb-1.5">
+                                  <span className="font-black text-green-700 text-sm bg-green-50/50 px-2 py-0.5 rounded-md">{poKey}</span>
+                                </div>
+                                <p className="text-xs text-gray-600 font-medium leading-relaxed">{poDesc}</p>
+                              </div>
                             )
                           })}
-                        </tr>
+                        </div>
                       )
-                    })}
-                  </tbody>
-                </table>
+                    })()}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* TAB 7: ATTAINMENT */}
-          {activeTab === 'attainment' && (
-            <div className="space-y-6">
-              {/* Threshold configurations */}
-              <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-                <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">KPI Attainment Thresholds</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Target Pass Marks (%)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={kpiInput.targetPassMarks}
-                      onChange={(e) => setKpiInput({ ...kpiInput, targetPassMarks: parseInt(e.target.value) || 0 })}
-                      className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">CO Attainment Target KPI (%)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={kpiInput.kpiCO}
-                      onChange={(e) => setKpiInput({ ...kpiInput, kpiCO: parseInt(e.target.value) || 0 })}
-                      className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">PO Attainment Target KPI (%)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={kpiInput.kpiPO}
-                      onChange={(e) => setKpiInput({ ...kpiInput, kpiPO: parseInt(e.target.value) || 0 })}
-                      className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={saveKpiConfig}
-                    disabled={saving}
-                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-bold shadow-md disabled:opacity-50"
-                  >
-                    <Save size={16} />
-                    {saving ? 'Saving Thresholds...' : 'Save Thresholds'}
-                  </button>
-                </div>
-              </div>
+          {activeTab === 'attainment' && (() => {
+            const mappedPoKeysForAttainment = new Set()
+            Object.keys(coMapping).forEach((coCode) => {
+              if (dbCourseOutcomes.length > 0) {
+                const hasCoInDb = dbCourseOutcomes.some(
+                  (c) => c.code.replace(/\s+/g, '').toUpperCase() === coCode
+                )
+                if (!hasCoInDb) return
+              }
+              Object.keys(coMapping[coCode] || {}).forEach((poCode) => {
+                if (coMapping[coCode][poCode] === 1) {
+                  mappedPoKeysForAttainment.add(poCode)
+                }
+              })
+            })
 
-              {/* CO/PO attainments side by side */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* CO Attainment */}
+            return (
+              <div className="space-y-6">
+                {/* Threshold configurations */}
                 <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">CO Attainment Status</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-sm text-left">
-                      <thead>
-                        <tr className="bg-gray-50 border-b">
-                          <th className="px-4 py-2 border-r font-bold text-gray-700">CO</th>
-                          <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
-                          <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiCO}%)</th>
-                          <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y font-semibold text-gray-700">
-                        {attainmentData.coAttainments && attainmentData.coAttainments.length > 0 ? (
-                          [...attainmentData.coAttainments]
-                            .sort((a, b) => {
-                              const numA = parseInt(a.co.replace(/^\D+/g, ''), 10) || 0
-                              const numB = parseInt(b.co.replace(/^\D+/g, ''), 10) || 0
-                              return numA - numB
-                            })
-                            .map(co => (
-                              <tr key={co.co}>
-                                <td className="px-4 py-3 border-r font-bold text-blue-700">{co.co}</td>
-                                <td className="px-4 py-3 border-r text-center">{(co.passMarksPercentage || 0).toFixed(1)}%</td>
-                                <td className="px-4 py-3 border-r text-center">{(co.kpiPercentage || 0).toFixed(1)}%</td>
-                                <td className="px-4 py-3 text-center">
-                                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${co.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                    }`}>
-                                    {co.attained ? 'Attained' : 'Not Attained'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                        ) : (
-                          <tr>
-                            <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Run a marks sheet update first.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">KPI Attainment Thresholds</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Target Pass Marks (%)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={kpiInput.targetPassMarks}
+                        onChange={(e) => setKpiInput({ ...kpiInput, targetPassMarks: parseInt(e.target.value) || 0 })}
+                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">CO Attainment Target KPI (%)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={kpiInput.kpiCO}
+                        onChange={(e) => setKpiInput({ ...kpiInput, kpiCO: parseInt(e.target.value) || 0 })}
+                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">PO Attainment Target KPI (%)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={kpiInput.kpiPO}
+                        onChange={(e) => setKpiInput({ ...kpiInput, kpiPO: parseInt(e.target.value) || 0 })}
+                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={saveKpiConfig}
+                      disabled={saving}
+                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-bold shadow-md disabled:opacity-50"
+                    >
+                      <Save size={16} />
+                      {saving ? 'Saving Thresholds...' : 'Save Thresholds'}
+                    </button>
                   </div>
                 </div>
 
-                {/* PO Attainment */}
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">PO Attainment Status</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-sm text-left">
-                      <thead>
-                        <tr className="bg-gray-50 border-b">
-                          <th className="px-4 py-2 border-r font-bold text-gray-700">PO</th>
-                          <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
-                          <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiPO}%)</th>
-                          <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y font-semibold text-gray-700">
-                        {attainmentData.poAttainments && attainmentData.poAttainments.length > 0 ? (
-                          [...attainmentData.poAttainments]
-                            .sort((a, b) => {
-                              const numA = parseInt(a.po.replace(/^\D+/g, ''), 10) || 0
-                              const numB = parseInt(b.po.replace(/^\D+/g, ''), 10) || 0
-                              return numA - numB
-                            })
-                            .map(po => (
-                              <tr key={po.po}>
-                                <td className="px-4 py-3 border-r font-bold text-purple-700" title={PO_NAMES[po.po]}>{po.po}</td>
-                                <td className="px-4 py-3 border-r text-center">{(po.passMarksPercentage || 0).toFixed(1)}%</td>
-                                <td className="px-4 py-3 border-r text-center">{(po.kpiPercentage || 0).toFixed(1)}%</td>
-                                <td className="px-4 py-3 text-center">
-                                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${po.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                    }`}>
-                                    {po.attained ? 'Attained' : 'Not Attained'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                        ) : (
-                          <tr>
-                            <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Map outcomes and save marks first.</td>
+                {/* CO/PO attainments side by side */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* CO Attainment */}
+                  <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+                    <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">CO Attainment Status</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-sm text-left">
+                        <thead>
+                          <tr className="bg-gray-50 border-b">
+                            <th className="px-4 py-2 border-r font-bold text-gray-700">CO</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiCO}%)</th>
+                            <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
                           </tr>
-                        )}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y font-semibold text-gray-700">
+                          {attainmentData.coAttainments && attainmentData.coAttainments.length > 0 ? (
+                            [...attainmentData.coAttainments]
+                              .filter(co => {
+                                // If database outcomes are empty, display all as fallback
+                                if (dbCourseOutcomes.length === 0) return true
+                                const normCo = co.co.replace(/\s+/g, '').toUpperCase()
+                                return dbCourseOutcomes.some(c => c.code.replace(/\s+/g, '').toUpperCase() === normCo)
+                              })
+                              .sort((a, b) => {
+                                const numA = parseInt(a.co.replace(/^\D+/g, ''), 10) || 0
+                                const numB = parseInt(b.co.replace(/^\D+/g, ''), 10) || 0
+                                return numA - numB
+                              })
+                              .map(co => (
+                                <tr key={co.co}>
+                                  <td className="px-4 py-3 border-r font-bold text-blue-700">{co.co}</td>
+                                  <td className="px-4 py-3 border-r text-center">{(co.passMarksPercentage || 0).toFixed(1)}%</td>
+                                  <td className="px-4 py-3 border-r text-center">{(co.kpiPercentage || 0).toFixed(1)}%</td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${co.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                      }`}>
+                                      {co.attained ? 'Attained' : 'Not Attained'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                          ) : (
+                            <tr>
+                              <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Run a marks sheet update first.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* PO Attainment */}
+                  <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+                    <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">PO Attainment Status</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-sm text-left">
+                        <thead>
+                          <tr className="bg-gray-50 border-b">
+                            <th className="px-4 py-2 border-r font-bold text-gray-700">PO</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiPO}%)</th>
+                            <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y font-semibold text-gray-700">
+                          {attainmentData.poAttainments && attainmentData.poAttainments.length > 0 ? (
+                            [...attainmentData.poAttainments]
+                              .filter(po => {
+                                // If no mapped keys are computed, display all as fallback
+                                if (mappedPoKeysForAttainment.size === 0) return true
+                                const normPo = po.po.replace(/\s+/g, '').toUpperCase()
+                                return mappedPoKeysForAttainment.has(normPo)
+                              })
+                              .sort((a, b) => {
+                                const numA = parseInt(a.po.replace(/^\D+/g, ''), 10) || 0
+                                const numB = parseInt(b.po.replace(/^\D+/g, ''), 10) || 0
+                                return numA - numB
+                              })
+                              .map(po => (
+                                <tr key={po.po}>
+                                  <td className="px-4 py-3 border-r font-bold text-purple-700" title={PO_NAMES[po.po]}>{po.po}</td>
+                                  <td className="px-4 py-3 border-r text-center">{(po.passMarksPercentage || 0).toFixed(1)}%</td>
+                                  <td className="px-4 py-3 border-r text-center">{(po.kpiPercentage || 0).toFixed(1)}%</td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${po.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                      }`}>
+                                      {po.attained ? 'Attained' : 'Not Attained'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                          ) : (
+                            <tr>
+                              <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Map outcomes and save marks first.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* TAB 8: REPORTS */}
           {activeTab === 'reports' && (
@@ -1714,10 +2097,17 @@ export default function TeacherDashboard({ offering, onBackToDashboard, user }) 
                     kpiCO={attainmentData.kpiConfig?.kpiCO}
                     kpiPO={attainmentData.kpiConfig?.kpiPO}
                     metadataMap={marksSpreadsheetData.metadata || {}}
+                    dbCourseOutcomes={dbCourseOutcomes}
+                    dbProgramOutcomes={dbProgramOutcomes}
                   />
                 )
               })()}
             </div>
+          )}
+
+          {/* TAB 9: COURSE SURVEY */}
+          {activeTab === 'evaluation' && (
+            <CourseSurvey offering={offering} />
           )}
         </div>
       )}

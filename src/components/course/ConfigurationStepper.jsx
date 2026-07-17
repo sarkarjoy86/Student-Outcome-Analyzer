@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { CheckCircle2, Circle } from 'lucide-react'
-import MarksEntry from './MarksEntry'
+import MarksEntry from '../marks/MarksEntry'
 
 const ConfigurationStepper = ({
   students,

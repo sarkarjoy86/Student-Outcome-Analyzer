@@ -5,12 +5,13 @@ import Course from "../models/Course.js";
 import CourseOutcome from "../models/CourseOutcome.js";
 import ProgramOutcome from "../models/ProgramOutcome.js";
 import Batch from "../models/Batch.js";
+import Section from "../models/Section.js";
 import CourseOffering from "../models/CourseOffering.js";
 import Student from "../models/Student.js";
 import Enrollment from "../models/Enrollment.js";
 import Assessment from "../models/Assessment.js";
-import Marks from "../models/Marks.js";
 import User from "../models/User.js";
+import { logActivity } from "../utils/activityLogger.js";
 
 const router = express.Router();
 
@@ -71,7 +72,7 @@ router.put("/sessions/:id", requireAuth, async (req, res) => {
     const session = await AcademicSession.findByIdAndUpdate(
       req.params.id,
       updateData,
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!session) {
@@ -156,7 +157,7 @@ router.put("/courses/:id", requireAuth, async (req, res) => {
         department: department?.trim(),
         numCOs: parseInt(numCOs) || 4,
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!updatedCourse) {
@@ -246,7 +247,7 @@ router.put("/courses/:courseId/co/:id", requireAuth, async (req, res) => {
     const outcome = await CourseOutcome.findOneAndUpdate(
       { _id: req.params.id, course: req.params.courseId },
       { code: code?.trim(), description: description?.trim() },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!outcome) {
@@ -322,7 +323,7 @@ router.put("/program-outcomes/:id", requireAuth, async (req, res) => {
     const outcome = await ProgramOutcome.findByIdAndUpdate(
       req.params.id,
       { code: code?.trim(), description: description?.trim() },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!outcome) {
@@ -379,7 +380,7 @@ router.put(
       const updatedCourse = await Course.findByIdAndUpdate(
         req.params.courseId,
         { coPoMapping: coPoMapping || {} },
-        { new: true },
+        { returnDocument: 'after' },
       );
 
       if (!updatedCourse) {
@@ -402,7 +403,7 @@ router.put(
 // Batch routes
 router.get("/batches", requireAuth, async (req, res) => {
   try {
-    const batches = await Batch.find().sort({ name: 1 });
+    const batches = await Batch.find().sort({ batchName: 1 });
     res.status(200).json({ batches });
   } catch (error) {
     res
@@ -418,7 +419,7 @@ router.post("/batches", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "Batch name is required." });
     }
 
-    const batch = await Batch.create({ name: name.trim() });
+    const batch = await Batch.create({ batchName: name.trim() });
     res.status(201).json({ message: "Batch created successfully.", batch });
   } catch (error) {
     res
@@ -432,8 +433,8 @@ router.put("/batches/:id", requireAuth, async (req, res) => {
     const { name } = req.body;
     const batch = await Batch.findByIdAndUpdate(
       req.params.id,
-      { name: name?.trim() },
-      { new: true },
+      { batchName: name?.trim() },
+      { returnDocument: 'after' },
     );
     if (!batch) {
       return res.status(404).json({ message: "Batch not found." });
@@ -449,9 +450,10 @@ router.put("/batches/:id", requireAuth, async (req, res) => {
 router.delete("/batches/:id", requireAuth, async (req, res) => {
   try {
     await Student.updateMany(
-      { batch: req.params.id },
-      { $set: { batch: null } },
+      { batchId: req.params.id },
+      { $set: { batchId: null, sectionId: null } },
     );
+    await Section.deleteMany({ batchId: req.params.id });
     await Batch.findByIdAndDelete(req.params.id);
     res.status(200).json({ message: "Batch deleted successfully." });
   } catch (error) {
@@ -461,10 +463,211 @@ router.delete("/batches/:id", requireAuth, async (req, res) => {
   }
 });
 
-// Batch students routes
+// ==========================================
+// SECTION ROUTES
+// ==========================================
+
+// Get sections of a batch
+router.get("/batches/:batchId/sections", requireAuth, async (req, res) => {
+  try {
+    const sections = await Section.find({ batchId: req.params.batchId }).sort({ sectionName: 1 });
+    res.status(200).json({ sections });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching sections", error: error.message });
+  }
+});
+
+// Create a section for a batch
+router.post("/batches/:batchId/sections", requireAuth, async (req, res) => {
+  try {
+    const { sectionName } = req.body;
+    if (!sectionName) {
+      return res.status(400).json({ message: "Section name is required." });
+    }
+
+    const batch = await Batch.findById(req.params.batchId);
+    if (!batch) {
+      return res.status(404).json({ message: "Batch not found." });
+    }
+
+    // Check if section already exists in this batch
+    const existing = await Section.findOne({ batchId: req.params.batchId, sectionName: sectionName.trim() });
+    if (existing) {
+      return res.status(400).json({ message: "Section already exists in this batch." });
+    }
+
+    const section = await Section.create({
+      batchId: req.params.batchId,
+      sectionName: sectionName.trim()
+    });
+
+    res.status(201).json({ message: "Section created successfully.", section });
+  } catch (error) {
+    res.status(500).json({ message: "Error creating section", error: error.message });
+  }
+});
+
+// Update a section name
+router.put("/batches/:batchId/sections/:sectionId", requireAuth, async (req, res) => {
+  try {
+    const { sectionName } = req.body;
+    if (!sectionName) {
+      return res.status(400).json({ message: "Section name is required." });
+    }
+
+    const existing = await Section.findOne({
+      batchId: req.params.batchId,
+      sectionName: sectionName.trim(),
+      _id: { $ne: req.params.sectionId }
+    });
+    if (existing) {
+      return res.status(400).json({ message: "Section name already exists in this batch." });
+    }
+
+    const section = await Section.findByIdAndUpdate(
+      req.params.sectionId,
+      { sectionName: sectionName.trim() },
+      { returnDocument: 'after' }
+    );
+
+    if (!section) {
+      return res.status(404).json({ message: "Section not found." });
+    }
+
+    res.status(200).json({ message: "Section updated successfully.", section });
+  } catch (error) {
+    res.status(500).json({ message: "Error updating section", error: error.message });
+  }
+});
+
+// Delete a section
+router.delete("/batches/:batchId/sections/:sectionId", requireAuth, async (req, res) => {
+  try {
+    // Clear sectionId in students under this section
+    await Student.updateMany(
+      { batchId: req.params.batchId, sectionId: req.params.sectionId },
+      { $set: { sectionId: null } }
+    );
+    await Section.findByIdAndDelete(req.params.sectionId);
+    res.status(200).json({ message: "Section deleted successfully." });
+  } catch (error) {
+    res.status(500).json({ message: "Error deleting section", error: error.message });
+  }
+});
+
+// ==========================================
+// SECTION STUDENTS ROUTES
+// ==========================================
+
+// Get students for a specific section
+router.get("/batches/:batchId/sections/:sectionId/students", requireAuth, async (req, res) => {
+  try {
+    const students = await Student.find({
+      batchId: req.params.batchId,
+      sectionId: req.params.sectionId
+    }).sort({ studentId: 1 });
+    res.status(200).json({ students });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching section students", error: error.message });
+  }
+});
+
+// Add student to a specific section
+router.post("/batches/:batchId/sections/:sectionId/students", requireAuth, async (req, res) => {
+  try {
+    const { studentId, name } = req.body;
+    if (!studentId || !name) {
+      return res.status(400).json({ message: "Student ID and name are required." });
+    }
+
+    const batch = await Batch.findById(req.params.batchId);
+    if (!batch) {
+      return res.status(404).json({ message: "Batch not found." });
+    }
+
+    const section = await Section.findOne({ _id: req.params.sectionId, batchId: req.params.batchId });
+    if (!section) {
+      return res.status(404).json({ message: "Section not found in this batch." });
+    }
+
+    let student = await Student.findOne({ studentId: studentId.trim() });
+    if (!student) {
+      student = await Student.create({
+        studentId: studentId.trim(),
+        studentName: name.trim(),
+        batchId: batch._id,
+        sectionId: section._id
+      });
+    } else {
+      student.studentName = name.trim();
+      student.batchId = batch._id;
+      student.sectionId = section._id;
+      await student.save();
+    }
+
+    res.status(201).json({ message: "Student added to section successfully.", student });
+  } catch (error) {
+    res.status(500).json({ message: "Error adding student to section", error: error.message });
+  }
+});
+
+// Update student in a specific section
+router.put("/batches/:batchId/sections/:sectionId/students/:studentId", requireAuth, async (req, res) => {
+  try {
+    const { name, studentId } = req.body;
+
+    if (studentId) {
+      const tempId = studentId.trim();
+      const existingStudent = await Student.findOne({ studentId: tempId });
+      if (existingStudent && existingStudent._id.toString() !== req.params.studentId) {
+        return res.status(400).json({ message: "Student ID is already taken by another student." });
+      }
+    }
+
+    const updateData = {};
+    if (name !== undefined) updateData.studentName = name.trim();
+    if (studentId !== undefined) updateData.studentId = studentId.trim();
+
+    const student = await Student.findOneAndUpdate(
+      { _id: req.params.studentId, batchId: req.params.batchId, sectionId: req.params.sectionId },
+      updateData,
+      { returnDocument: 'after' }
+    );
+
+    if (!student) {
+      return res.status(404).json({ message: "Student not found in this section." });
+    }
+
+    res.status(200).json({ message: "Student updated successfully.", student });
+  } catch (error) {
+    res.status(500).json({ message: "Error updating student", error: error.message });
+  }
+});
+
+// Delete student from section
+router.delete("/batches/:batchId/sections/:sectionId/students/:studentId", requireAuth, async (req, res) => {
+  try {
+    const student = await Student.findOne({
+      _id: req.params.studentId,
+      batchId: req.params.batchId,
+      sectionId: req.params.sectionId
+    });
+    if (!student) {
+      return res.status(404).json({ message: "Student not found in this section." });
+    }
+    student.batchId = null;
+    student.sectionId = null;
+    await student.save();
+    res.status(200).json({ message: "Student removed from section successfully." });
+  } catch (error) {
+    res.status(500).json({ message: "Error removing student from section", error: error.message });
+  }
+});
+
+// Legacy Batch students routes (updated to query batchId field)
 router.get("/batches/:batchId/students", requireAuth, async (req, res) => {
   try {
-    const students = await Student.find({ batch: req.params.batchId }).sort({
+    const students = await Student.find({ batchId: req.params.batchId }).sort({
       studentId: 1,
     });
     res.status(200).json({ students });
@@ -493,12 +696,12 @@ router.post("/batches/:batchId/students", requireAuth, async (req, res) => {
     if (!student) {
       student = await Student.create({
         studentId: studentId.trim(),
-        name: name.trim(),
-        batch: batch._id,
+        studentName: name.trim(),
+        batchId: batch._id,
       });
     } else {
-      student.name = name.trim();
-      student.batch = batch._id;
+      student.studentName = name.trim();
+      student.batchId = batch._id;
       await student.save();
     }
 
@@ -530,13 +733,13 @@ router.put(
       }
 
       const updateData = {};
-      if (name !== undefined) updateData.name = name.trim();
+      if (name !== undefined) updateData.studentName = name.trim();
       if (studentId !== undefined) updateData.studentId = studentId.trim();
 
       const student = await Student.findOneAndUpdate(
-        { _id: req.params.studentId, batch: req.params.batchId },
+        { _id: req.params.studentId, batchId: req.params.batchId },
         updateData,
-        { new: true },
+        { returnDocument: 'after' },
       );
 
       if (!student) {
@@ -563,14 +766,15 @@ router.delete(
     try {
       const student = await Student.findOne({
         _id: req.params.studentId,
-        batch: req.params.batchId,
+        batchId: req.params.batchId,
       });
       if (!student) {
         return res
           .status(404)
           .json({ message: "Student not found in this batch." });
       }
-      student.batch = null;
+      student.batchId = null;
+      student.sectionId = null;
       await student.save();
       res
         .status(200)
@@ -934,13 +1138,14 @@ router.put(
       const offering = await CourseOffering.findOneAndUpdate(
         { _id: req.params.id, teacher: req.user._id },
         { coPoMapping },
-        { new: true },
+        { returnDocument: 'after' },
       );
       if (!offering) {
         return res
           .status(404)
           .json({ message: "Course offering not found or unauthorized." });
       }
+      await logActivity(req.params.id, req.user._id, 'CO-PO Mapping Updated', `Updated CO-PO mapping matrix`)
       res
         .status(200)
         .json({ message: "CO-PO Mapping updated successfully.", offering });
@@ -960,13 +1165,14 @@ router.put("/course-offerings/:id/kpi", requireAuth, async (req, res) => {
     const offering = await CourseOffering.findOneAndUpdate(
       { _id: req.params.id, teacher: req.user._id },
       { targetPassMarks, kpiCO, kpiPO },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!offering) {
       return res
         .status(404)
         .json({ message: "Course offering not found or unauthorized." });
     }
+    await logActivity(req.params.id, req.user._id, 'KPI Config Updated', `Updated KPI config targets`)
     res
       .status(200)
       .json({ message: "KPI configuration updated successfully.", offering });
@@ -985,11 +1191,17 @@ router.put("/course-offerings/:id/kpi", requireAuth, async (req, res) => {
 // Get enrolled students
 router.get("/course-offerings/:id/students", requireAuth, async (req, res) => {
   try {
+    const offering = await CourseOffering.findById(req.params.id);
+    const sectionDoc = offering && offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null;
+    const sectionId = sectionDoc ? sectionDoc._id : null;
+
     const enrollments = await Enrollment.find({
       courseOffering: req.params.id,
     }).populate("student");
     const students = enrollments
-      .filter((e) => e.student) // Filter out null/undefined student references
+      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
@@ -1015,13 +1227,29 @@ router.post("/course-offerings/:id/students", requireAuth, async (req, res) => {
         .json({ message: "Student ID and Name are required." });
     }
 
+    const offering = await CourseOffering.findById(req.params.id);
+    if (!offering) {
+      return res.status(404).json({ message: "Course offering not found." });
+    }
+
+    const sectionDoc = offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null;
+
     const cleanId = studentId.trim();
     let student = await Student.findOne({ studentId: cleanId });
     if (!student) {
-      student = await Student.create({ studentId: cleanId, name: name.trim() });
+      student = await Student.create({
+        studentId: cleanId,
+        studentName: name.trim(),
+        batchId: offering.batch,
+        sectionId: sectionDoc ? sectionDoc._id : null
+      });
     } else {
       // update name if changed
-      student.name = name.trim();
+      student.studentName = name.trim();
+      if (!student.batchId) student.batchId = offering.batch;
+      if (!student.sectionId && sectionDoc) student.sectionId = sectionDoc._id;
       await student.save();
     }
 
@@ -1059,6 +1287,14 @@ router.post(
         return res.status(400).json({ message: "Students list is required." });
       }
 
+      const offering = await CourseOffering.findById(req.params.id);
+      if (!offering) {
+        return res.status(404).json({ message: "Course offering not found." });
+      }
+      const sectionDoc = offering.batch
+        ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+        : null;
+
       const enrolledStudents = [];
       const errors = [];
 
@@ -1075,10 +1311,14 @@ router.post(
           if (!student) {
             student = await Student.create({
               studentId: cleanId,
-              name: cleanName,
+              studentName: cleanName,
+              batchId: offering.batch,
+              sectionId: sectionDoc ? sectionDoc._id : null
             });
           } else {
-            student.name = cleanName;
+            student.studentName = cleanName;
+            if (!student.batchId) student.batchId = offering.batch;
+            if (!student.sectionId && sectionDoc) student.sectionId = sectionDoc._id;
             await student.save();
           }
 
@@ -1320,21 +1560,27 @@ router.post(
   },
 );
 
-// ==========================================
-// MARKS ROUTES
-// ==========================================
-
 // Get marks for offering
 router.get("/course-offerings/:id/marks", requireAuth, async (req, res) => {
   try {
     const courseOfferingId = req.params.id;
 
+    const offering = await CourseOffering.findById(courseOfferingId);
+    const sectionDoc = offering && offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null;
+    const sectionId = sectionDoc ? sectionDoc._id : null;
+
     // Fetch all enrollments to get student list
     const enrollments = await Enrollment.find({
       courseOffering: courseOfferingId,
     }).populate("student");
+    const validEnrollments = enrollments.filter(
+      (e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString()))
+    );
+
     const studentMap = new Map(
-      enrollments.map((e) => [e.student._id.toString(), e.student.studentId]),
+      validEnrollments.map((e) => [e.student._id.toString(), e.student.studentId]),
     );
 
     // Fetch all assessments for this offering
@@ -1352,7 +1598,7 @@ router.get("/course-offerings/:id/marks", requireAuth, async (req, res) => {
     const marks = {};
 
     // Initialize structure for all enrolled students
-    enrollments.forEach((e) => {
+    validEnrollments.forEach((e) => {
       marks[e.student.studentId] = {};
     });
 
@@ -1404,12 +1650,20 @@ router.post("/course-offerings/:id/marks", requireAuth, async (req, res) => {
       assessments.map((a) => [`${a.type}_${a.name}`, a]),
     );
 
+    const offering = await CourseOffering.findById(courseOfferingId);
+    const sectionDoc = offering && offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null;
+    const sectionId = sectionDoc ? sectionDoc._id : null;
+
     const enrollments = await Enrollment.find({
       courseOffering: courseOfferingId,
     }).populate("student");
 
     // Filter out null student references
-    const validEnrollments = enrollments.filter((e) => e.student);
+    const validEnrollments = enrollments.filter(
+      (e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString()))
+    );
     if (validEnrollments.length === 0) {
       return res
         .status(400)
@@ -1509,30 +1763,44 @@ router.get(
       // 1. Fetch offering details
       const offering = await CourseOffering.findById(courseOfferingId)
         .populate("course")
-        .populate("semester");
+        .populate("semester")
+        .populate("batch")
+        .populate("teacher", "fullName email");
       if (!offering) {
         return res.status(404).json({ message: "Course offering not found." });
       }
 
       // 2. Format courseInfo
       const courseInfo = {
+        _id: offering.course._id,
+        id: offering.course._id,
         courseCode: offering.course.courseCode,
         courseTitle: offering.course.courseName,
         department: offering.course.department,
-        academicYear: offering.semester.academicYear,
-        semester: offering.semester.semesterName,
-        section: offering.section,
+        academicYear: offering.academicYear || offering.semester?.academicYear,
+        semesterName: offering.semester?.semesterName,
+        sectionName: offering.section,
+        batchName: offering.batch?.batchName || offering.batch?.name,
+        teacherName: offering.teacher?.fullName,
+        teacherEmail: offering.teacher?.email,
       };
+
+      const sectionDoc = offering.batch
+        ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+        : null;
+      const sectionId = sectionDoc ? sectionDoc._id : null;
 
       // 3. Fetch students
       const enrollments = await Enrollment.find({
         courseOffering: courseOfferingId,
       }).populate("student");
-      const students = enrollments.map((e) => ({
-        _id: e.student._id,
-        id: e.student.studentId,
-        name: e.student.name,
-      }));
+      const students = enrollments
+        .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+        .map((e) => ({
+          _id: e.student._id,
+          id: e.student.studentId,
+          name: e.student.name,
+        }));
 
       // 4. Fetch assessments
       const dbAssessments = await Assessment.find({

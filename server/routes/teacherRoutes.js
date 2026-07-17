@@ -9,7 +9,10 @@ import COAttainment from '../models/COAttainment.js'
 import POAttainment from '../models/POAttainment.js'
 import Student from '../models/Student.js'
 import Enrollment from '../models/Enrollment.js'
+import Section from '../models/Section.js'
 import mongoose from 'mongoose'
+import RecentActivity from '../models/RecentActivity.js'
+import { logActivity } from '../utils/activityLogger.js'
 
 const router = express.Router()
 
@@ -38,7 +41,14 @@ async function recalculateAttainments(offeringId) {
     const kpiPO = offering.kpiPO || 50
 
     const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
-    const students = enrollments.filter(e => e.student).map(e => e.student)
+    const sectionDoc = offering && offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null
+    const sectionId = sectionDoc ? sectionDoc._id : null
+
+    const students = enrollments
+      .filter(e => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      .map(e => e.student)
     if (students.length === 0) return
 
     const assessments = await Assessment.find({ courseOffering: offeringId })
@@ -143,7 +153,7 @@ async function recalculateAttainments(offeringId) {
       await COAttainment.findOneAndUpdate(
         { courseOffering: offeringId, co: coKey },
         { passMarksPercentage, kpiPercentage, attained, updatedAt: new Date() },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       )
     }
 
@@ -179,7 +189,7 @@ async function recalculateAttainments(offeringId) {
       await POAttainment.findOneAndUpdate(
         { courseOffering: offeringId, po: poKey },
         { passMarksPercentage, kpiPercentage, attained, updatedAt: new Date() },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       )
     }
   } catch (err) {
@@ -199,9 +209,21 @@ router.get('/teacher/course-offerings', requireAuth, async (req, res) => {
       .sort({ createdAt: -1 })
 
     const offeringsWithCounts = await Promise.all(offerings.map(async (offering) => {
-      let studentCount = await Enrollment.countDocuments({ courseOffering: offering._id })
+      const sectionDoc = offering.batch && offering.section
+        ? await Section.findOne({ batchId: offering.batch._id, sectionName: offering.section })
+        : null
+      const sectionId = sectionDoc ? sectionDoc._id : null
+
+      const enrollments = await Enrollment.find({ courseOffering: offering._id }).populate('student')
+      const validEnrollments = enrollments.filter(e => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+
+      let studentCount = validEnrollments.length
       if (studentCount === 0 && offering.batch) {
-        studentCount = await Student.countDocuments({ batch: offering.batch._id })
+        const query = { batchId: offering.batch._id }
+        if (sectionId) {
+          query.sectionId = sectionId
+        }
+        studentCount = await Student.countDocuments(query)
       }
       return {
         ...offering.toObject(),
@@ -219,25 +241,47 @@ router.get('/teacher/course-offerings', requireAuth, async (req, res) => {
 router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, res) => {
   try {
     const offeringId = req.params.id
-    let enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+    const offering = await CourseOffering.findById(offeringId)
+    if (!offering) {
+      return res.status(404).json({ message: 'Course offering not found' })
+    }
 
-    if (enrollments.length === 0) {
-      const offering = await CourseOffering.findById(offeringId)
-      if (offering && offering.batch) {
-        const studentsInBatch = await Student.find({ batch: offering.batch })
-        for (const student of studentsInBatch) {
-          await Enrollment.findOneAndUpdate(
-            { student: student._id, courseOffering: offeringId },
-            {},
-            { upsert: true, new: true }
-          )
-        }
-        enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+    const sectionDoc = offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null
+    const sectionId = sectionDoc ? sectionDoc._id : null
+
+    let enrollments = []
+
+    if (offering.batch) {
+      const studentsInSection = await Student.find({
+        batchId: offering.batch,
+        sectionId: sectionId
+      })
+      for (const student of studentsInSection) {
+        await Enrollment.findOneAndUpdate(
+          { student: student._id, courseOffering: offeringId },
+          {},
+          { upsert: true, returnDocument: 'after' }
+        )
       }
+
+      if (sectionId) {
+        const existingEnrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+        for (const e of existingEnrollments) {
+          if (e.student && (!e.student.sectionId || e.student.sectionId.toString() !== sectionId.toString())) {
+            await Enrollment.deleteOne({ _id: e._id })
+          }
+        }
+      }
+
+      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+    } else {
+      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
     }
 
     const students = enrollments
-      .filter((e) => e.student)
+      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
@@ -318,6 +362,7 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
       })
     }
 
+    await logActivity(offeringId, req.user._id, 'Assessment Created', `Created assessment: ${name} (Max Marks: ${maxMarks})`)
     res.status(201).json({ message: 'Assessment created successfully.', assessment })
   } catch (error) {
     res.status(500).json({ message: 'Error creating assessment', error: error.message })
@@ -378,6 +423,7 @@ router.put('/teacher/assessments/:id', requireAuth, async (req, res) => {
     // Recalculate attainments in background
     recalculateAttainments(assessment.courseOffering)
 
+    await logActivity(assessment.courseOffering, req.user._id, 'Assessment Updated', `Updated details for assessment: ${assessment.name}`)
     res.status(200).json({ message: 'Assessment updated successfully.', assessment })
   } catch (error) {
     res.status(500).json({ message: 'Error updating assessment', error: error.message })
@@ -402,6 +448,7 @@ router.delete('/teacher/assessments/:id', requireAuth, async (req, res) => {
     // Recalculate attainments
     recalculateAttainments(offeringId)
 
+    await logActivity(offeringId, req.user._id, 'Assessment Deleted', `Deleted assessment: ${assessment.name}`)
     res.status(200).json({ message: 'Assessment and all associated data deleted successfully.' })
   } catch (error) {
     res.status(500).json({ message: 'Error deleting assessment', error: error.message })
@@ -462,7 +509,7 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
         content: content || '',
         createdBy: req.user._id
       },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     )
 
     // Save/update QuestionMetadata
@@ -473,10 +520,11 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
           courseOffering: assessment.courseOffering,
           questions
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       )
     }
 
+    await logActivity(assessment.courseOffering, req.user._id, 'Question Paper Updated', `Saved/Updated question paper and metadata for: ${assessment.name}`)
     res.status(200).json({ message: 'Question paper and metadata saved successfully.' })
   } catch (error) {
     res.status(500).json({ message: 'Error saving question paper data', error: error.message })
@@ -579,6 +627,7 @@ router.post('/teacher/question-bank/:id/duplicate', requireAuth, async (req, res
       })
     }
 
+    await logActivity(targetCourseOfferingId, req.user._id, 'Question Paper Duplicated', `Duplicated assessment and paper to create: ${name}`)
     res.status(201).json({ message: 'Question paper duplicated successfully.', assessment: duplicatedAssessment })
   } catch (error) {
     res.status(500).json({ message: 'Error duplicating question paper', error: error.message })
@@ -589,6 +638,15 @@ router.post('/teacher/question-bank/:id/duplicate', requireAuth, async (req, res
 router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async (req, res) => {
   try {
     const offeringId = req.params.id
+    const offering = await CourseOffering.findById(offeringId)
+    if (!offering) {
+      return res.status(404).json({ message: 'Course offering not found' })
+    }
+
+    const sectionDoc = offering.batch
+      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      : null
+    const sectionId = sectionDoc ? sectionDoc._id : null
 
     // Fetch assessments
     const assessments = await Assessment.find({ courseOffering: offeringId })
@@ -603,7 +661,7 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
     // Fetch enrolled students
     const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
     const students = enrollments
-      .filter((e) => e.student)
+      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
@@ -677,7 +735,7 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
           questionMarks: qMarksArray,
           totalMark: Number(totalMark) || 0
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       )
     }
 
@@ -690,6 +748,7 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
     // Trigger attainment calculation
     await recalculateAttainments(offeringId)
 
+    await logActivity(offeringId, req.user._id, 'Marks Saved', `Entered/Updated student marks for assessment: ${assessment.name}`)
     res.status(200).json({ message: 'Marks saved and attainments calculated successfully.' })
   } catch (error) {
     res.status(500).json({ message: 'Error saving marks', error: error.message })
@@ -727,6 +786,28 @@ router.get('/teacher/course-offerings/:id/attainment-data', requireAuth, async (
     })
   } catch (error) {
     res.status(500).json({ message: 'Error fetching attainment results', error: error.message })
+  }
+})
+
+// 13. Get recent activities for a course offering
+router.get('/teacher/course-offerings/:id/activities', requireAuth, async (req, res) => {
+  try {
+    const activities = await RecentActivity.find({ courseOfferingId: req.params.id })
+      .sort({ createdAt: -1 })
+      .limit(100)
+    res.status(200).json({ activities })
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching recent activities', error: error.message })
+  }
+})
+
+// 14. Clear all recent activities for a course offering
+router.delete('/teacher/course-offerings/:id/activities', requireAuth, async (req, res) => {
+  try {
+    await RecentActivity.deleteMany({ courseOfferingId: req.params.id })
+    res.status(200).json({ message: 'Recent activities cleared successfully' })
+  } catch (error) {
+    res.status(500).json({ message: 'Error clearing recent activities', error: error.message })
   }
 })
 

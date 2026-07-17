@@ -16,8 +16,8 @@ import {
   ReferenceLine,
 } from 'recharts'
 import { Download, Edit } from 'lucide-react'
-import { calculateAllAttainments } from '../utils/calculations'
-import MarksEntry from './MarksEntry'
+import { calculateAllAttainments } from '../../utils/calculations'
+import MarksEntry from '../marks/MarksEntry'
 
 const sortAlphaNum = (a, b) => {
   const aNum = parseInt(a.replace(/^\D+/g, ''), 10) || 0

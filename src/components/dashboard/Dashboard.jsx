@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react'
-import { apiService } from '../services/apiService'
-import { BookOpen, Users, ChevronRight, AlertCircle, RefreshCw, GraduationCap } from 'lucide-react'
-
+import { apiService } from '../../services/apiService'
+import { BookOpen, Users, ChevronRight, AlertCircle, RefreshCw, GraduationCap, Filter } from 'lucide-react'
+ 
 export default function Dashboard({ onSelectOffering }) {
   const [offerings, setOfferings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
+  const [semesterFilter, setSemesterFilter] = useState('current') // 'current' | 'old' | 'all'
+ 
   useEffect(() => {
     fetchInitialData()
   }, [])
-
+ 
   const fetchInitialData = async () => {
     setLoading(true)
     setError('')
@@ -23,17 +24,33 @@ export default function Dashboard({ onSelectOffering }) {
       setLoading(false)
     }
   }
-
-  // Group offerings by semesterName
-  const groupedOfferings = offerings.reduce((groups, offering) => {
-    const sessionName = offering.semester?.semesterName || 'Other Sessions';
+ 
+  // Filtering logic
+  const filteredOfferings = offerings.filter((offering) => {
+    const isSemActive = offering.semester?.status === 'active';
+    if (semesterFilter === 'current') {
+      return isSemActive;
+    } else if (semesterFilter === 'old') {
+      return !isSemActive;
+    }
+    return true; // 'all'
+  });
+ 
+  // Group filtered offerings by semesterName + academicYear
+  const groupedOfferings = filteredOfferings.reduce((groups, offering) => {
+    const semName = offering.semester?.semesterName || 'Other';
+    // Format e.g., "SPRING" -> "Spring"
+    const formattedSemName = semName.charAt(0).toUpperCase() + semName.slice(1).toLowerCase();
+    const year = offering.academicYear || offering.semester?.academicYear || '';
+    const sessionName = year ? `${formattedSemName} (${year})` : formattedSemName;
+ 
     if (!groups[sessionName]) {
       groups[sessionName] = [];
     }
     groups[sessionName].push(offering);
     return groups;
   }, {});
-
+ 
   const sessionOrder = Object.keys(groupedOfferings).sort((a, b) => {
     const yearA = parseInt(a.match(/\d+/)?.[0] || 0);
     const yearB = parseInt(b.match(/\d+/)?.[0] || 0);
@@ -64,22 +81,39 @@ export default function Dashboard({ onSelectOffering }) {
               Select one of your assigned course offerings to manage student assessments, marks entry, and CO-PO attainment.
             </p>
           </div>
-          <button
-            onClick={fetchInitialData}
-            className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 hover:bg-green-100 rounded-xl transition-all font-semibold border border-green-200"
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-        </div>
+          
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            {/* Semester Filter */}
+            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-200 text-gray-700 font-semibold focus-within:border-green-300 focus-within:ring-1 focus-within:ring-green-100 transition-all select-none">
+              <Filter className="text-green-700" size={16} />
+              <select
+                value={semesterFilter}
+                onChange={(e) => setSemesterFilter(e.target.value)}
+                className="bg-transparent text-sm focus:outline-none cursor-pointer pr-2 font-bold text-gray-800 select-none"
+              >
+                <option value="current">Current Semesters</option>
+                <option value="old">Completed Semesters</option>
+                <option value="all">All Semesters</option>
+              </select>
+            </div>
 
+            <button
+              onClick={fetchInitialData}
+              className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 rounded-xl transition-all font-semibold border border-green-200 shadow-sm"
+            >
+              <RefreshCw size={16} />
+              Refresh
+            </button>
+          </div>
+        </div>
+ 
         {error && (
           <div className="p-4 rounded-xl flex items-center gap-3 bg-red-50 text-red-700 border border-red-200 shadow-sm font-medium">
             <AlertCircle size={20} />
             {error}
           </div>
         )}
-
+ 
         {/* Offerings List grouped by Session */}
         <div className="space-y-12">
           {offerings.length === 0 ? (
@@ -90,6 +124,16 @@ export default function Dashboard({ onSelectOffering }) {
               </p>
               <p className="text-sm text-gray-400">
                 Please contact the Administrator to assign your Course Offerings.
+              </p>
+            </div>
+          ) : filteredOfferings.length === 0 ? (
+            <div className="bg-white p-12 rounded-2xl border border-gray-200 text-center space-y-4 max-w-2xl mx-auto shadow-md">
+              <Users size={48} className="mx-auto text-gray-400" />
+              <p className="text-gray-600 font-bold text-lg">
+                No course offerings match the selected filter.
+              </p>
+              <p className="text-sm text-gray-400 font-medium">
+                Try switching the filter to <strong className="text-green-700">"Completed Semesters"</strong> or <strong className="text-green-700">"All Semesters"</strong>.
               </p>
             </div>
           ) : (

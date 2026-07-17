@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Upload, FileSpreadsheet, ArrowRight, AlertCircle } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { parseComprehensiveExcel } from '../utils/excelParser'
+import { parseComprehensiveExcel } from '../../utils/excelParser'
 
 const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
   const [dragActive, setDragActive] = useState(false)

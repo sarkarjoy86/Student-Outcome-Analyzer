@@ -1,22 +1,39 @@
 import { useState, useEffect } from "react";
-import Sidebar from "./components/Sidebar";
-import Dashboard from "./components/Dashboard";
-import StudentManagement from "./components/StudentManagement";
-import COPOMapping from "./components/COPOMapping";
-import AssessmentConfig from "./components/AssessmentConfig";
-import ComprehensiveMarksEntry from "./components/ComprehensiveMarksEntry";
-import KPIConfig from "./components/KPIConfig";
-import ComprehensiveReports from "./components/ComprehensiveReports";
-import Results from "./components/Results";
+import Sidebar from "./components/layout/Sidebar";
+import Dashboard from "./components/dashboard/Dashboard";
+import StudentManagement from "./components/students/StudentManagement";
+import COPOMapping from "./components/course/COPOMapping";
+import AssessmentConfig from "./components/course/AssessmentConfig";
+import ComprehensiveMarksEntry from "./components/marks/ComprehensiveMarksEntry";
+import KPIConfig from "./components/course/KPIConfig";
+import ComprehensiveReports from "./components/reports/ComprehensiveReports";
+import Results from "./components/reports/Results";
 import AuthCard from "./components/auth/AuthCard";
-import ProfileAvatar from "./components/ProfileAvatar";
+import ProfileAvatar from "./components/layout/ProfileAvatar";
 import AdminDashboard from "./components/admin/AdminDashboard";
 import { useAuth } from "./context/AuthContext";
 import { apiService } from "./services/apiService";
-import TeacherDashboard from "./components/TeacherDashboard";
+import TeacherDashboard from "./components/dashboard/TeacherDashboard";
+import PublicSurveyForm from "./components/survey/PublicSurveyForm";
+
 
 function App() {
   const { user, authLoading, message } = useAuth();
+  
+  // Intercept student feedback submission URLs
+  const [feedbackEvaluationId, setFeedbackEvaluationId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const feedbackId = params.get("feedbackId") || params.get("evaluationId");
+    if (feedbackId) return feedbackId;
+    
+    const pathParts = window.location.pathname.split('/');
+    const feedbackIndex = pathParts.indexOf('feedback');
+    if (feedbackIndex !== -1 && pathParts[feedbackIndex + 1]) {
+      return pathParts[feedbackIndex + 1];
+    }
+    return null;
+  });
+
   const [selectedOffering, setSelectedOffering] = useState(() => {
     try {
       const saved = localStorage.getItem("selectedOffering");
@@ -259,6 +276,20 @@ function App() {
       <div className="animated-bg flex min-h-screen items-center justify-center">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-300 border-t-transparent" />
       </div>
+    );
+  }
+
+  if (feedbackEvaluationId) {
+    return (
+      <PublicSurveyForm
+        evaluationId={feedbackEvaluationId}
+        user={user}
+        onBackToHome={() => {
+          const url = new URL(window.location.origin + window.location.pathname);
+          window.history.replaceState({}, '', url.toString());
+          setFeedbackEvaluationId(null);
+        }}
+      />
     );
   }
 

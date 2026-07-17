@@ -39,10 +39,10 @@ import {
   Sparkles,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { calculateAllAttainments, getCOMarkAllocations } from '../utils/comprehensiveCalculations'
-import { downloadChartAsJPG } from '../utils/chartDownload'
+import { calculateAllAttainments, getCOMarkAllocations } from '../../utils/comprehensiveCalculations'
+import { downloadChartAsJPG } from '../../utils/chartDownload'
 import html2canvas from 'html2canvas'
-import { apiService } from '../services/apiService'
+import { apiService } from '../../services/apiService'
 
 // University color scheme: Green, Gold/Yellow, Blue
 const UNIVERSITY_COLORS = {
@@ -122,6 +122,8 @@ const ComprehensiveReports = ({
   kpiPO = 50,
   metadataMap = {},
   initialViewMode = 'overview',
+  dbCourseOutcomes = [],
+  dbProgramOutcomes = [],
 }) => {
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [selectedCompareStudents, setSelectedCompareStudents] = useState([])
@@ -230,16 +232,41 @@ const ComprehensiveReports = ({
 
   // Get active COs and POs based on current markings
   const activeCOs = useMemo(() => {
+    if (dbCourseOutcomes && dbCourseOutcomes.length > 0) {
+      return dbCourseOutcomes.map(
+        (co) => co.code.replace(/\s+/g, '').toUpperCase()
+      )
+    }
+    // Fallback: use coDescriptions keys
+    const coDescKeys = Object.keys(coDescriptions)
+    if (coDescKeys.length > 0) {
+      return coDescKeys.map(k => k.replace(/\s+/g, '').toUpperCase())
+    }
+    // Fallback: non-zero allocation if config is not retrieved yet
     return Array.from({ length: 12 }, (_, i) => `CO${i + 1}`).filter(
       (co) => (coMarkAllocations[co] || 0) > 0
     )
-  }, [coMarkAllocations])
+  }, [dbCourseOutcomes, coDescriptions, coMarkAllocations])
 
   const activePOs = useMemo(() => {
     return Array.from({ length: 12 }, (_, i) => `PO${i + 1}`).filter((po) => {
       return activeCOs.some((co) => coMapping?.[co]?.[po] === 1 || coMapping?.[co]?.[po] === '1')
     })
   }, [activeCOs, coMapping])
+
+  const poMarkAllocations = useMemo(() => {
+    const allocations = {}
+    activePOs.forEach((po) => {
+      let totalMarks = 0
+      activeCOs.forEach((co) => {
+        if (coMapping?.[co]?.[po] === 1 || coMapping?.[co]?.[po] === '1') {
+          totalMarks += coMarkAllocations[co] || 0
+        }
+      })
+      allocations[po] = totalMarks
+    })
+    return allocations
+  }, [activePOs, activeCOs, coMapping, coMarkAllocations])
 
   // Flattened assessment list for marksheet and summaries
   const allAssessments = useMemo(() => {
@@ -3620,8 +3647,8 @@ const ComprehensiveReports = ({
           <div className="space-y-6">
 
             {/* Mapping row */}
-            <div className="grid grid-cols-1 lg:grid-cols-10 gap-4">
-              <div className="lg:col-span-4 bg-white rounded-2xl shadow-xl p-6 border border-green-100">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl shadow-xl p-6 border border-green-100">
                 <h2 className="text-xl font-bold bg-gradient-to-r from-green-800 to-green-600 bg-clip-text text-transparent uppercase tracking-wider mb-4">
                   Marks Allocations for COs
                 </h2>
@@ -3645,36 +3672,23 @@ const ComprehensiveReports = ({
                 </div>
               </div>
 
-              <div className="lg:col-span-6 bg-white rounded-2xl shadow-xl p-6 border border-purple-100">
-                <h2 className="text-xl font-bold bg-gradient-to-r from-purple-800 to-purple-600 bg-clip-text text-transparent uppercase tracking-wider mb-4">
-                  COs to POs Mapping Matrix
+              <div className="bg-white rounded-2xl shadow-xl p-6 border border-blue-100">
+                <h2 className="text-xl font-bold bg-gradient-to-r from-blue-800 to-blue-600 bg-clip-text text-transparent uppercase tracking-wider mb-4">
+                  Marks Allocations for POs
                 </h2>
                 <div className="overflow-x-auto">
-                  <table className="border-collapse mx-auto text-xs">
+                  <table className="w-full border-collapse">
                     <thead>
-                      <tr className="bg-gradient-to-r from-purple-600 to-purple-700 text-white">
-                        <th className="px-3 py-3 text-center font-bold border border-purple-800">CO</th>
-                        {activePOs.map((po) => (
-                          <th key={po} className="px-2 py-3 text-center font-bold border border-purple-800">{po}</th>
-                        ))}
+                      <tr className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+                        <th className="px-4 py-3 text-center font-bold border border-blue-800">PO</th>
+                        <th className="px-4 py-3 text-center font-bold border border-blue-800">Total Allocated Marks</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeCOs.map((co) => (
-                        <tr key={co} className="hover:bg-purple-50/40">
-                          <td className="px-3 py-2.5 font-bold text-gray-800 border border-gray-300 text-center bg-white">{co}</td>
-                          {activePOs.map((po) => {
-                            const isMapped = coMapping?.[co]?.[po] === 1 || coMapping?.[co]?.[po] === '1'
-                            return (
-                              <td
-                                key={po}
-                                className={`px-2 py-2.5 text-center border border-gray-300 font-black ${isMapped ? 'bg-green-200 text-green-900' : 'bg-gray-50 text-gray-400'
-                                  }`}
-                              >
-                                {isMapped ? '✓' : '-'}
-                              </td>
-                            )
-                          })}
+                      {activePOs.map((po) => (
+                        <tr key={po} className="hover:bg-blue-50/50">
+                          <td className="px-4 py-2.5 text-sm font-bold text-gray-800 border border-gray-200 text-center bg-white">{po}</td>
+                          <td className="px-4 py-2.5 text-sm text-center text-gray-700 border border-gray-200 bg-white font-bold">{poMarkAllocations[po] || 0}</td>
                         </tr>
                       ))}
                     </tbody>

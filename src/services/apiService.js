@@ -479,4 +479,133 @@ export const apiService = {
     const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/attainment-data`);
     return handleResponse(res);
   },
+
+  async getSections(batchId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections`);
+    return handleResponse(res);
+  },
+
+  async createSection(batchId, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteSection(batchId, sectionId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  async getSectionStudents(batchId, sectionId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students`);
+    return handleResponse(res);
+  },
+
+  async addSectionStudent(batchId, sectionId, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async updateSectionStudent(batchId, sectionId, studentId, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students/${studentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteSectionStudent(batchId, sectionId, studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students/${studentId}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  // Student Course Survey Endpoints
+  async getSurveys(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/offering/${offeringId}`);
+    return handleResponse(res);
+  },
+
+  async createSurvey(payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async updateSurvey(id, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteSurvey(id) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  async publishSurvey(id) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/publish`, {
+      method: "POST",
+    });
+    return handleResponse(res);
+  },
+
+  async resetSurveyDefaults(id) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/reset-defaults`, {
+      method: "POST",
+    });
+    return handleResponse(res);
+  },
+
+  async getPublicSurvey(id) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}`);
+    return handleResponse(res);
+  },
+
+  async verifyStudent(id, studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}/verify-student`, {
+      method: "POST",
+      body: JSON.stringify({ studentId }),
+    });
+    return handleResponse(res);
+  },
+
+  async submitSurveyResponse(id, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${id}/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async getSurveyAnalytics(id) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${id}/analytics`);
+    return handleResponse(res);
+  },
+
+  async getRecentActivities(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/activities`);
+    return handleResponse(res);
+  },
+
+  async resetRecentActivities(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/activities`, {
+      method: "DELETE"
+    });
+    return handleResponse(res);
+  },
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { apiService } from '../services/apiService'
+import { apiService } from '../../services/apiService'
 import {
   HtmlEditor,
   Image,
@@ -33,6 +33,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [availableCOs, setAvailableCOs] = useState([])
   const [coDetails, setCoDetails] = useState([]) // Full CO objects with code + description
   const [bloomLevels, setBloomLevels] = useState({}) // questionNumber -> bloom level (local only)
+  const [uploadStatus, setUploadStatus] = useState('')
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [showBlobWarning, setShowBlobWarning] = useState(false)
 
   const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
   const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
@@ -42,6 +45,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const BLOOM_OPTIONS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
 
   const rteRef = useRef(null)
+  const uploadingCountRef = useRef(0)
 
   useEffect(() => {
     loadPaperData()
@@ -77,7 +81,13 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       setCoDetails(cosFullList)
 
       const res = await apiService.getQuestionPaper(assessment._id)
-      setEditorValue(res.content || '<p>Write your questions here...</p>')
+      const content = res.content || '<p>Write your questions here...</p>'
+      setEditorValue(content)
+      if (content.includes('src="blob:') || content.includes("src='blob:")) {
+        setShowBlobWarning(true)
+      } else {
+        setShowBlobWarning(false)
+      }
 
       const currentAssessment = res.assessment || assessment
       setExamDuration(currentAssessment.examDuration || '')
@@ -165,6 +175,32 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   }
 
   const savePaper = async () => {
+    // 1. Check if an image is currently uploading
+    if (uploadingCount > 0) {
+      alert('One or more images are still temporary. Please wait until image uploads complete.')
+      return
+    }
+
+    // 2. Parse editor HTML and check for temporary image sources (blob:, data:image, localhost)
+    const currentContent = rteRef.current ? rteRef.current.value : editorValue
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = currentContent || ''
+    const imgs = tempDiv.querySelectorAll('img')
+    let hasTemporaryImages = false
+    let offendingSrc = ''
+    for (let img of imgs) {
+      const src = img.getAttribute('src') || ''
+      if (src.startsWith('blob:') || src.startsWith('data:image') || src.includes('localhost')) {
+        hasTemporaryImages = true
+        offendingSrc = src
+        break
+      }
+    }
+    if (hasTemporaryImages) {
+      alert(`One or more images are still temporary (${offendingSrc}). Please wait until image uploads complete.`)
+      return
+    }
+
     // Validate max marks allocation sum
     const totalAllocated = questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)
     if (questions.length > 0 && totalAllocated !== assessment.maxMarks) {
@@ -184,7 +220,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       })
 
       // 2. Save Question Paper content and metadata questions
-      const currentContent = rteRef.current ? rteRef.current.value : editorValue
       await apiService.saveQuestionPaper(assessment._id, {
         content: currentContent,
         questions
@@ -410,6 +445,157 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     input.click()
   }
 
+  const API_BASE = import.meta.env.VITE_API_URL || ''
+
+  const insertImageSettings = {
+    saveUrl: `${API_BASE}/api/upload/image`,
+    path: 'https://'
+  }
+
+  const getNextImageName = (currentUploading) => {
+    const courseCode = (offering?.course?.courseCode || 'COURSE').replace(/[^a-zA-Z0-9]/g, '');
+    const assessmentName = (assessment?.name || 'ASSESSMENT').replace(/[^a-zA-Z0-9]/g, '');
+    const year = offering?.academicYear || new Date().getFullYear();
+    
+    // Count existing img tags in current editor content
+    const currentHtml = rteRef.current ? rteRef.current.value : editorValue;
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = currentHtml || '';
+    const imgCount = tempDiv.querySelectorAll('img').length;
+    
+    return `${courseCode}_${assessmentName}_Q${imgCount + currentUploading + 1}_${year}`;
+  };
+
+  const onImageUploading = (args) => {
+    // Count existing img tags in current editor content
+    const currentHtml = rteRef.current ? rteRef.current.value : editorValue;
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = currentHtml || '';
+    const imgCount = tempDiv.querySelectorAll('img').length;
+
+    if (imgCount + uploadingCountRef.current >= 10) {
+      args.cancel = true;
+      setUploadStatus('❌ Upload failed: A maximum of 10 images are allowed per question paper.');
+      alert('A maximum of 10 images are allowed per question paper.');
+      return;
+    }
+
+    uploadingCountRef.current += 1;
+    setUploadingCount(uploadingCountRef.current);
+    
+    const token = localStorage.getItem('obe-auth-token')
+    if (token && args.currentRequest) {
+      args.currentRequest.setRequestHeader('Authorization', `Bearer ${token}`)
+      
+      const filename = getNextImageName(uploadingCountRef.current - 1)
+      args.currentRequest.setRequestHeader('x-filename', filename)
+    }
+
+    const request = args.currentRequest
+    if (request && request.upload) {
+      request.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100)
+          const totalBlocks = 10
+          const filled = Math.round((percent / 100) * totalBlocks)
+          const empty = totalBlocks - filled
+          const progressStr = '█'.repeat(filled) + '░'.repeat(empty)
+          setUploadStatus(`Uploading image... ${progressStr} ${percent}%`)
+        }
+      }
+    }
+  }
+
+  const onImageUploadSuccess = (args) => {
+    uploadingCountRef.current = Math.max(0, uploadingCountRef.current - 1)
+    const nextCount = uploadingCountRef.current
+    setUploadingCount(nextCount)
+    if (nextCount === 0) {
+      setUploadStatus('✓ Image uploaded successfully.')
+      setTimeout(() => setUploadStatus(''), 3000)
+    }
+
+    try {
+      if (args.e && args.e.currentTarget && args.e.currentTarget.response) {
+        const response = JSON.parse(args.e.currentTarget.response)
+        let newUrl = ''
+        if (response && response.success && response.url) {
+          newUrl = response.url
+        } else if (response && response.secureUrl) {
+          newUrl = response.secureUrl
+        }
+
+        if (newUrl) {
+          // Strip "https://" or "http://" prefix from the start of newUrl
+          // because Syncfusion will prepend the "path" setting (which we set to 'https://')
+          let relativeName = newUrl
+          if (newUrl.startsWith('https://')) {
+            relativeName = newUrl.substring(8)
+          } else if (newUrl.startsWith('http://')) {
+            relativeName = newUrl.substring(7)
+          }
+          
+          // Set args.file.name to update the internal Syncfusion model natively
+          if (args.file) {
+            args.file.name = relativeName
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error parsing image upload response:', err)
+    }
+  }
+
+  const onImageUploadFailed = (args) => {
+    uploadingCountRef.current = Math.max(0, uploadingCountRef.current - 1)
+    const nextCount = uploadingCountRef.current
+    setUploadingCount(nextCount)
+    if (nextCount === 0) {
+      setUploadStatus('❌ Upload failed.')
+      setTimeout(() => setUploadStatus(''), 3000)
+    }
+
+    console.error('Image upload failed:', args)
+    let message = 'Image upload failed. Please try again.'
+    try {
+      if (args.e && args.e.currentTarget && args.e.currentTarget.response) {
+        const response = JSON.parse(args.e.currentTarget.response)
+        if (response && response.message) {
+          message = `Upload failed: ${response.message}`
+        }
+      }
+    } catch (e) {}
+    alert(message)
+  }
+
+  const onDialogOpen = (args) => {
+    if (args.container) {
+      const uploadInput = args.container.querySelector('.e-rte-upload-input');
+      if (uploadInput && uploadInput.ej2_instances && uploadInput.ej2_instances[0]) {
+        const uploaderInstance = uploadInput.ej2_instances[0];
+        
+        // Enable multiple file upload and set limit
+        uploaderInstance.multiple = true;
+        uploaderInstance.maxFilesCount = 10;
+        uploaderInstance.filesLimit = 10;
+        
+        // Attach selected event handler to enforce the 10-image limit when selecting files
+        uploaderInstance.selected = (selectArgs) => {
+          const currentHtml = rteRef.current ? rteRef.current.value : editorValue;
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = currentHtml || '';
+          const imgCount = tempDiv.querySelectorAll('img').length;
+          
+          const newFilesCount = selectArgs.filesData.length;
+          if (imgCount + uploadingCountRef.current + newFilesCount > 10) {
+            selectArgs.cancel = true;
+            alert('A maximum of 10 images are allowed per question paper.');
+          }
+        };
+      }
+    }
+  }
+
   const toolbarSettings = {
     items: [
       'Bold', 'Italic', 'Underline', 'StrikeThrough', 'SubScript', 'SuperScript', '|',
@@ -461,11 +647,20 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         <div className="flex items-center gap-2 pl-9 md:pl-0">
           <button
             onClick={savePaper}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold shadow-md transition-all disabled:opacity-50"
+            disabled={saving || uploadingCount > 0}
+            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Save size={16} />
-            {saving ? 'Saving...' : 'Save Paper'}
+            {saving ? (
+              <>
+                <Loader2 className="animate-spin" size={16} />
+                <span>Saving...</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Save Paper</span>
+              </>
+            )}
           </button>
 
           <button
@@ -485,6 +680,24 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           </button>
         </div>
       </div>
+
+      {showBlobWarning && (
+        <div className="p-4 rounded-xl flex items-start gap-3 bg-amber-50 text-amber-800 border border-amber-200 shadow-sm font-medium">
+          <AlertCircle className="shrink-0 mt-0.5" size={20} />
+          <div>
+            <span className="font-bold">Warning:</span> This question paper contains temporary image references. Please reinsert those images before saving.
+          </div>
+        </div>
+      )}
+
+      {uploadStatus && (
+        <div className="p-4 rounded-xl flex items-center gap-3 bg-blue-50 text-blue-800 border border-blue-200 shadow-sm font-semibold">
+          <Loader2 className={`shrink-0 ${uploadStatus.includes('✓') || uploadStatus.includes('❌') ? '' : 'animate-spin'}`} size={20} />
+          <div className="font-mono text-sm">
+            {uploadStatus}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="p-4 rounded-xl flex items-center gap-3 bg-red-50 text-red-700 border border-red-200 shadow-sm font-medium">
@@ -513,6 +726,11 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
               ref={rteRef}
               value={editorValue}
               toolbarSettings={toolbarSettings}
+              insertImageSettings={insertImageSettings}
+              imageUploading={onImageUploading}
+              imageUploadSuccess={onImageUploadSuccess}
+              imageUploadFailed={onImageUploadFailed}
+              dialogOpen={onDialogOpen}
               height={450}
             >
               <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table]} />

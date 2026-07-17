@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../../context/AuthContext'
 
 export default function ProfileAvatar() {
   const { user, logout, changePassword, actionLoading, message } = useAuth()

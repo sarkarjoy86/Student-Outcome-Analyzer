@@ -101,6 +101,13 @@ export default function AdminDashboard() {
   const [editingStudentId, setEditingStudentId] = useState(null);
   const [editStudentForm, setEditStudentForm] = useState({ studentId: "", name: "" });
 
+  const [sections, setSections] = useState([]);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [selectedSectionId, setSelectedSectionId] = useState(null);
+  const [sectionForm, setSectionForm] = useState({ sectionName: "" });
+  const [editingSectionId, setEditingSectionId] = useState(null);
+  const [offeringSections, setOfferingSections] = useState([]);
+
   const [offerings, setOfferings] = useState([]);
   const [offeringsLoading, setOfferingsLoading] = useState(false);
   const [offeringForm, setOfferingForm] = useState({
@@ -201,7 +208,11 @@ export default function AdminDashboard() {
       }
 
       if (targetBatchId) {
-        await fetchBatchStudents(targetBatchId);
+        await fetchSections(targetBatchId);
+      } else {
+        setSections([]);
+        setSelectedSectionId(null);
+        setBatchStudents([]);
       }
     } catch (err) {
       alert(err.message || "Failed to load batches.");
@@ -210,12 +221,37 @@ export default function AdminDashboard() {
     }
   };
 
-  const fetchBatchStudents = async (batchId) => {
+  const fetchSections = async (batchId) => {
+    setSectionsLoading(true);
     try {
-      const data = await apiService.getBatchStudents(batchId);
+      const data = await apiService.getSections(batchId);
+      const fetchedSections = data.sections || [];
+      setSections(fetchedSections);
+
+      let targetSectionId = selectedSectionId;
+      if (!fetchedSections.some(s => s._id === targetSectionId)) {
+        targetSectionId = fetchedSections.length > 0 ? fetchedSections[0]._id : null;
+      }
+      setSelectedSectionId(targetSectionId);
+
+      if (targetSectionId) {
+        await fetchSectionStudents(batchId, targetSectionId);
+      } else {
+        setBatchStudents([]);
+      }
+    } catch (err) {
+      alert(err.message || "Failed to load sections.");
+    } finally {
+      setSectionsLoading(false);
+    }
+  };
+
+  const fetchSectionStudents = async (batchId, sectionId) => {
+    try {
+      const data = await apiService.getSectionStudents(batchId, sectionId);
       setBatchStudents(data.students || []);
     } catch (err) {
-      alert(err.message || "Failed to load batch students.");
+      alert(err.message || "Failed to load section students.");
     }
   };
 
@@ -567,37 +603,70 @@ export default function AdminDashboard() {
 
   const handleSelectBatch = async (batchId) => {
     setSelectedBatchId(batchId);
-    await fetchBatchStudents(batchId);
+    await fetchSections(batchId);
+  };
+
+  const handleSelectSection = async (sectionId) => {
+    setSelectedSectionId(sectionId);
+    await fetchSectionStudents(selectedBatchId, sectionId);
+  };
+
+  const handleCreateSection = async (e) => {
+    e.preventDefault();
+    if (!selectedBatchId || !sectionForm.sectionName.trim()) {
+      alert("Section name is required.");
+      return;
+    }
+    try {
+      await apiService.createSection(selectedBatchId, {
+        sectionName: sectionForm.sectionName.trim(),
+      });
+      setSectionForm({ sectionName: "" });
+      await fetchSections(selectedBatchId);
+    } catch (err) {
+      alert(err.message || "Failed to create section.");
+    }
+  };
+
+  const handleDeleteSection = async (sectionId) => {
+    if (!window.confirm("Are you sure you want to delete this section? All students in this section will be cleared of their section assignment.")) return;
+    try {
+      await apiService.deleteSection(selectedBatchId, sectionId);
+      await fetchSections(selectedBatchId);
+    } catch (err) {
+      alert(err.message || "Failed to delete section.");
+    }
   };
 
   const handleAddStudentToBatch = async (e) => {
     e.preventDefault();
     if (
       !selectedBatchId ||
+      !selectedSectionId ||
       !studentForm.studentId.trim() ||
       !studentForm.name.trim()
     ) {
-      alert("Please fill both student ID and name.");
+      alert("Please select a section and fill both student ID and name.");
       return;
     }
     try {
-      await apiService.addBatchStudent(selectedBatchId, {
+      await apiService.addSectionStudent(selectedBatchId, selectedSectionId, {
         studentId: studentForm.studentId.trim(),
         name: studentForm.name.trim(),
       });
       setStudentForm({ studentId: "", name: "" });
-      fetchBatchStudents(selectedBatchId);
+      await fetchSectionStudents(selectedBatchId, selectedSectionId);
     } catch (err) {
       alert(err.message || "Failed to add student.");
     }
   };
 
   const handleDeleteBatchStudent = async (studentId) => {
-    if (!window.confirm("Are you sure you want to delete this student from the batch?")) return;
-    if (!selectedBatchId) return;
+    if (!window.confirm("Are you sure you want to delete this student from the section?")) return;
+    if (!selectedBatchId || !selectedSectionId) return;
     try {
-      await apiService.deleteBatchStudent(selectedBatchId, studentId);
-      fetchBatchStudents(selectedBatchId);
+      await apiService.deleteSectionStudent(selectedBatchId, selectedSectionId, studentId);
+      await fetchSectionStudents(selectedBatchId, selectedSectionId);
     } catch (err) {
       alert(err.message || "Failed to remove student.");
     }
@@ -609,20 +678,39 @@ export default function AdminDashboard() {
   };
 
   const handleUpdateBatchStudent = async (studentId) => {
-    if (!selectedBatchId || !editStudentForm.studentId.trim() || !editStudentForm.name.trim()) {
+    if (!selectedBatchId || !selectedSectionId || !editStudentForm.studentId.trim() || !editStudentForm.name.trim()) {
       alert("Please fill both student ID and name.");
       return;
     }
     try {
-      await apiService.updateBatchStudent(selectedBatchId, studentId, {
+      await apiService.updateSectionStudent(selectedBatchId, selectedSectionId, studentId, {
         studentId: editStudentForm.studentId.trim(),
         name: editStudentForm.name.trim(),
       });
       setEditingStudentId(null);
       setEditStudentForm({ studentId: "", name: "" });
-      fetchBatchStudents(selectedBatchId);
+      await fetchSectionStudents(selectedBatchId, selectedSectionId);
     } catch (err) {
       alert(err.message || "Failed to update student.");
+    }
+  };
+
+  const handleBatchChangeInOffering = async (batchId) => {
+    setOfferingForm((prev) => ({
+      ...prev,
+      batchId: batchId,
+      section: "",
+    }));
+    if (batchId) {
+      try {
+        const data = await apiService.getSections(batchId);
+        setOfferingSections(data.sections || []);
+      } catch (err) {
+        console.error("Failed to load sections for batch:", err);
+        setOfferingSections([]);
+      }
+    } else {
+      setOfferingSections([]);
     }
   };
 
@@ -676,13 +764,14 @@ export default function AdminDashboard() {
         section: "",
         academicYear: new Date().getFullYear(),
       });
+      setOfferingSections([]);
       fetchOfferings();
     } catch (err) {
       alert(err.message || "Failed to save course offering.");
     }
   };
 
-  const startEditOffering = (offering) => {
+  const startEditOffering = async (offering) => {
     setEditingOfferingId(offering._id);
     setOfferingForm({
       courseId: offering.course?._id || "",
@@ -692,6 +781,17 @@ export default function AdminDashboard() {
       section: offering.section || "",
       academicYear: offering.academicYear || new Date().getFullYear(),
     });
+    if (offering.batch?._id) {
+      try {
+        const data = await apiService.getSections(offering.batch._id);
+        setOfferingSections(data.sections || []);
+      } catch (err) {
+        console.error("Failed to load sections for batch:", err);
+        setOfferingSections([]);
+      }
+    } else {
+      setOfferingSections([]);
+    }
   };
 
   const handleDeleteOffering = async (offeringId) => {
@@ -1627,7 +1727,7 @@ export default function AdminDashboard() {
                     Batches ({batches.length})
                   </h3>
                 </div>
-                <div className="space-y-2.5 max-h-[450px] overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
                   {batches.length === 0 ? (
                     <p className="text-gray-500 italic py-4 text-center">No batches created yet.</p>
                   ) : (
@@ -1671,19 +1771,92 @@ export default function AdminDashboard() {
                   )}
                 </div>
               </div>
+
+              {/* Sections for Selected Batch */}
+              {selectedBatchId && (
+                <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-150">
+                  <div className="flex justify-between items-center mb-4 border-b pb-3">
+                    <h3 className="font-bold text-gray-800 text-lg">
+                      Sections ({sections.length})
+                    </h3>
+                  </div>
+
+                  {/* Add Section inline form */}
+                  <form onSubmit={handleCreateSection} className="flex gap-2 mb-4">
+                    <input
+                      type="text"
+                      value={sectionForm.sectionName}
+                      onChange={(e) => setSectionForm({ sectionName: e.target.value })}
+                      placeholder="e.g. A"
+                      className="flex-1 border border-gray-300 px-3 py-2 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-500"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md transition-all active:scale-[0.98]"
+                    >
+                      + Add
+                    </button>
+                  </form>
+
+                  {/* Sections List */}
+                  <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                    {sectionsLoading ? (
+                      <p className="text-gray-500 italic py-2 text-center text-sm">Loading sections...</p>
+                    ) : sections.length === 0 ? (
+                      <p className="text-gray-500 italic py-2 text-center text-sm">No sections created yet.</p>
+                    ) : (
+                      sections.map((section) => {
+                        const isSelected = selectedSectionId === section._id;
+                        return (
+                          <div
+                            key={section._id}
+                            onClick={() => handleSelectSection(section._id)}
+                            className={`flex items-center justify-between border rounded-xl p-2.5 cursor-pointer transition-all duration-200 ${
+                              isSelected
+                                ? "bg-purple-50 border-purple-300 text-purple-700 shadow-sm font-medium"
+                                : "bg-white hover:bg-gray-50 border-gray-200 text-gray-700"
+                            }`}
+                          >
+                            <span className="font-semibold text-sm">Section {section.sectionName}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSection(section._id);
+                              }}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-650 hover:bg-red-50 transition-colors"
+                              title="Delete Section"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Right Column - Student List & Add Student */}
             <div className="lg:col-span-2">
-              {selectedBatchId ? (
+              {selectedBatchId && selectedSectionId ? (
                 <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150 space-y-6">
                   <div>
                     <h2 className="text-2xl font-bold text-gray-800">
                       Manage Students
                     </h2>
-                    <p className="text-purple-600 font-semibold text-sm mt-1">
-                      Batch: {batches.find((b) => b._id === selectedBatchId)?.name || "Loading..."}
-                    </p>
+                    <div className="flex gap-4 mt-1">
+                      <p className="text-purple-600 font-semibold text-sm">
+                        Batch: {batches.find((b) => b._id === selectedBatchId)?.name || "Loading..."}
+                      </p>
+                      <p className="text-indigo-600 font-semibold text-sm">
+                        Section: {sections.find((s) => s._id === selectedSectionId)?.sectionName || ""}
+                      </p>
+                      <p className="text-indigo-600 font-semibold text-sm">
+                        Total Students: {batchStudents.length}
+                      </p>
+                    </div>
                   </div>
 
                   {/* Add Student inline form */}
@@ -1691,7 +1864,7 @@ export default function AdminDashboard() {
                     onSubmit={handleAddStudentToBatch}
                     className="bg-gray-50/70 p-4 rounded-xl border border-gray-200/60"
                   >
-                    <h3 className="font-semibold text-gray-700 mb-3 text-sm">Add Student to Batch</h3>
+                    <h3 className="font-semibold text-gray-700 mb-3 text-sm">Add Student to Section</h3>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                       <div className="md:col-span-2">
                         <label className="block text-xs font-semibold text-gray-600 mb-1">
@@ -1752,7 +1925,7 @@ export default function AdminDashboard() {
                               colSpan="3"
                               className="text-center py-8 text-gray-500 italic"
                             >
-                              No students registered in this batch yet.
+                              No students registered in this section yet.
                             </td>
                           </tr>
                         ) : (
@@ -1831,7 +2004,7 @@ export default function AdminDashboard() {
                                       <button
                                         onClick={() => handleDeleteBatchStudent(student._id)}
                                         className="inline-flex items-center gap-1 bg-red-55/70 hover:bg-red-100 text-red-650 px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 transition-all shadow-sm"
-                                        title="Remove Student from Batch"
+                                        title="Remove Student from Section"
                                       >
                                         <Trash2 size={12} />
                                         Delete
@@ -1847,12 +2020,20 @@ export default function AdminDashboard() {
                     </table>
                   </div>
                 </div>
+              ) : selectedBatchId ? (
+                <div className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]">
+                  <Users className="text-gray-300 mb-4" size={48} />
+                  <h3 className="text-lg font-bold text-gray-700">No Section Selected</h3>
+                  <p className="text-gray-400 text-sm mt-1 max-w-sm">
+                    Create and select a section under this batch in the left panel to manage its students.
+                  </p>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]">
                   <Users className="text-gray-300 mb-4" size={48} />
                   <h3 className="text-lg font-bold text-gray-700">No Batch Selected</h3>
                   <p className="text-gray-400 text-sm mt-1 max-w-sm">
-                    Select a batch from the list on the left to manage the registered students and update details.
+                    Select a batch from the list on the left to manage the registered sections and students.
                   </p>
                 </div>
               )}
@@ -1899,12 +2080,7 @@ export default function AdminDashboard() {
                   </label>
                   <select
                     value={offeringForm.batchId}
-                    onChange={(e) =>
-                      setOfferingForm({
-                        ...offeringForm,
-                        batchId: e.target.value,
-                      })
-                    }
+                    onChange={(e) => handleBatchChangeInOffering(e.target.value)}
                     className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
                   >
                     <option value="">Select batch</option>
@@ -1965,8 +2141,7 @@ export default function AdminDashboard() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">
                     Section
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={offeringForm.section}
                     onChange={(e) =>
                       setOfferingForm({
@@ -1974,9 +2149,16 @@ export default function AdminDashboard() {
                         section: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
-                    placeholder="A"
-                  />
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl bg-white"
+                    required
+                  >
+                    <option value="">Select section</option>
+                    {offeringSections.map((sec) => (
+                      <option key={sec._id} value={sec.sectionName}>
+                        Section {sec.sectionName}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">
@@ -2014,6 +2196,7 @@ export default function AdminDashboard() {
                           section: "",
                           academicYear: new Date().getFullYear(),
                         });
+                        setOfferingSections([]);
                       }}
                       className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold border transition-all"
                     >

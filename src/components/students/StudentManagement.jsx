@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { apiService } from "../services/apiService";
-import { parseComprehensiveExcel } from "../utils/excelParser";
+import { apiService } from "../../services/apiService";
+import { parseComprehensiveExcel } from "../../utils/excelParser";
 import {
   Upload,
   FileSpreadsheet,
