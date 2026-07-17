@@ -87,7 +87,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
     if (!id) return ''
     const base = window.location.origin + window.location.pathname
     const cleanBase = base.endsWith('/') ? base : base + '/'
-    return `${cleanBase}?feedbackId=${id}`
+    return `${cleanBase}?feedbackId=${encodeURIComponent(id)}`
   }
 
   const handleCopyLink = async () => {

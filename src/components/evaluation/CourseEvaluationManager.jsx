@@ -637,7 +637,7 @@ export default function CourseEvaluationManager({ offering, user }) {
                 if (!id) return ''
                 const base = window.location.origin + window.location.pathname
                 const cleanBase = base.endsWith('/') ? base : base + '/'
-                return `${cleanBase}?feedbackId=${id}`
+                return `${cleanBase}?feedbackId=${encodeURIComponent(id)}`
               }
               const dynamicLink = getDynamicPublicLink()
               const dynamicQr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(dynamicLink)}`
