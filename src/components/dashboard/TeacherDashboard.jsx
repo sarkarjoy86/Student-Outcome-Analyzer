@@ -736,8 +736,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               </div>
 
               {/* Right panel: Recent Activities */}
-              <div className="space-y-6">
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+              <div className="lg:col-span-1 relative min-h-[385px] lg:min-h-0">
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 lg:absolute lg:inset-0 flex flex-col lg:h-auto h-full gap-4">
                   {(() => {
                     const getActivityIconAndColor = (actionType) => {
                       const action = (actionType || '').trim().toLowerCase()
@@ -779,9 +779,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         </div>
 
                         <div 
-                          className="overflow-y-auto pr-1 space-y-4" 
+                          className="overflow-y-auto pr-1 space-y-4 flex-1 lg:max-h-none max-h-[385px]" 
                           style={{ 
-                            maxHeight: '385px', 
                             scrollbarWidth: 'thin', 
                             scrollbarColor: '#10b981 transparent' 
                           }}

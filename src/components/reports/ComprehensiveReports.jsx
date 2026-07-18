@@ -802,7 +802,7 @@ const ComprehensiveReports = ({
       ...(courseInfo?.batchName ? [['Batch Name', courseInfo.batchName]] : []),
       ...(courseInfo?.semesterName ? [['Semester', courseInfo.semesterName]] : []),
       ...(courseInfo?.sectionName ? [['Section', courseInfo.sectionName]] : []),
-      ['Generated on', new Date().toLocaleDateString()],
+      ['Generated on', (() => { const d = new Date(); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()],
       [],
       ['Calculations of COs & POs'],
       [],
@@ -853,7 +853,7 @@ const ComprehensiveReports = ({
       ['Course Code', courseInfo?.courseCode || 'N/A'],
       ['Course Title', courseInfo?.courseTitle || 'N/A'],
       ['Teacher Name', courseInfo?.teacherName || 'N/A'],
-      ['Generated on', new Date().toLocaleDateString()],
+      ['Generated on', (() => { const d = new Date(); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()],
       [],
       ['SUMMARY METRICS'],
       ['Total Enrollment', batchMetrics.enrollment],
@@ -1081,7 +1081,7 @@ const ComprehensiveReports = ({
           </tr>
           <tr>
             <td class="label">Report Generated</td>
-            <td>${new Date().toLocaleDateString()}</td>
+            <td>${(() => { const d = new Date(); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}</td>
           </tr>
         </table>
       </div>
@@ -3860,7 +3860,7 @@ const ReportCoverPage = ({ title, courseInfo, targetPassMarks, kpiCO, kpiPO, stu
         </div>
         <div>
           <p className="text-[10px] text-gray-400 font-bold uppercase">Generation Date</p>
-          <p className="text-gray-800 break-words text-xs sm:text-sm md:text-base font-bold">{new Date().toLocaleDateString()}</p>
+          <p className="text-gray-800 break-words text-xs sm:text-sm md:text-base font-bold">{(() => { const d = new Date(); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}</p>
         </div>
         {student && (
           <div className="col-span-2 border-t border-green-200 pt-3 mt-1">

@@ -114,12 +114,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
       setCloseDate('')
       return
     }
-    const d = new Date(val)
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-    const year = lastDay.getFullYear()
-    const month = String(lastDay.getMonth() + 1).padStart(2, '0')
-    const day = String(lastDay.getDate()).padStart(2, '0')
-    setCloseDate(`${year}-${month}-${day}`)
+    setCloseDate(val)
   }
 
   const handleSave = async () => {
@@ -431,7 +426,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             />
           ) : (
             <span className="text-xs px-3.5 py-1.5 rounded-lg font-medium bg-neutral-100 text-gray-700 border border-gray-200">
-              {closeDate ? new Date(closeDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'No deadline set'}
+              {closeDate ? (new Date(closeDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + new Date(closeDate + 'T00:00:00').getFullYear()) : 'No deadline set'}
             </span>
           )}
         </div>

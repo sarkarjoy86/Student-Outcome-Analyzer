@@ -127,7 +127,7 @@ const Results = ({ students, marks, assessments, courseInfo }) => {
       ...(courseInfo?.term ? [['Term', courseInfo.term]] : []),
       ...(courseInfo?.semester ? [['Semester', courseInfo.semester]] : []),
       ...(courseInfo?.section ? [['Section', courseInfo.section]] : []),
-      ['Generated on', new Date().toLocaleDateString()],
+      ['Generated on', (() => { const d = new Date(); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()],
       [],
       ['STUDENT MARKS AND GRADES'],
       [],

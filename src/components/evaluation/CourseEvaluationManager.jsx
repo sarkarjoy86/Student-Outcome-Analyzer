@@ -394,7 +394,7 @@ export default function CourseEvaluationManager({ offering, user }) {
                             <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500">
                               <Calendar size={13} />
                               <span>
-                                {new Date(evalDoc.openDate).toLocaleDateString()} - {new Date(evalDoc.closeDate).toLocaleDateString()}
+                                {(() => { const d = new Date(evalDoc.openDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()} - {(() => { const d = new Date(evalDoc.closeDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}
                               </span>
                             </div>
                           </td>
@@ -678,8 +678,8 @@ export default function CourseEvaluationManager({ offering, user }) {
             })()}
 
             <div className="flex gap-4 text-xs font-bold text-gray-500 border-t pt-4">
-              <p>Opens: <span className="text-gray-800">{new Date(publishModal.openDate).toLocaleDateString()}</span></p>
-              <p>Closes: <span className="text-gray-800">{new Date(publishModal.closeDate).toLocaleDateString()}</span></p>
+              <p>Opens: <span className="text-gray-800">{(() => { const d = new Date(publishModal.openDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}</span></p>
+              <p>Closes: <span className="text-gray-800">{(() => { const d = new Date(publishModal.closeDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}</span></p>
             </div>
           </div>
         </div>

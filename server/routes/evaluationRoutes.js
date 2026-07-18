@@ -325,7 +325,7 @@ router.get('/public/evaluations/:id', async (req, res) => {
     // Check if evaluation is active based on dates
     const now = new Date()
     if (now < new Date(evaluation.openDate)) {
-      return res.status(400).json({ message: `This evaluation is not open yet. It will open on ${new Date(evaluation.openDate).toLocaleDateString()}.` })
+      return res.status(400).json({ message: `This evaluation is not open yet. It will open on ${(() => { const d = new Date(evaluation.openDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}.` })
     }
     if (now > new Date(evaluation.closeDate)) {
       return res.status(400).json({ message: 'This evaluation is closed.' })

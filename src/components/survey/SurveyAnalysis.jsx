@@ -125,7 +125,8 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
 
   const timelineDataMap = {}
   responses.forEach(resp => {
-    const dateStr = new Date(resp.submittedAt).toLocaleDateString()
+    const dateObj = new Date(resp.submittedAt)
+    const dateStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear()
     timelineDataMap[dateStr] = (timelineDataMap[dateStr] || 0) + 1
   })
   const lineChartData = Object.keys(timelineDataMap).map(date => ({
@@ -756,7 +757,7 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-xs text-gray-400 font-bold">
-                      {new Date(r.submittedAt).toLocaleDateString()}
+                      {(() => { const dateObj = new Date(r.submittedAt); return dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear(); })()}
                     </td>
                     <td className="px-6 py-4 text-center font-black">
                       {indAvg}
@@ -795,7 +796,7 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
                   Response Details — Response #{responses.findIndex(x => x._id === selectedResponse._id) + 1}
                 </h3>
                 <p className="text-xs text-gray-400 font-bold mt-0.5">
-                  Submitted: {new Date(selectedResponse.submittedAt).toLocaleDateString()} • Confidential Survey Response
+                  Submitted: {(() => { const dateObj = new Date(selectedResponse.submittedAt); return dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear(); })()} • Confidential Survey Response
                 </p>
               </div>
               <button

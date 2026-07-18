@@ -348,7 +348,7 @@ export default function PublicSurveyForm({ evaluationId, onBackToHome }) {
                 <div>
                   <p className="font-bold">Submission Deadline Passed</p>
                   <p className="text-[11px] text-red-600/90 mt-0.5">
-                    The close date ({survey?.closeDate ? new Date(survey.closeDate).toLocaleDateString() : 'Expired'}) has exceeded. This form no longer accepts responses.
+                    The close date ({survey?.closeDate ? (new Date(survey.closeDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + new Date(survey.closeDate).getFullYear()) : 'Expired'}) has exceeded. This form no longer accepts responses.
                   </p>
                 </div>
               </div>
@@ -561,7 +561,7 @@ export default function PublicSurveyForm({ evaluationId, onBackToHome }) {
                     <li className="font-semibold text-red-600">
                       Close Date: {(() => {
                         try {
-                          return new Date(survey.closeDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+                          return new Date(survey.closeDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + new Date(survey.closeDate).getFullYear();
                         } catch {
                           return survey.closeDate;
                         }

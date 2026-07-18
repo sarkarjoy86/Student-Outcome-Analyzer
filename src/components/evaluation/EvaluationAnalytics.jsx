@@ -129,7 +129,8 @@ export default function EvaluationAnalytics({ evaluationId, onBack }) {
   // Timeline Line chart
   const timelineDataMap = {}
   responses.forEach(resp => {
-    const dateStr = new Date(resp.submittedAt).toLocaleDateString()
+    const dateObj = new Date(resp.submittedAt)
+    const dateStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear()
     timelineDataMap[dateStr] = (timelineDataMap[dateStr] || 0) + 1
   })
   const lineChartData = Object.keys(timelineDataMap).map(date => ({
@@ -755,7 +756,7 @@ export default function EvaluationAnalytics({ evaluationId, onBack }) {
                       {r.email}
                     </td>
                     <td className="px-6 py-4 text-xs text-gray-400 font-bold">
-                      {new Date(r.submittedAt).toLocaleDateString()}
+                      {(() => { const d = new Date(r.submittedAt); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}
                     </td>
                     <td className="px-6 py-4 text-center font-black">
                       {indAvg}

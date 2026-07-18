@@ -136,9 +136,7 @@ router.put('/surveys/:id', requireAuth, async (req, res) => {
     if (title) surveyDoc.title = title
     if (openDate) surveyDoc.openDate = openDate
     if (closeDate) {
-      const d = new Date(closeDate)
-      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-      surveyDoc.closeDate = lastDay
+      surveyDoc.closeDate = new Date(closeDate)
     }
     if (description !== undefined) surveyDoc.description = description
     
@@ -274,11 +272,9 @@ router.get('/public/surveys/:id', async (req, res) => {
 
     const now = new Date()
     if (now < new Date(surveyDoc.openDate)) {
-      return res.status(400).json({ message: `This survey is not open yet. It will open on ${new Date(surveyDoc.openDate).toLocaleDateString()}.` })
+      return res.status(400).json({ message: `This survey is not open yet. It will open on ${(() => { const d = new Date(surveyDoc.openDate); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + d.getFullYear(); })()}.` })
     }
-    if (now > new Date(surveyDoc.closeDate)) {
-      return res.status(400).json({ message: 'This survey is closed.' })
-    }
+
 
     const survey = await getCombinedSurvey(surveyDoc)
     res.status(200).json({ survey })
@@ -308,7 +304,10 @@ router.post('/public/surveys/:id/verify-student', async (req, res) => {
     }
 
     const now = new Date()
-    if (now > new Date(surveyDoc.closeDate)) {
+    const closeDate = new Date(surveyDoc.closeDate)
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const deadlineDate = new Date(closeDate.getFullYear(), closeDate.getMonth(), closeDate.getDate())
+    if (todayDate > deadlineDate) {
       return res.status(400).json({ message: 'This survey is closed. The submission deadline has passed.' })
     }
 
@@ -383,7 +382,14 @@ router.post('/public/surveys/:id/submit', async (req, res) => {
     }
 
     const now = new Date()
-    if (now < new Date(surveyDoc.openDate) || now > new Date(surveyDoc.closeDate)) {
+    const closeDate = new Date(surveyDoc.closeDate)
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const deadlineDate = new Date(closeDate.getFullYear(), closeDate.getMonth(), closeDate.getDate())
+    
+    const openDate = new Date(surveyDoc.openDate)
+    const openDateZero = new Date(openDate.getFullYear(), openDate.getMonth(), openDate.getDate())
+    
+    if (todayDate < openDateZero || todayDate > deadlineDate) {
       return res.status(400).json({ message: 'This survey is not open for submission.' })
     }
 
