@@ -1104,6 +1104,41 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       </table>
                     </div>
                   )}
+
+                  {/* Status Explanation Legend */}
+                  {assessments.length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-gray-100 flex flex-col md:flex-row md:items-start gap-4 text-xs font-semibold">
+                      <div className="shrink-0 text-gray-400 font-bold uppercase tracking-wider text-[10px] mt-0.5">Status Key:</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full text-gray-500">
+                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-yellow-50 text-yellow-750 border border-yellow-200">
+                            Draft
+                          </span>
+                          <span className="leading-normal font-medium text-gray-600">
+                            Assessment templates, marks division, or Course Outcome (CO) mappings are not fully configured yet.
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            Assigned
+                          </span>
+                          <span className="leading-normal font-medium text-gray-600">
+                            Assessment templates and CO mappings are complete. Ready for evaluation, but student marks entry is pending.
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-250">
+                            Evaluated
+                          </span>
+                          <span className="leading-normal font-medium text-gray-600">
+                            Marks entry is complete. Student performance grades have been recorded for all enrolled students in the course.
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
