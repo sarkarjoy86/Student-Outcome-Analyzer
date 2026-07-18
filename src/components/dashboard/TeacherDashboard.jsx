@@ -294,6 +294,19 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     const metadataMap = marksSpreadsheetData.metadata || {}
     const marksMap = marksSpreadsheetData.marks || {}
 
+    // Add high-priority reminder if no assessments configured
+    if (activeAssessments.length === 0) {
+      list.push({
+        type: 'assessment_missing',
+        id: `assessment_missing_${offering._id}`,
+        priority: 1, // High Priority
+        title: 'Setup Course Assessments',
+        text: 'No assessments configured yet. Create one to begin tracking student outcomes.',
+        actionLabel: 'Create Assessment',
+        actionTab: 'assessments'
+      })
+    }
+
     activeAssessments.forEach(a => {
       const questions = metadataMap[a._id] || []
       const hasQuestions = questions.length > 0
@@ -342,48 +355,50 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       }
     })
 
-    // 2. Check Course Surveys
-    if (survey) {
-      const now = new Date()
-      const closeDate = new Date(survey.closeDate)
-      const openDate = new Date(survey.openDate)
-      const surveyClosed = closeDate < now
-      const surveyOpened = openDate <= now && !surveyClosed
+    // 2. Check Course Surveys (Only active if assessments exist)
+    if (activeAssessments.length > 0) {
+      if (survey) {
+        const now = new Date()
+        const closeDate = new Date(survey.closeDate)
+        const openDate = new Date(survey.openDate)
+        const surveyClosed = closeDate < now
+        const surveyOpened = openDate <= now && !surveyClosed
 
-      const formattedCloseDate = closeDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + closeDate.getFullYear()
+        const formattedCloseDate = closeDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + closeDate.getFullYear()
 
-      if (survey.status === 'Published' && surveyOpened) {
-        const daysLeft = Math.ceil((closeDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        if (survey.status === 'Published' && surveyOpened) {
+          const daysLeft = Math.ceil((closeDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          list.push({
+            type: 'survey',
+            id: `survey_active_${survey._id}`,
+            priority: 2, // Medium Priority
+            title: 'Course Survey is Open',
+            text: `The active questionnaire is open and closes on ${formattedCloseDate} (${daysLeft} day${daysLeft > 0 ? (daysLeft > 1 ? 's' : '') : 's'} remaining). Submissions: ${surveyResponsesCount} student${surveyResponsesCount === 1 ? '' : 's'}.`,
+            actionLabel: 'Manage Survey',
+            actionTab: 'evaluation'
+          })
+        } else if (survey.status === 'Draft') {
+          list.push({
+            type: 'survey',
+            id: `survey_draft_${survey._id}`,
+            priority: 3, // Low Priority
+            title: 'Draft Survey Configured',
+            text: `A course feedback survey is structured but has not been published yet. Students cannot access drafts.`,
+            actionLabel: 'Publish Survey',
+            actionTab: 'evaluation'
+          })
+        }
+      } else {
         list.push({
           type: 'survey',
-          id: `survey_active_${survey._id}`,
-          priority: 2, // Medium Priority
-          title: 'Course Survey is Open',
-          text: `The active questionnaire is open and closes on ${formattedCloseDate} (${daysLeft} day${daysLeft > 0 ? (daysLeft > 1 ? 's' : '') : 's'} remaining). Submissions: ${surveyResponsesCount} student${surveyResponsesCount === 1 ? '' : 's'}.`,
-          actionLabel: 'Manage Survey',
-          actionTab: 'evaluation'
-        })
-      } else if (survey.status === 'Draft') {
-        list.push({
-          type: 'survey',
-          id: `survey_draft_${survey._id}`,
+          id: `survey_missing_${offering._id}`,
           priority: 3, // Low Priority
-          title: 'Draft Survey Configured',
-          text: `A course feedback survey is structured but has not been published yet. Students cannot access drafts.`,
-          actionLabel: 'Publish Survey',
+          title: 'Setup Course Survey',
+          text: `No student feedback survey is configured for this offering.`,
+          actionLabel: 'Configure Survey',
           actionTab: 'evaluation'
         })
       }
-    } else {
-      list.push({
-        type: 'survey',
-        id: `survey_missing_${offering._id}`,
-        priority: 3, // Low Priority
-        title: 'Setup Course Survey',
-        text: `No student feedback survey is configured for this offering.`,
-        actionLabel: 'Configure Survey',
-        actionTab: 'evaluation'
-      })
     }
 
     // 3. Check Deadlines
@@ -1106,38 +1121,36 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   )}
 
                   {/* Status Explanation Legend */}
-                  {assessments.length > 0 && (
-                    <div className="mt-5 pt-4 border-t border-gray-100 text-xs font-semibold">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full text-gray-500">
-                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-yellow-50 text-yellow-750 border border-yellow-200">
-                            Draft
-                          </span>
-                          <span className="leading-normal font-medium text-gray-600">
-                            Assessment templates, marks division, or Course Outcome (CO) mappings are incomplete.
-                          </span>
-                        </div>
-                        
-                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                            Assigned
-                          </span>
-                          <span className="leading-normal font-medium text-gray-600">
-                            Templates and mappings are complete. Ready for evaluation, but marks entry is pending.
-                          </span>
-                        </div>
-                        
-                        <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                          <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-250">
-                            Evaluated
-                          </span>
-                          <span className="leading-normal font-medium text-gray-600">
-                            Evaluation is complete. Student marks have been fully entered and recorded.
-                          </span>
-                        </div>
+                  <div className="mt-5 pt-4 border-t border-gray-100 text-xs font-semibold">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full text-gray-500">
+                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-yellow-50 text-yellow-750 border border-yellow-200">
+                          Draft
+                        </span>
+                        <span className="leading-normal font-medium text-gray-600">
+                          Assessment templates, marks division, or Course Outcome (CO) mappings are incomplete.
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                          Assigned
+                        </span>
+                        <span className="leading-normal font-medium text-gray-600">
+                          Templates and mappings are complete. Ready for evaluation, but marks entry is pending.
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
+                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-250">
+                          Evaluated
+                        </span>
+                        <span className="leading-normal font-medium text-gray-600">
+                          Evaluation is complete. Student marks have been fully entered and recorded.
+                        </span>
                       </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
