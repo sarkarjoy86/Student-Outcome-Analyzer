@@ -25,6 +25,10 @@ const questionMetadataSchema = new mongoose.Schema({
     co: {
       type: String,
       default: 'NONE'
+    },
+    bloom: {
+      type: String,
+      default: ''
     }
   }],
   createdAt: {

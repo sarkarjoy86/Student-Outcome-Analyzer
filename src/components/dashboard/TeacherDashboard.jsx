@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { apiService } from '../../services/apiService'
 import {
   BookOpen,
@@ -24,7 +24,9 @@ import {
   Download,
   AlertCircle,
   MessageSquare,
-  Calendar
+  Calendar,
+  Bell,
+  CheckCircle2
 } from 'lucide-react'
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
@@ -129,6 +131,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [dbCourseOutcomes, setDbCourseOutcomes] = useState([])
   const [dbProgramOutcomes, setDbProgramOutcomes] = useState([])
  
+  // Survey States for course reminders
+  const [survey, setSurvey] = useState(null)
+  const [surveyResponsesCount, setSurveyResponsesCount] = useState(0)
+
   // Attainment States
   const [attainmentData, setAttainmentData] = useState({
     coAttainments: [],
@@ -151,9 +157,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [newAssessment, setNewAssessment] = useState({
     type: 'cts',
     maxMarks: 10,
-    numQuestions: 1,
-    examDuration: '1 Hour',
-    co: 'CO1'
+    durationValue: 30,
+    durationUnit: 'Minutes',
+    co: 'NONE',
+    deadline: ''
   })
 
   // Recent activity logs
@@ -218,6 +225,220 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     })
     return Object.values(groups)
   }, [filteredActivities])
+
+  const getAssessmentStatus = useCallback((a) => {
+    const activeAssessments = marksSpreadsheetData.assessments || []
+    const studentsList = marksSpreadsheetData.students || []
+    const metadataMap = marksSpreadsheetData.metadata || {}
+    const marksMap = marksSpreadsheetData.marks || {}
+
+    const questions = metadataMap[a._id] || []
+    const hasQuestions = questions.length > 0
+
+    let enteredCount = 0
+    studentsList.forEach(s => {
+      const sId = s._id
+      const examMark = marksMap[sId]?.[a._id]
+      if (examMark) {
+        if (hasQuestions) {
+          const allEntered = questions.every(q => {
+            const m = examMark.questionMarks?.[q.questionNumber]
+            return m !== undefined && m !== null && m !== ''
+          })
+          if (allEntered) enteredCount++
+        } else {
+          const m = examMark.totalMark
+          if (m !== undefined && m !== null && m !== '') {
+            enteredCount++
+          }
+        }
+      }
+    })
+
+    const isFullyEntered = studentsList.length > 0 && enteredCount === studentsList.length
+    if (isFullyEntered) {
+      return 'Evaluated'
+    }
+
+    // Check if configuration matches maxMarks and all mapped to COs
+    const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
+    if (isExamType) {
+      if (questions.length > 0) {
+        const totalAllocated = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+        const allQuestionsHaveCO = questions.every(q => q.co && q.co !== 'NONE' && q.co !== '')
+        const isFullyConfigured = Math.abs(totalAllocated - a.maxMarks) < 0.01 && allQuestionsHaveCO
+        if (isFullyConfigured) {
+          return 'Assigned'
+        }
+      }
+    } else {
+      // Attendance and Presentation do not have Draft option (always Assigned or Evaluated)
+      if (['attendance', 'presentation'].includes(a.type)) {
+        return 'Assigned'
+      }
+      // Assignment, Performance
+      if (a.co && a.co !== 'NONE' && a.co !== '') {
+        return 'Assigned'
+      }
+    }
+
+    return 'Draft'
+  }, [marksSpreadsheetData])
+
+  const reminders = useMemo(() => {
+    const list = []
+
+    // 1. Check Assessment Marks Completion
+    const activeAssessments = marksSpreadsheetData.assessments || []
+    const studentsList = marksSpreadsheetData.students || []
+    const metadataMap = marksSpreadsheetData.metadata || {}
+    const marksMap = marksSpreadsheetData.marks || {}
+
+    activeAssessments.forEach(a => {
+      const questions = metadataMap[a._id] || []
+      const hasQuestions = questions.length > 0
+
+      let enteredCount = 0
+      studentsList.forEach(s => {
+        const sId = s._id
+        const examMark = marksMap[sId]?.[a._id]
+        if (examMark) {
+          if (hasQuestions) {
+            const allEntered = questions.every(q => {
+              const m = examMark.questionMarks?.[q.questionNumber]
+              return m !== undefined && m !== null && m !== ''
+            })
+            if (allEntered) enteredCount++
+          } else {
+            const m = examMark.totalMark
+            if (m !== undefined && m !== null && m !== '') {
+              enteredCount++
+            }
+          }
+        }
+      })
+
+      const isComplete = studentsList.length > 0 && enteredCount === studentsList.length
+      if (!isComplete) {
+        let typeLabel = a.type
+        if (a.type === 'cts') typeLabel = 'Class Test'
+        else if (a.type === 'midTerm') typeLabel = 'Mid Term'
+        else if (a.type === 'final') typeLabel = 'Final Exam'
+        else if (a.type === 'assignments') typeLabel = 'Assignment'
+        else if (a.type === 'presentation') typeLabel = 'Presentation'
+        else if (a.type === 'attendance') typeLabel = 'Attendance'
+        else if (a.type === 'performance') typeLabel = 'Performance'
+
+        list.push({
+          type: 'marks',
+          id: `marks_pending_${a._id}`,
+          priority: 1, // High Priority
+          title: `Pending Marks: ${a.name}`,
+          text: `Marks for ${typeLabel} (${a.name}) are not fully entered. (${enteredCount}/${studentsList.length} student marks recorded)`,
+          actionLabel: 'Enter Marks',
+          actionTab: 'marksEntry',
+          actionAssessmentId: a._id
+        })
+      }
+    })
+
+    // 2. Check Course Surveys
+    if (survey) {
+      const now = new Date()
+      const closeDate = new Date(survey.closeDate)
+      const openDate = new Date(survey.openDate)
+      const surveyClosed = closeDate < now
+      const surveyOpened = openDate <= now && !surveyClosed
+
+      const formattedCloseDate = closeDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + closeDate.getFullYear()
+
+      if (survey.status === 'Published' && surveyOpened) {
+        const daysLeft = Math.ceil((closeDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        list.push({
+          type: 'survey',
+          id: `survey_active_${survey._id}`,
+          priority: 2, // Medium Priority
+          title: 'Course Survey is Open',
+          text: `The active questionnaire is open and closes on ${formattedCloseDate} (${daysLeft} day${daysLeft > 0 ? (daysLeft > 1 ? 's' : '') : 's'} remaining). Submissions: ${surveyResponsesCount} student${surveyResponsesCount === 1 ? '' : 's'}.`,
+          actionLabel: 'Manage Survey',
+          actionTab: 'evaluation'
+        })
+      } else if (survey.status === 'Draft') {
+        list.push({
+          type: 'survey',
+          id: `survey_draft_${survey._id}`,
+          priority: 3, // Low Priority
+          title: 'Draft Survey Configured',
+          text: `A course feedback survey is structured but has not been published yet. Students cannot access drafts.`,
+          actionLabel: 'Publish Survey',
+          actionTab: 'evaluation'
+        })
+      }
+    } else {
+      list.push({
+        type: 'survey',
+        id: `survey_missing_${offering._id}`,
+        priority: 3, // Low Priority
+        title: 'Setup Course Survey',
+        text: `No student feedback survey is configured for this offering.`,
+        actionLabel: 'Configure Survey',
+        actionTab: 'evaluation'
+      })
+    }
+
+    // 3. Check Deadlines
+    activeAssessments.forEach(a => {
+      if (a.type === 'assignments' || a.type === 'presentation') {
+        if (a.deadline) {
+          const now = new Date()
+          const deadlineDate = new Date(a.deadline)
+          const daysDiff = Math.ceil((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          const formattedDeadline = deadlineDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + deadlineDate.getFullYear()
+
+          if (daysDiff > 0) {
+            list.push({
+              type: 'deadline_upcoming',
+              id: `deadline_up_${a._id}`,
+              priority: daysDiff <= 3 ? 1 : 2, // High priority if <= 3 days left
+              title: `${a.type === 'presentation' ? 'Presentation Scheduled' : 'Assignment Deadline'}`,
+              text: `${a.name} is due/scheduled on ${formattedDeadline} (in ${daysDiff} day${daysDiff > 1 ? 's' : ''}).`,
+              actionLabel: 'View Details',
+              actionTab: 'assessments'
+            })
+          } else if (a.status !== 'Evaluated') {
+            const daysAgo = Math.abs(daysDiff)
+            list.push({
+              type: 'deadline_overdue',
+              id: `deadline_over_${a._id}`,
+              priority: 1, // Critical Overdue
+              title: `Overdue: ${a.name}`,
+              text: `${a.name} deadline passed on ${formattedDeadline} (${daysAgo} day${daysAgo > 1 ? 's' : ''} ago) and is pending evaluation.`,
+              actionLabel: 'Evaluate Now',
+              actionTab: 'marksEntry',
+              actionAssessmentId: a._id
+            })
+          }
+        }
+      }
+    })
+
+    // Sort: lower priority number denotes higher importance
+    list.sort((x, y) => x.priority - y.priority)
+    return list
+  }, [marksSpreadsheetData, survey, surveyResponsesCount, offering])
+
+  const handleReminderAction = (reminder) => {
+    setActiveTab(reminder.actionTab)
+    if (reminder.actionAssessmentId) {
+      setSelectedAssessmentId(reminder.actionAssessmentId)
+      initializeTempMarks(
+        marksSpreadsheetData.marks,
+        reminder.actionAssessmentId,
+        marksSpreadsheetData.metadata[reminder.actionAssessmentId],
+        marksSpreadsheetData.students
+      )
+    }
+  }
 
   useEffect(() => {
     setQBankPath({ type: null, session: null, section: null })
@@ -296,8 +517,44 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       } catch (err) {
         console.error('Failed to load program outcomes from database:', err)
       }
+
+      // 7. Fetch survey config and response analytics
+      try {
+        const surveyRes = await apiService.getSurveys(currentOffering._id)
+        if (surveyRes && surveyRes.survey) {
+          setSurvey(surveyRes.survey)
+          try {
+            const analytics = await apiService.getSurveyAnalytics(surveyRes.survey._id)
+            setSurveyResponsesCount(analytics.responses?.length || 0)
+          } catch (err) {
+            console.error('Failed to load survey responses count:', err)
+            setSurveyResponsesCount(0)
+          }
+        } else {
+          setSurvey(null)
+          setSurveyResponsesCount(0)
+        }
+      } catch (err) {
+        console.error('Failed to load survey config for reminders:', err)
+        setSurvey(null)
+        setSurveyResponsesCount(0)
+      }
+
+      // 8. Fetch marks spreadsheet data for completeness check
+      try {
+        const res = await apiService.getMarksSpreadsheet(currentOffering._id)
+        setMarksSpreadsheetData(res)
+        if (res.assessments && res.assessments.length > 0) {
+          if (!selectedAssessmentId) {
+            setSelectedAssessmentId(res.assessments[0]._id)
+            initializeTempMarks(res.marks, res.assessments[0]._id, res.metadata[res.assessments[0]._id], res.students)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load spreadsheet marks for reminders:', err)
+      }
  
-      // 7. Fetch recent activities from database
+      // 9. Fetch recent activities from database
       try {
         const actRes = await apiService.getRecentActivities(offering._id)
         if (actRes && actRes.activities) {
@@ -356,10 +613,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
-  // Load spreadsheet marks data when Marks Entry, Reports, or Students tab is opened
+  // Load spreadsheet marks data, surveys, and activities when tab shifts
   useEffect(() => {
     if (activeTab === 'marksEntry' || activeTab === 'reports' || activeTab === 'students') {
       loadMarksSpreadsheet()
+    } else if (activeTab === 'overview') {
+      loadAllData()
     }
   }, [activeTab])
 
@@ -429,21 +688,31 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
         let totalMark = 0
         const questionMarks = {}
+        let isEmpty = true
 
         if (questions && questions.length > 0) {
           questions.forEach(q => {
-            const markVal = parseFloat(studentTemp[q.questionNumber]) || 0
-            questionMarks[q.questionNumber] = markVal
-            totalMark += markVal
+            const val = studentTemp[q.questionNumber]
+            if (val !== undefined && val !== null && val !== '') {
+              const markVal = parseFloat(val) || 0
+              questionMarks[q.questionNumber] = markVal
+              totalMark += markVal
+              isEmpty = false
+            }
           })
         } else {
-          totalMark = parseFloat(studentTemp['marks']) || 0
+          const val = studentTemp['marks']
+          if (val !== undefined && val !== null && val !== '') {
+            totalMark = parseFloat(val) || 0
+            isEmpty = false
+          }
         }
 
         return {
           studentId: sId,
           questionMarks,
-          totalMark
+          totalMark,
+          isEmpty
         }
       })
 
@@ -462,12 +731,54 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
+  // Build create assessment payload based on type
+  const buildAssessmentPayload = () => {
+    const { type, maxMarks, durationValue, durationUnit, co, deadline } = newAssessment
+    const payload = { type, maxMarks }
+
+    if (type === 'cts' || type === 'midTerm' || type === 'final') {
+      // Duration as formatted string
+      const val = parseInt(durationValue) || 0
+      if (durationUnit === 'Hours') {
+        payload.examDuration = val === 1 ? '1 Hour' : `${val} Hours`
+      } else {
+        payload.examDuration = `${val} Minutes`
+      }
+    } else if (type === 'assignments' || type === 'presentation') {
+      payload.deadline = deadline || null
+    } else if (type === 'attendance' || type === 'performance') {
+      payload.co = co || 'NONE'
+    }
+
+    return payload
+  }
+
+  // Smart defaults when assessment type changes
+  const handleAssessmentTypeChange = (type) => {
+    const defaults = { type, maxMarks: newAssessment.maxMarks }
+    const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+
+    if (type === 'cts') {
+      Object.assign(defaults, { maxMarks: 10, durationValue: 30, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+    } else if (type === 'midTerm') {
+      Object.assign(defaults, { maxMarks: Math.round(credits * 30), durationValue: 90, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+    } else if (type === 'final') {
+      Object.assign(defaults, { maxMarks: Math.round(credits * 50), durationValue: 3, durationUnit: 'Hours', co: 'NONE', deadline: '' })
+    } else if (type === 'assignments' || type === 'presentation') {
+      Object.assign(defaults, { maxMarks: 10, durationValue: 0, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+    } else if (type === 'attendance' || type === 'performance') {
+      Object.assign(defaults, { maxMarks: type === 'attendance' ? 5 : 10, durationValue: 0, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+    }
+    setNewAssessment(defaults)
+  }
+
   // Create assessment
   const handleCreateAssessment = async (e) => {
     e.preventDefault()
     setSaving(true)
     try {
-      await apiService.createAssessment(offering._id, newAssessment)
+      const payload = buildAssessmentPayload()
+      await apiService.createAssessment(offering._id, payload)
       alert('Assessment created successfully.')
       setShowCreateDialog(false)
       loadAllData()
@@ -627,7 +938,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         {[
           { id: 'overview', label: 'Course Overview', icon: BookOpen },
           { id: 'coMapping', label: 'CO-PO Mapping', icon: Network },
-          { id: 'students', label: 'Students', icon: Users },
+          { id: 'students', label: 'Student Table', icon: Users },
           { id: 'assessments', label: 'Assessments', icon: ClipboardList },
           { id: 'questionBank', label: 'Question Bank', icon: FolderOpen },
           { id: 'marksEntry', label: 'Marks Entry', icon: CheckSquare },
@@ -663,9 +974,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           {/* TAB 1: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Course Info Cards */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+              {/* Course Details (Left, Row 1) */}
+              <div className="lg:col-span-2">
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 h-full">
                   <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">Course Details</h3>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
@@ -694,8 +1005,58 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+              {/* Course Reminders (Right, Row 1) */}
+              <div className="lg:col-span-1">
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col h-full max-h-[290px]">
+                  <div className="flex items-center gap-2 border-b pb-3 shrink-0">
+                    <Bell className="text-emerald-600" size={20} />
+                    <h3 className="text-lg font-extrabold text-gray-800">Course Reminders</h3>
+                    {reminders.length > 0 && (
+                      <span className="bg-rose-50 text-rose-700 border border-rose-200 text-xs px-2.5 py-0.5 rounded-full font-extrabold ml-auto">
+                        {reminders.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="overflow-y-auto pr-1 mt-3 space-y-3 flex-1" style={{ scrollbarWidth: 'thin', scrollbarColor: '#10b981 transparent' }}>
+                    {reminders.length === 0 ? (
+                      <div className="text-center py-8">
+                        <CheckCircle2 className="text-emerald-600 mx-auto mb-2" size={28} />
+                        <p className="text-xs text-gray-405 font-bold">All caught up! No pending reminders.</p>
+                      </div>
+                    ) : (
+                      reminders.map((reminder) => {
+                        let iconBg = 'bg-blue-50 border-blue-200 text-blue-700'
+                        if (reminder.priority === 1) iconBg = 'bg-rose-50 border-rose-200 text-rose-700'
+                        else if (reminder.priority === 2) iconBg = 'bg-amber-50 border-amber-200 text-amber-705'
+                        
+                        return (
+                          <div key={reminder.id} className="p-3 bg-neutral-50/50 border border-gray-150 rounded-xl flex items-start gap-2.5 hover:bg-gray-50 transition-colors">
+                            <div className={`p-1.5 rounded-lg border shrink-0 ${iconBg}`}>
+                              <AlertCircle size={15} />
+                            </div>
+                            <div className="flex-1 min-w-0 space-y-0.5">
+                              <p className="text-xs font-bold text-gray-800 truncate">{reminder.title}</p>
+                              <p className="text-[11px] text-gray-500 font-semibold leading-relaxed">{reminder.text}</p>
+                              <button
+                                onClick={() => handleReminderAction(reminder)}
+                                className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-0.5 mt-1 hover:underline outline-none"
+                              >
+                                {reminder.actionLabel} <ChevronRight size={10} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Assessment Summary (Left, Row 2) */}
+              <div className="lg:col-span-2">
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 h-full">
                   <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">Assessment Summary</h3>
                   {assessments.length === 0 ? (
                     <p className="text-gray-500 text-sm">No assessments configured yet. Create one in the Assessments tab.</p>
@@ -708,7 +1069,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             <th className="py-2">Type</th>
                             <th className="py-2">Max Marks</th>
                             <th className="py-2">Questions</th>
-                            <th className="py-2">Duration</th>
+                            <th className="py-2">Duration / Deadline</th>
                             <th className="py-2">Status</th>
                           </tr>
                         </thead>
@@ -719,12 +1080,23 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                               <td className="py-3 capitalize">{a.type}</td>
                               <td className="py-3">{a.maxMarks}</td>
                               <td className="py-3">{a.numQuestions || 0}</td>
-                              <td className="py-3">{a.examDuration || 'N/A'}</td>
                               <td className="py-3">
-                                <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${a.status === 'Evaluated' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                  }`}>
-                                  {a.status || 'Draft'}
-                                </span>
+                                {['assignments', 'presentation'].includes(a.type)
+                                  ? (a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A')
+                                  : (a.examDuration || 'N/A')}
+                              </td>
+                              <td className="py-3">
+                                {(() => {
+                                  const status = getAssessmentStatus(a)
+                                  let badgeStyle = 'bg-yellow-50 text-yellow-750 border border-yellow-200'
+                                  if (status === 'Evaluated') badgeStyle = 'bg-emerald-50 text-emerald-700 border border-emerald-250'
+                                  else if (status === 'Assigned') badgeStyle = 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  return (
+                                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${badgeStyle}`}>
+                                      {status}
+                                    </span>
+                                  )
+                                })()}
                               </td>
                             </tr>
                           ))}
@@ -735,9 +1107,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 </div>
               </div>
 
-              {/* Right panel: Recent Activities */}
-              <div className="lg:col-span-1 relative min-h-[385px] lg:min-h-0">
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 lg:absolute lg:inset-0 flex flex-col lg:h-auto h-full gap-4">
+              {/* Right panel: Recent Activities (Right, Row 2) */}
+              <div className="lg:col-span-1 lg:relative min-h-[350px]">
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col gap-4 h-full lg:absolute lg:inset-0">
                   {(() => {
                     const getActivityIconAndColor = (actionType) => {
                       const action = (actionType || '').trim().toLowerCase()
@@ -779,7 +1151,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         </div>
 
                         <div 
-                          className="overflow-y-auto pr-1 space-y-4 flex-1 lg:max-h-none max-h-[385px]" 
+                          className="overflow-y-auto pr-1 space-y-4 flex-1" 
                           style={{ 
                             scrollbarWidth: 'thin', 
                             scrollbarColor: '#10b981 transparent' 
@@ -849,10 +1221,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         </div>
 
                         {/* Reset button at the bottom */}
-                        <div className="pt-3 border-t border-gray-100 flex justify-end">
+                        <div className="pt-3 border-t border-gray-100 flex justify-end shrink-0">
                           <button
                             onClick={handleResetActivities}
-                            className="text-[10px] font-bold text-red-500 hover:text-red-700 flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-red-55 transition-colors cursor-pointer select-none"
+                            className="text-[10px] font-bold text-red-500 hover:text-red-700 flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer select-none border border-transparent hover:border-red-200"
                           >
                             <Trash2 size={11} />
                             Reset Course Activities
@@ -1049,7 +1421,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 return (
                   <div className="bg-white rounded-2xl shadow-lg p-6 border border-green-100">
                     <h3 className="text-lg font-black text-green-950 mb-4 border-b-2 border-green-800 pb-1.5 uppercase tracking-wide">
-                      Students Assessment Details
+                      Student Table
                     </h3>
                     <div className="overflow-x-auto max-h-[600px] border border-gray-200 rounded-xl bg-white shadow-inner">
                       <table className="w-full border-collapse text-xs text-left" style={{ tableLayout: 'auto' }}>
@@ -1137,72 +1509,110 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {assessments.map(a => (
-                    <div key={a._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between border-b pb-2">
-                          <h3 className="text-lg font-bold text-gray-800">{a.name}</h3>
-                          <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${a.status === 'Evaluated' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                            }`}>
-                            {a.status || 'Draft'}
-                          </span>
+                  {assessments.map(a => {
+                    const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
+                    const isSubmissionType = ['assignments', 'presentation'].includes(a.type)
+                    const isDirectMarksType = ['attendance', 'performance'].includes(a.type)
+                    return (
+                      <div key={a._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between border-b pb-2">
+                            <h3 className="text-lg font-bold text-gray-800">{a.name}</h3>
+                            {(() => {
+                              const status = getAssessmentStatus(a)
+                              let badgeStyle = 'bg-yellow-50 text-yellow-750 border border-yellow-250'
+                              if (status === 'Evaluated') badgeStyle = 'bg-emerald-50 text-emerald-700 border border-emerald-250'
+                              else if (status === 'Assigned') badgeStyle = 'bg-blue-50 text-blue-700 border border-blue-205'
+                              return (
+                                <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${badgeStyle}`}>
+                                  {status}
+                                </span>
+                              )
+                            })()}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
+                            <div>Type: <span className="font-bold text-gray-800 capitalize">{a.type === 'cts' ? 'CT' : a.type === 'midTerm' ? 'Mid Term' : a.type === 'final' ? 'Final' : a.type === 'assignments' ? 'Assignment' : a.type}</span></div>
+                            <div>Max Marks: <span className="font-bold text-gray-800">{a.maxMarks}</span></div>
+                            {isExamType && (
+                              <>
+                                <div>Questions: <span className="font-bold text-gray-800">{a.numQuestions || 0}</span></div>
+                                <div>Duration: <span className="font-bold text-gray-800">{a.examDuration || 'N/A'}</span></div>
+                              </>
+                            )}
+                            {isSubmissionType && (
+                              <div className="col-span-2">Deadline: <span className="font-bold text-orange-700">{a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Not Set'}</span></div>
+                            )}
+                            {(isDirectMarksType || isSubmissionType) && a.co && a.co !== 'NONE' && (
+                              <div className="col-span-2">Mapped CO: <span className="font-bold text-blue-700">{a.co}</span></div>
+                            )}
+                            {isDirectMarksType && (!a.co || a.co === 'NONE') && (
+                              <div className="col-span-2">Mapped CO: <span className="font-bold text-gray-400">None</span></div>
+                            )}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
-                          <div>Type: <span className="font-bold text-gray-800 capitalize">{a.type}</span></div>
-                          <div>Max Marks: <span className="font-bold text-gray-800">{a.maxMarks}</span></div>
-                          <div>Questions: <span className="font-bold text-gray-800">{a.numQuestions || 0}</span></div>
-                          <div>Duration: <span className="font-bold text-gray-800">{a.examDuration || 'N/A'}</span></div>
-                          {a.co && <div className="col-span-2">Mapped CO: <span className="font-bold text-blue-700">{a.co}</span></div>}
-                        </div>
-                      </div>
 
-                      <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between">
-                        <button
-                          onClick={() => setActiveAssessmentForPaper(a)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all"
-                        >
-                          <Edit size={14} />
-                          Open Q.Paper
-                        </button>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleDeleteAssessment(a._id)}
-                            className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg border border-transparent hover:border-red-200 transition-all"
-                            title="Delete Assessment"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                        <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between">
+                          {!isDirectMarksType ? (
+                            <button
+                              onClick={() => setActiveAssessmentForPaper(a)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all"
+                            >
+                              <Edit size={14} />
+                              Open Q.Paper
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">Marks entry only</span>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleDeleteAssessment(a._id)}
+                              className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg border border-transparent hover:border-red-200 transition-all"
+                              title="Delete Assessment"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
 
               {/* Create Assessment Dialog Modal */}
-              {showCreateDialog && (
-                <div className="fixed inset-0 bg-black/55 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-2xl shadow-2xl border max-w-md w-full p-6 space-y-6">
-                    <h3 className="text-xl font-bold text-gray-800 border-b pb-3">Create New Assessment</h3>
-                    <form onSubmit={handleCreateAssessment} className="space-y-4 text-sm">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">Assessment Type</label>
-                        <select
-                          value={newAssessment.type}
-                          onChange={(e) => setNewAssessment({ ...newAssessment, type: e.target.value })}
-                          className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
-                        >
-                          <option value="cts">Class Test (CT)</option>
-                          <option value="midTerm">Mid Term Examination</option>
-                          <option value="final">Final Examination</option>
-                          <option value="assignments">Assignment</option>
-                          <option value="attendance">Attendance</option>
-                          <option value="performance">Class Performance</option>
-                          <option value="presentation">Presentation</option>
-                        </select>
-                      </div>
+              {showCreateDialog && (() => {
+                const isExam = ['cts', 'midTerm', 'final'].includes(newAssessment.type)
+                const isSubmission = ['assignments', 'presentation'].includes(newAssessment.type)
+                const isDirectMarks = ['attendance', 'performance'].includes(newAssessment.type)
+                // Get allocated COs for the course
+                const courseCOs = dbCourseOutcomes.length > 0
+                  ? dbCourseOutcomes.map(o => o.code)
+                  : Array.from({ length: offering.course?.numCOs || 4 }, (_, i) => `CO${i + 1}`)
 
-                      <div className="grid grid-cols-2 gap-4">
+                return (
+                  <div className="fixed inset-0 bg-black/55 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl border max-w-md w-full p-6 space-y-6">
+                      <h3 className="text-xl font-bold text-gray-800 border-b pb-3">Create New Assessment</h3>
+                      <form onSubmit={handleCreateAssessment} className="space-y-4 text-sm">
+                        {/* Assessment Type */}
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Assessment Type</label>
+                          <select
+                            value={newAssessment.type}
+                            onChange={(e) => handleAssessmentTypeChange(e.target.value)}
+                            className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                          >
+                            <option value="cts">Class Test (CT)</option>
+                            <option value="midTerm">Mid Term Examination</option>
+                            <option value="final">Final Examination</option>
+                            <option value="assignments">Assignment</option>
+                            <option value="attendance">Attendance</option>
+                            <option value="performance">Class Performance</option>
+                            <option value="presentation">Presentation</option>
+                          </select>
+                        </div>
+
+                        {/* Total Marks — all types */}
                         <div>
                           <label className="block text-xs font-bold text-gray-700 mb-1">Total Marks</label>
                           <input
@@ -1214,65 +1624,85 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             required
                           />
                         </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">Number of Questions</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={newAssessment.numQuestions}
-                            onChange={(e) => setNewAssessment({ ...newAssessment, numQuestions: parseInt(e.target.value) || 0 })}
-                            className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
-                            required
-                          />
+
+                        {/* Duration — CT / Mid / Final only */}
+                        {isExam && (
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">Exam Duration</label>
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                min="1"
+                                value={newAssessment.durationValue}
+                                onChange={(e) => setNewAssessment({ ...newAssessment, durationValue: parseInt(e.target.value) || 0 })}
+                                className="flex-1 border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                                placeholder="Duration"
+                              />
+                              <select
+                                value={newAssessment.durationUnit}
+                                onChange={(e) => setNewAssessment({ ...newAssessment, durationUnit: e.target.value })}
+                                className="w-28 border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                              >
+                                <option value="Minutes">Minutes</option>
+                                <option value="Hours">Hours</option>
+                              </select>
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-1 font-medium">Questions & CO mapping are set in the Q.Paper Editor after creation.</p>
+                          </div>
+                        )}
+
+                        {/* Deadline — Assignment / Presentation only */}
+                        {isSubmission && (
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">Submission Deadline</label>
+                            <input
+                              type="date"
+                              value={newAssessment.deadline}
+                              onChange={(e) => setNewAssessment({ ...newAssessment, deadline: e.target.value })}
+                              className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                            />
+                          </div>
+                        )}
+
+                        {/* CO Mapped — Attendance / Performance only */}
+                        {isDirectMarks && (
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">Mapped CO</label>
+                            <select
+                              value={newAssessment.co}
+                              onChange={(e) => setNewAssessment({ ...newAssessment, co: e.target.value })}
+                              className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                            >
+                              <option value="NONE">None</option>
+                              {courseCOs.map(co => (
+                                <option key={co} value={co}>{co}</option>
+                              ))}
+                            </select>
+                            <p className="text-[10px] text-gray-400 mt-1 font-medium">No question paper needed — only marks entry after creation.</p>
+                          </div>
+                        )}
+
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            type="submit"
+                            disabled={saving}
+                            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold transition-all disabled:opacity-50"
+                          >
+                            {saving ? 'Creating...' : 'Create'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateDialog(false)}
+                            className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold border transition-all"
+                          >
+                            Cancel
+                          </button>
                         </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">Exam Duration</label>
-                        <input
-                          type="text"
-                          value={newAssessment.examDuration}
-                          onChange={(e) => setNewAssessment({ ...newAssessment, examDuration: e.target.value })}
-                          placeholder="e.g. 1.5 Hours"
-                          className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">Target CO (Default Mapping)</label>
-                        <select
-                          value={newAssessment.co}
-                          onChange={(e) => setNewAssessment({ ...newAssessment, co: e.target.value })}
-                          className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
-                        >
-                          {Array.from({ length: 12 }, (_, i) => {
-                            const coVal = `CO${i + 1}`
-                            return <option key={coVal} value={coVal}>{coVal}</option>
-                          })}
-                          <option value="NONE">NONE</option>
-                        </select>
-                      </div>
-
-                      <div className="flex gap-3 pt-2">
-                        <button
-                          type="submit"
-                          disabled={saving}
-                          className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold transition-all disabled:opacity-50"
-                        >
-                          {saving ? 'Creating...' : 'Create'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowCreateDialog(false)}
-                          className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold border transition-all"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
+                      </form>
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
             </div>
           )}
 
@@ -1556,151 +1986,170 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           )}
 
           {/* TAB 5: MARKS ENTRY (SPREADSHEET UI) */}
-          {activeTab === 'marksEntry' && (
-            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-800">OBE Marks Sheet Spreadsheet</h3>
-                  <p className="text-xs text-gray-500 mt-1 font-semibold">Spreadsheet-style entry. Total calculates dynamically on the fly.</p>
+          {activeTab === 'marksEntry' && (() => {
+            const assessments = marksSpreadsheetData.assessments || []
+            const selectedAssessment = assessments.find(a => a._id === selectedAssessmentId)
+            const questions = selectedAssessment ? (marksSpreadsheetData.metadata[selectedAssessmentId] || []) : []
+            const studentList = [...(marksSpreadsheetData.students || [])].sort((a, b) => {
+              const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
+              const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
+              return numA - numB
+            })
+            const hasQuestions = questions && questions.length > 0
+            const fullyEnteredCount = selectedAssessment ? studentList.filter(s => {
+              const sMarks = tempMarks[s._id] || {}
+              if (hasQuestions) {
+                return questions.every(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+              } else {
+                return sMarks['marks'] !== undefined && sMarks['marks'] !== ''
+              }
+            }).length : 0
+
+            return (
+              <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-6">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-extrabold text-gray-800">OBE Marks Sheet Spreadsheet</h3>
+                      {selectedAssessment && (
+                        <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border transition-colors ${fullyEnteredCount === studentList.length ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          {fullyEnteredCount === studentList.length ? '✓ Fully Entered' : `⚠️ Entered: ${fullyEnteredCount}/${studentList.length} Students`}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 font-semibold">Spreadsheet-style entry. Total calculates dynamically on the fly.</p>
+                  </div>
+
+                  {assessments.length > 0 && (
+                    <div className="flex items-center gap-2">
+                       <label className="text-xs font-bold text-gray-700 whitespace-nowrap">Selected Assessment:</label>
+                      <select
+                        value={selectedAssessmentId}
+                        onChange={(e) => handleAssessmentChange(e.target.value)}
+                        className="border border-gray-300 px-3 py-1.5 rounded-lg focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold text-sm"
+                      >
+                        {assessments.map(a => (
+                          <option key={a._id} value={a._id}>{a.name} ({a.type})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
 
-                {marksSpreadsheetData.assessments && marksSpreadsheetData.assessments.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold text-gray-700 whitespace-nowrap">Selected Assessment:</label>
-                    <select
-                      value={selectedAssessmentId}
-                      onChange={(e) => handleAssessmentChange(e.target.value)}
-                      className="border border-gray-300 px-3 py-1.5 rounded-lg focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold text-sm"
-                    >
-                      {marksSpreadsheetData.assessments.map(a => (
-                        <option key={a._id} value={a._id}>{a.name} ({a.type})</option>
-                      ))}
-                    </select>
+                {assessments.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No assessments configured yet. Create one in the Assessments tab.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {(() => {
+                      if (!selectedAssessment) return null
+
+                      return (
+                        <div className="space-y-4">
+                          <div className="overflow-x-auto border border-gray-200 rounded-xl max-h-[500px]">
+                            <table className="w-full border-collapse text-sm text-left">
+                              <thead className="bg-green-50/80 sticky top-0 z-10 border-b">
+                                <tr>
+                                  <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[120px]">Student ID</th>
+                                  <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[200px]">Student Name</th>
+                                  {hasQuestions ? (
+                                    questions.map(q => (
+                                      <th key={q.questionNumber} className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[90px]">
+                                        <div>{q.questionNumber}</div>
+                                        <div className="text-[10px] text-gray-500 font-semibold">Max: {q.maxMarks} • {q.co}</div>
+                                      </th>
+                                    ))
+                                  ) : (
+                                    <th className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[100px]">
+                                      <div>Marks</div>
+                                      <div className="text-[10px] text-gray-500 font-semibold">Max: {selectedAssessment.maxMarks}</div>
+                                    </th>
+                                  )}
+                                  <th className="px-4 py-3 font-bold text-gray-700 text-center min-w-[90px]">Total Marks</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y font-semibold text-gray-700">
+                                {studentList.map(s => {
+                                  const sId = s._id
+                                  const sMarks = tempMarks[sId] || {}
+
+                                  // Calculate total
+                                  let sum = 0
+                                  if (hasQuestions) {
+                                    questions.forEach(q => {
+                                      sum += parseFloat(sMarks[q.questionNumber]) || 0
+                                    })
+                                  } else {
+                                    sum = parseFloat(sMarks['marks']) || 0
+                                  }
+
+                                  return (
+                                    <tr key={sId} className="hover:bg-green-50/10">
+                                      <td className="px-4 py-2 border-r font-mono text-gray-800 bg-white">{s.id}</td>
+                                      <td className="px-4 py-2 border-r bg-white">{s.name}</td>
+                                      {hasQuestions ? (
+                                        questions.map(q => {
+                                          const val = sMarks[q.questionNumber] ?? ''
+                                          return (
+                                            <td key={q.questionNumber} className="px-2 py-1.5 border-r text-center">
+                                              <input
+                                                type="number"
+                                                step="0.5"
+                                                min="0"
+                                                max={q.maxMarks}
+                                                value={val}
+                                                onChange={(e) => handleSpreadsheetMarkChange(sId, q.questionNumber, e.target.value, q.maxMarks)}
+                                                onWheel={(e) => e.target.blur()}
+                                                className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
+                                                placeholder="0"
+                                              />
+                                            </td>
+                                          )
+                                        })
+                                      ) : (
+                                        <td className="px-2 py-1.5 border-r text-center">
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            max={selectedAssessment.maxMarks}
+                                            value={sMarks['marks'] ?? ''}
+                                            onChange={(e) => handleSpreadsheetMarkChange(sId, 'marks', e.target.value, selectedAssessment.maxMarks)}
+                                            onWheel={(e) => e.target.blur()}
+                                            className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
+                                            placeholder="0"
+                                          />
+                                        </td>
+                                      )}
+                                      <td className="px-4 py-2 text-center text-gray-800 font-extrabold bg-gray-50/50">
+                                        {sum.toFixed(1)} / {selectedAssessment.maxMarks}
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          <div className="flex justify-end pt-2">
+                            <button
+                              onClick={saveSpreadsheetMarks}
+                              disabled={saving}
+                              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition-all font-bold shadow-md hover:shadow-lg disabled:opacity-50"
+                            >
+                              <Save size={18} />
+                              {saving ? 'Saving Marks...' : 'Save Spreadsheet Marks'}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
-
-              {marksSpreadsheetData.assessments?.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No assessments configured yet. Create one in the Assessments tab.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {(() => {
-                    const assessment = marksSpreadsheetData.assessments.find(a => a._id === selectedAssessmentId)
-                    const questions = marksSpreadsheetData.metadata[selectedAssessmentId] || []
-                    const studentList = [...(marksSpreadsheetData.students || [])].sort((a, b) => {
-                      const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                      const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                      return numA - numB
-                    })
-
-                    if (!assessment) return null
-
-                    const hasQuestions = questions && questions.length > 0
-
-                    return (
-                      <div className="space-y-4">
-                        <div className="overflow-x-auto border border-gray-200 rounded-xl max-h-[500px]">
-                          <table className="w-full border-collapse text-sm text-left">
-                            <thead className="bg-green-50/80 sticky top-0 z-10 border-b">
-                              <tr>
-                                <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[120px]">Student ID</th>
-                                <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[200px]">Student Name</th>
-                                {hasQuestions ? (
-                                  questions.map(q => (
-                                    <th key={q.questionNumber} className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[90px]">
-                                      <div>{q.questionNumber}</div>
-                                      <div className="text-[10px] text-gray-500 font-semibold">Max: {q.maxMarks} • {q.co}</div>
-                                    </th>
-                                  ))
-                                ) : (
-                                  <th className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[100px]">
-                                    <div>Marks</div>
-                                    <div className="text-[10px] text-gray-500 font-semibold">Max: {assessment.maxMarks}</div>
-                                  </th>
-                                )}
-                                <th className="px-4 py-3 font-bold text-gray-700 text-center min-w-[90px]">Total Marks</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y font-semibold text-gray-700">
-                              {studentList.map(s => {
-                                const sId = s._id
-                                const sMarks = tempMarks[sId] || {}
-
-                                // Calculate total
-                                let sum = 0
-                                if (hasQuestions) {
-                                  questions.forEach(q => {
-                                    sum += parseFloat(sMarks[q.questionNumber]) || 0
-                                  })
-                                } else {
-                                  sum = parseFloat(sMarks['marks']) || 0
-                                }
-
-                                return (
-                                  <tr key={sId} className="hover:bg-green-50/10">
-                                    <td className="px-4 py-2 border-r font-mono text-gray-800 bg-white">{s.id}</td>
-                                    <td className="px-4 py-2 border-r bg-white">{s.name}</td>
-                                    {hasQuestions ? (
-                                      questions.map(q => {
-                                        const val = sMarks[q.questionNumber] ?? ''
-                                        return (
-                                          <td key={q.questionNumber} className="px-2 py-1.5 border-r text-center">
-                                            <input
-                                              type="number"
-                                              step="0.5"
-                                              min="0"
-                                              max={q.maxMarks}
-                                              value={val}
-                                              onChange={(e) => handleSpreadsheetMarkChange(sId, q.questionNumber, e.target.value, q.maxMarks)}
-                                              className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
-                                              placeholder="0"
-                                            />
-                                          </td>
-                                        )
-                                      })
-                                    ) : (
-                                      <td className="px-2 py-1.5 border-r text-center">
-                                        <input
-                                          type="number"
-                                          step="0.5"
-                                          min="0"
-                                          max={assessment.maxMarks}
-                                          value={sMarks['marks'] ?? ''}
-                                          onChange={(e) => handleSpreadsheetMarkChange(sId, 'marks', e.target.value, assessment.maxMarks)}
-                                          className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
-                                          placeholder="0"
-                                        />
-                                      </td>
-                                    )}
-                                    <td className="px-4 py-2 text-center text-gray-800 font-extrabold bg-gray-50/50">
-                                      {sum.toFixed(1)} / {assessment.maxMarks}
-                                    </td>
-                                  </tr>
-                                )
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        <div className="flex justify-end pt-2">
-                          <button
-                            onClick={saveSpreadsheetMarks}
-                            disabled={saving}
-                            className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition-all font-bold shadow-md hover:shadow-lg disabled:opacity-50"
-                          >
-                            <Save size={18} />
-                            {saving ? 'Saving Marks...' : 'Save Spreadsheet Marks'}
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </div>
-              )}
-            </div>
-          )}
+            )
+          })()}
 
           {/* TAB 6: CO-PO MAPPING */}
           {activeTab === 'coMapping' && (() => {

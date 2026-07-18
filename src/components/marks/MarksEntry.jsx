@@ -109,6 +109,7 @@ const MarksEntry = ({
                           onChange={(e) =>
                             updateMark(student.id, q.name, e.target.value)
                           }
+                          onWheel={(e) => e.target.blur()}
                           className="w-full px-2 py-1 text-center text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                           placeholder="0"
                         />

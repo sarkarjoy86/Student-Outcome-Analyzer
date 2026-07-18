@@ -32,7 +32,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [error, setError] = useState('')
   const [availableCOs, setAvailableCOs] = useState([])
   const [coDetails, setCoDetails] = useState([]) // Full CO objects with code + description
-  const [bloomLevels, setBloomLevels] = useState({}) // questionNumber -> bloom level (local only)
+  // Bloom levels are now stored directly in the questions array (q.bloom)
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadingCount, setUploadingCount] = useState(0)
   const [showBlobWarning, setShowBlobWarning] = useState(false)
@@ -91,7 +91,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
       const currentAssessment = res.assessment || assessment
       setExamDuration(currentAssessment.examDuration || '')
-      setNumQuestions(currentAssessment.numQuestions || 0)
       setLevel(currentAssessment.level || '')
       setTerm(currentAssessment.term || '')
 
@@ -99,7 +98,17 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       const qList = res.questions || []
       const finalQs = []
 
-      const targetNum = currentAssessment.numQuestions || 0
+      // Auto-set default numQuestions for Mid (3) and Final (5) when first opening
+      let targetNum = currentAssessment.numQuestions || 0
+      if (targetNum === 0 && qList.length === 0) {
+        if (currentAssessment.type === 'midTerm') {
+          targetNum = 3
+        } else if (currentAssessment.type === 'final') {
+          targetNum = 5
+        }
+      }
+      setNumQuestions(targetNum)
+
       for (let i = 1; i <= targetNum; i++) {
         const qNum = `Q${i}`
         const existing = qList.find(q => q.questionNumber === qNum)
@@ -107,7 +116,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           finalQs.push({
             questionNumber: qNum,
             maxMarks: existing.maxMarks ?? 0,
-            co: existing.co || 'NONE'
+            co: existing.co || 'NONE',
+            bloom: existing.bloom || ''
           })
         } else {
           // Default division of marks
@@ -115,7 +125,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           finalQs.push({
             questionNumber: qNum,
             maxMarks: i === targetNum ? defaultMax + (currentAssessment.maxMarks % (targetNum || 1)) : defaultMax,
-            co: 'NONE'
+            co: 'NONE',
+            bloom: ''
           })
         }
       }
@@ -141,7 +152,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           updated.push({
             questionNumber: qNum,
             maxMarks: i === val ? defaultMax + (assessment.maxMarks % (val || 1)) : defaultMax,
-            co: 'NONE'
+            co: 'NONE',
+            bloom: ''
           })
         }
       } else if (updated.length > val) {
@@ -152,8 +164,12 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     })
   }
 
-  const handleBloomChange = (questionNumber, value) => {
-    setBloomLevels(prev => ({ ...prev, [questionNumber]: value }))
+  const handleBloomChange = (idx, value) => {
+    setQuestions(prev => {
+      const updated = [...prev]
+      updated[idx] = { ...updated[idx], bloom: value }
+      return updated
+    })
   }
 
   const handleMetadataChange = (index, key, value) => {
@@ -219,10 +235,15 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         term
       })
 
-      // 2. Save Question Paper content and metadata questions
+      // 2. Save Question Paper content and metadata questions (including bloom levels)
       await apiService.saveQuestionPaper(assessment._id, {
         content: currentContent,
-        questions
+        questions: questions.map(q => ({
+          questionNumber: q.questionNumber,
+          maxMarks: q.maxMarks,
+          co: q.co,
+          bloom: q.bloom || ''
+        }))
       })
       alert('Question paper, metadata, and assessment settings saved successfully!')
       loadPaperData()
@@ -249,10 +270,32 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     // Build Level/Term line
     const levelTermLine = (level && term) ? `Level ${level} Term ${term}` : (level ? `Level ${level}` : (term ? `Term ${term}` : ''))
 
-    // Build Class Test line: "Class Test: CT-1, Section: A, Semester: Spring 2026"
+    // Build assessment type label based on actual type
+    let typeLabel = 'Assessment'
+    const aType = assessment.type || ''
+    if (aType === 'cts') typeLabel = 'Class Test'
+    else if (aType === 'midTerm') typeLabel = 'Mid Term Exam'
+    else if (aType === 'final') typeLabel = 'Final Exam'
+    else if (aType === 'assignments') typeLabel = 'Assignment'
+    else if (aType === 'presentation') typeLabel = 'Presentation'
+    else if (aType === 'attendance') typeLabel = 'Attendance'
+    else if (aType === 'performance') typeLabel = 'Performance'
+
     const semesterFull = academicYear ? `${semesterName} ${academicYear}` : semesterName
     const ctParts = []
-    if (assessmentName) ctParts.push(`Class Test: ${assessmentName}`)
+    
+    let typeName = ''
+    if (aType === 'cts') {
+      typeName = `Class Test: ${assessmentName}`
+    } else if (aType === 'midTerm') {
+      typeName = `Mid Term Examination`
+    } else if (aType === 'final') {
+      typeName = `Final Examination`
+    } else {
+      typeName = `${typeLabel}: ${assessmentName}`
+    }
+    
+    if (typeName) ctParts.push(typeName)
     if (section) ctParts.push(`Section: ${section}`)
     if (semesterFull) ctParts.push(`Semester: ${semesterFull}`)
     const ctLine = ctParts.join(', ')
@@ -312,7 +355,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       if (idx < questions.length) {
         const q = questions[idx]
         const co = q.co && q.co !== 'NONE' ? q.co : ''
-        const bloom = bloomLevels[q.questionNumber] || ''
+        const bloom = q.bloom || ''
         const marks = q.maxMarks || 0
 
         // Build the annotation string
@@ -802,9 +845,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
                   <div key={q.questionNumber} className="border p-4 rounded-xl space-y-3 bg-gray-50/30">
                     <div className="flex justify-between items-center border-b pb-1.5">
                       <span className="font-extrabold text-gray-800">{q.questionNumber}</span>
-                      {q.co && q.co !== 'NONE' && bloomLevels[q.questionNumber] && (
+                      {q.co && q.co !== 'NONE' && q.bloom && (
                         <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                          [{q.co}→{bloomLevels[q.questionNumber]}]
+                          [{q.co}→{q.bloom}]
                         </span>
                       )}
                     </div>
@@ -839,8 +882,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
                       <div>
                         <label className="block font-bold text-gray-600 mb-1">Bloom's</label>
                         <select
-                          value={bloomLevels[q.questionNumber] || ''}
-                          onChange={(e) => handleBloomChange(q.questionNumber, e.target.value)}
+                          value={q.bloom || ''}
+                          onChange={(e) => handleBloomChange(idx, e.target.value)}
                           className="w-full border border-gray-300 px-2 py-1.5 rounded-lg bg-white font-semibold"
                         >
                           <option value="">—</option>

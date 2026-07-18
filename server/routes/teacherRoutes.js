@@ -303,7 +303,7 @@ router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, re
 router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req, res) => {
   try {
     const offeringId = req.params.id
-    const { type, maxMarks, numQuestions, examDuration, co } = req.body
+    const { type, maxMarks, numQuestions, examDuration, co, deadline } = req.body
 
     if (!type || maxMarks === undefined) {
       return res.status(400).json({ message: 'Type and Max Marks are required.' })
@@ -336,6 +336,7 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
       co: co || '',
       numQuestions: numQuestions || 0,
       examDuration: examDuration || '',
+      deadline: deadline || null,
       status: 'Draft'
     })
 
@@ -372,7 +373,7 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
 // 4. Edit assessment details
 router.put('/teacher/assessments/:id', requireAuth, async (req, res) => {
   try {
-    const { maxMarks, numQuestions, examDuration, status, co, name, level, term } = req.body
+    const { maxMarks, numQuestions, examDuration, status, co, name, level, term, deadline } = req.body
     const assessment = await Assessment.findById(req.params.id)
     if (!assessment) {
       return res.status(404).json({ message: 'Assessment not found.' })
@@ -417,6 +418,7 @@ router.put('/teacher/assessments/:id', requireAuth, async (req, res) => {
     if (name !== undefined) assessment.name = name
     if (level !== undefined) assessment.level = level
     if (term !== undefined) assessment.term = term
+    if (deadline !== undefined) assessment.deadline = deadline
 
     await assessment.save()
 
@@ -722,12 +724,24 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
 
     // Save marks
     for (const item of marks) {
-      const { studentId, questionMarks = {}, totalMark = 0 } = item
+      const { studentId, questionMarks = {}, totalMark = 0, isEmpty = false } = item
 
-      const qMarksArray = Object.keys(questionMarks).map(qNum => ({
-        questionNumber: qNum,
-        mark: Number(questionMarks[qNum]) || 0
-      }))
+      if (isEmpty) {
+        // Delete the student marks document if it exists to keep it unentered / blank
+        await StudentMarks.deleteOne({ student: studentId, assessment: assessmentId, courseOffering: offeringId })
+        continue
+      }
+
+      const qMarksArray = []
+      Object.keys(questionMarks).forEach(qNum => {
+        const val = questionMarks[qNum]
+        if (val !== null && val !== undefined && val !== '') {
+          qMarksArray.push({
+            questionNumber: qNum,
+            mark: Number(val)
+          })
+        }
+      })
 
       await StudentMarks.findOneAndUpdate(
         { student: studentId, assessment: assessmentId, courseOffering: offeringId },

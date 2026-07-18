@@ -1401,7 +1401,8 @@ router.get(
           type: a.type,
           numQuestions: a.numQuestions,
           examDuration: a.examDuration,
-          status: a.status
+          status: a.status,
+          deadline: a.deadline
         };
         if (["cts", "midTerm", "final", "assignments"].includes(a.type)) {
           assessments[a.type].push(item);
@@ -1467,6 +1468,7 @@ router.post(
                 name: a.name.trim(),
                 maxMarks: parseFloat(a.maxMarks) || 0,
                 co: a.co ? a.co.trim() : "",
+                deadline: a.deadline || ""
               });
             }
           });
@@ -1482,6 +1484,7 @@ router.post(
             name: s.charAt(0).toUpperCase() + s.slice(1), // e.g. Attendance, Performance, Presentation
             maxMarks: parseFloat(assessments[s].maxMarks) || 0,
             co: assessments[s].co ? assessments[s].co.trim() : "",
+            deadline: assessments[s].deadline || ""
           });
         }
       });
@@ -1498,6 +1501,7 @@ router.post(
           // Update
           existing.maxMarks = item.maxMarks;
           existing.co = item.co;
+          existing.deadline = item.deadline;
           await existing.save();
           savedAssessments.push(existing);
         } else {
@@ -1508,6 +1512,7 @@ router.post(
             name: item.name,
             maxMarks: item.maxMarks,
             co: item.co,
+            deadline: item.deadline
           });
           savedAssessments.push(created);
         }
@@ -1540,6 +1545,7 @@ router.post(
           name: a.name,
           maxMarks: a.maxMarks,
           co: a.co,
+          deadline: a.deadline
         };
         if (types.includes(a.type)) {
           finalAssessments[a.type].push(item);

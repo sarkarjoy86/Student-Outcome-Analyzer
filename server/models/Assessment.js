@@ -34,6 +34,10 @@ const assessmentSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  deadline: {
+    type: Date,
+    default: null
+  },
   level: {
     type: String,
     default: ''
