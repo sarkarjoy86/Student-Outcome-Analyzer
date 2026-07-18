@@ -605,6 +605,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         const response = JSON.parse(args.e.currentTarget.response)
         if (response && response.message) {
           message = `Upload failed: ${response.message}`
+          if (response.error) {
+            message += `\n\nDetails: ${response.error}`
+          }
         }
       }
     } catch (e) {}
