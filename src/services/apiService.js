@@ -608,4 +608,34 @@ export const apiService = {
     });
     return handleResponse(res);
   },
+
+  // PO Recommendation Matrix API
+  async getPORecommendationStudents(threshold = 60, offeringId = "", teacherId = "", refresh = false) {
+    let url = `${API_BASE}/api/po-recommendation/students?threshold=${threshold}${refresh ? '&refresh=true' : ''}`;
+    if (offeringId) url += `&offeringId=${encodeURIComponent(offeringId)}`;
+    if (teacherId) url += `&teacherId=${encodeURIComponent(teacherId)}`;
+    const res = await fetchWithDefaults(url);
+    return handleResponse(res);
+  },
+
+  async getStudentPORecommendation(studentId, threshold = 60) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/po-recommendation/student/${encodeURIComponent(studentId)}?threshold=${threshold}&recalculate=true`);
+    return handleResponse(res);
+  },
+
+  async savePORecommendation(payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/po-recommendation/save`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async syncAllPORecommendations(threshold = 60) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/po-recommendation/sync-all`, {
+      method: "POST",
+      body: JSON.stringify({ threshold }),
+    });
+    return handleResponse(res);
+  },
 };

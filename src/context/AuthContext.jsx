@@ -322,6 +322,7 @@ export function AuthProvider({ children }) {
       deleteUser,
       adminResetPassword,
       refreshAuth,
+      loadAdminUsers,
       adminCredentials: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
     }),
     [user, users, authLoading, actionLoading, message],

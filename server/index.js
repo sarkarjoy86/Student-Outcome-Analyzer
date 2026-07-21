@@ -8,9 +8,9 @@ import obeRoutes from "./routes/obeRoutes.js";
 import teacherRoutes from "./routes/teacherRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import surveyRoutes from "./routes/surveyRoutes.js";
+import poRecommendationRoutes, { syncAllStudentsLongitudinalPO } from "./routes/poRecommendationRoutes.js";
 
 dotenv.config();
-
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -50,6 +50,7 @@ app.use("/api", obeRoutes);
 app.use("/api", teacherRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", surveyRoutes);
+app.use("/api", poRecommendationRoutes);
 
 
 app.use((_req, res) => {
@@ -64,6 +65,12 @@ async function bootstrapDatabase() {
   try {
     await connectDB();
     console.log("MongoDB connected.");
+    // Auto-sync student longitudinal PO data in background on server start
+    syncAllStudentsLongitudinalPO(60).then(count => {
+      console.log(`Synchronized longitudinal PO records for ${count} students.`);
+    }).catch(err => {
+      console.error("Initial PO sync error:", err.message);
+    });
   } catch (error) {
     console.error("Failed to connect DB:", error.message);
     console.error(

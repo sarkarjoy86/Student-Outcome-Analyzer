@@ -20,6 +20,12 @@ import {
   Edit2,
   Save,
   X,
+  Check,
+  GitMerge,
+  Sparkles,
+  CheckSquare,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 export default function AdminDashboard() {
@@ -31,6 +37,7 @@ export default function AdminDashboard() {
     logout,
     actionLoading,
     message,
+    loadAdminUsers,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState(() => {
@@ -40,6 +47,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (activeTab) {
       localStorage.setItem("adminActiveTab", activeTab);
+    }
+    if (activeTab === "users" && loadAdminUsers) {
+      loadAdminUsers();
+      const interval = setInterval(() => {
+        loadAdminUsers();
+      }, 5000);
+      return () => clearInterval(interval);
     }
   }, [activeTab]);
 
@@ -126,6 +140,7 @@ export default function AdminDashboard() {
     }
     if (activeTab === "courses") {
       fetchCourses();
+      fetchProgramOutcomes();
     }
     if (activeTab === "programOutcomes") {
       fetchProgramOutcomes();
@@ -141,6 +156,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (selectedCourse) {
       loadCourseDetails(selectedCourse);
+      if (programOutcomes.length === 0) {
+        fetchProgramOutcomes();
+      }
     }
   }, [selectedCourse]);
 
@@ -425,13 +443,28 @@ export default function AdminDashboard() {
     e.preventDefault();
     if (!editingCourseId) return;
     try {
+      const updatedNumCOs = parseInt(courseForm.numCOs) || 4;
       await apiService.updateCourse(editingCourseId, {
         courseCode: courseForm.courseCode.trim(),
         courseName: courseForm.courseName.trim(),
         creditHours: parseFloat(courseForm.creditHours) || 3,
         department: courseForm.department.trim(),
-        numCOs: parseInt(courseForm.numCOs) || 4,
+        numCOs: updatedNumCOs,
       });
+      if (selectedCourse?._id === editingCourseId) {
+        setSelectedCourse((prev) =>
+          prev
+            ? {
+                ...prev,
+                courseCode: courseForm.courseCode.trim(),
+                courseName: courseForm.courseName.trim(),
+                creditHours: parseFloat(courseForm.creditHours) || 3,
+                department: courseForm.department.trim(),
+                numCOs: updatedNumCOs,
+              }
+            : prev,
+        );
+      }
       setEditingCourseId(null);
       setCourseForm({
         courseCode: "",
@@ -475,17 +508,33 @@ export default function AdminDashboard() {
   const handleCreateCourseOutcome = async (e) => {
     e.preventDefault();
     if (!selectedCourse) return;
+
+    const maxAllowedCOs = Number(selectedCourse.numCOs) || 4;
+    if (!editingCourseOutcomeId && courseOutcomes.length >= maxAllowedCOs) {
+      alert(
+        `Maximum CO limit reached (${maxAllowedCOs} COs configured for this course). Please update "NO. OF COS" under Edit Master Course to add more outcomes.`
+      );
+      return;
+    }
+
     try {
+      const defaultCode =
+        courseOutcomeForm.code ||
+        `CO${Math.min(maxAllowedCOs, courseOutcomes.length + 1)}`;
+      const payload = {
+        ...courseOutcomeForm,
+        code: defaultCode,
+      };
       if (editingCourseOutcomeId) {
         await apiService.updateCourseOutcome(
           selectedCourse._id,
           editingCourseOutcomeId,
-          courseOutcomeForm,
+          payload,
         );
       } else {
         await apiService.createCourseOutcome(
           selectedCourse._id,
-          courseOutcomeForm,
+          payload,
         );
       }
       setCourseOutcomeForm({ code: "", description: "" });
@@ -880,15 +929,65 @@ export default function AdminDashboard() {
 
         {activeTab === "users" && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
-                  <UserPlus className="text-blue-600" />
-                  Create New Teacher Account
-                </h2>
+            {/* Quick Stats Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Teacher Accounts</p>
+                  <p className="text-2xl font-black text-gray-900 mt-1">{users.filter((u) => u.role !== "admin").length}</p>
+                </div>
+                <div className="p-3 bg-blue-50 text-blue-700 rounded-xl">
+                  <Users size={20} />
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Currently Online</p>
+                  <p className="text-2xl font-black text-emerald-600 mt-1">
+                    {users.filter((u) => u.role !== "admin" && u.isLoggedIn).length}
+                  </p>
+                </div>
+                <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Offline Accounts</p>
+                  <p className="text-2xl font-black text-slate-500 mt-1">
+                    {users.filter((u) => u.role !== "admin" && !u.isLoggedIn).length}
+                  </p>
+                </div>
+                <div className="p-3 bg-gray-100 text-gray-500 rounded-xl">
+                  <UserPlus size={20} />
+                </div>
+              </div>
+            </div>
+
+            {/* Forms Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Create Teacher Form Card */}
+              <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200">
+                <div className="flex items-center gap-3 border-b border-gray-150 pb-4 mb-6">
+                  <div className="p-2.5 bg-blue-100/80 text-blue-800 rounded-xl">
+                    <UserPlus size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      Create Teacher Account
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">Provision new faculty credentials</p>
+                  </div>
+                </div>
+
                 <form onSubmit={handleCreateUser} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Full Name
                     </label>
                     <input
@@ -900,12 +999,12 @@ export default function AdminDashboard() {
                           fullName: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50"
-                      placeholder="Dr. John Doe"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
+                      placeholder="e.g. Dr. John Doe"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Email Address
                     </label>
                     <input
@@ -917,12 +1016,12 @@ export default function AdminDashboard() {
                           email: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
                       placeholder="teacher@university.edu"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Initial Password
                     </label>
                     <input
@@ -934,27 +1033,38 @@ export default function AdminDashboard() {
                           password: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
                       placeholder="Min 6 characters"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={!isCreateFormValid() || actionLoading}
-                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all disabled:opacity-50 mt-2 flex items-center justify-center gap-1.5"
                   >
-                    {actionLoading ? "Creating..." : "Create Teacher"}
+                    <UserPlus size={15} />
+                    {actionLoading ? "Creating..." : "Create Teacher Account"}
                   </button>
                 </form>
               </div>
-              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
-                  <ShieldAlert className="text-amber-500" />
-                  Reset Teacher Password
-                </h2>
+
+              {/* Reset Password Form Card */}
+              <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200">
+                <div className="flex items-center gap-3 border-b border-gray-150 pb-4 mb-6">
+                  <div className="p-2.5 bg-amber-100/80 text-amber-800 rounded-xl">
+                    <ShieldAlert size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      Reset Teacher Password
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">Update credentials for an existing account</p>
+                  </div>
+                </div>
+
                 <form onSubmit={handleResetPassword} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Select Teacher Account
                     </label>
                     <select
@@ -962,9 +1072,9 @@ export default function AdminDashboard() {
                       onChange={(e) =>
                         setResetForm({ ...resetForm, email: e.target.value })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-semibold bg-gray-50/30"
                     >
-                      <option value="">Select a teacher</option>
+                      <option value="">Select a teacher account</option>
                       {users
                         .filter((u) => u.role !== "admin")
                         .map((u) => (
@@ -975,7 +1085,7 @@ export default function AdminDashboard() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       New Password
                     </label>
                     <input
@@ -987,65 +1097,85 @@ export default function AdminDashboard() {
                           newPassword: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-semibold bg-gray-50/30"
                       placeholder="Min 6 characters"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={!isResetFormValid() || actionLoading}
-                    className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                    className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all disabled:opacity-50 mt-2 flex items-center justify-center gap-1.5"
                   >
+                    <ShieldAlert size={15} />
                     {actionLoading ? "Updating..." : "Update Password"}
                   </button>
                 </form>
               </div>
             </div>
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-              <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                Registered Teacher Accounts
-              </h2>
-              <div className="overflow-x-auto">
-                <table className="w-full table-auto">
+
+            {/* Registered Teachers Table */}
+            <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    Registered Faculty Accounts
+                  </h2>
+                  <p className="text-xs text-gray-500 font-medium">Live login status updates automatically every 5 seconds</p>
+                </div>
+                <button
+                  onClick={() => loadAdminUsers && loadAdminUsers()}
+                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold border border-gray-200 transition"
+                >
+                  Refresh Live Status
+                </button>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs font-semibold text-gray-700">
                   <thead>
-                    <tr className="border-b bg-gray-50 text-gray-600 text-sm font-semibold">
-                      <th className="text-left py-3 px-4">Full Name</th>
-                      <th className="text-left py-3 px-4">Email</th>
-                      <th className="text-center py-3 px-4">Status</th>
+                    <tr className="bg-gray-100/80 border-b border-gray-200 text-gray-600 font-bold uppercase tracking-wider">
+                      <th className="text-left py-3 px-4">Faculty Member</th>
+                      <th className="text-left py-3 px-4">Email Address</th>
+                      <th className="text-center py-3 px-4">Live Status</th>
                       <th className="text-center py-3 px-4">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
+                  <tbody className="divide-y divide-gray-100">
                     {users.length === 0 ? (
                       <tr>
                         <td
                           colSpan="4"
-                          className="text-center py-6 text-gray-500 italic"
+                          className="text-center py-8 text-gray-400 italic"
                         >
-                          No teachers registered yet.
+                          No teacher accounts registered yet.
                         </td>
                       </tr>
                     ) : (
                       users.map((u) => (
                         <tr
                           key={u.email}
-                          className="hover:bg-gray-50/50 text-gray-700"
+                          className="hover:bg-gray-50/50 transition-colors"
                         >
-                          <td className="py-3.5 px-4 font-medium">
+                          <td className="py-3.5 px-4 font-bold text-gray-900">
                             {u.fullName}
                           </td>
-                          <td className="py-3.5 px-4">{u.email}</td>
+                          <td className="py-3.5 px-4 font-medium text-gray-600">{u.email}</td>
                           <td className="py-3.5 px-4 text-center">
                             {u.role === "admin" ? (
-                              <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-1 rounded-full font-bold">
+                              <span className="bg-purple-100 text-purple-800 text-[11px] px-3 py-1 rounded-full font-black inline-flex items-center gap-1 border border-purple-200">
                                 Admin
                               </span>
                             ) : u.isLoggedIn ? (
-                              <span className="bg-green-100 text-green-700 text-xs px-2.5 py-1 rounded-full font-bold">
+                              <span className="bg-emerald-100 text-emerald-800 text-[11px] px-3 py-1 rounded-full font-black inline-flex items-center gap-1.5 border border-emerald-300">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
                                 Online
                               </span>
                             ) : (
-                              <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-bold">
+                              <span className="bg-gray-100 text-gray-500 text-[11px] px-3 py-1 rounded-full font-bold inline-flex items-center gap-1.5 border border-gray-200">
+                                <span className="h-2 w-2 rounded-full bg-gray-400"></span>
                                 Offline
                               </span>
                             )}
@@ -1057,10 +1187,10 @@ export default function AdminDashboard() {
                                   handleDeleteTeacher(u.id, u.fullName)
                                 }
                                 disabled={actionLoading}
-                                className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed border border-red-200 hover:border-red-300"
+                                className="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-red-200"
                                 title={`Delete ${u.fullName}`}
                               >
-                                <Trash2 size={14} />
+                                <Trash2 size={13} />
                                 Delete
                               </button>
                             )}
@@ -1070,6 +1200,189 @@ export default function AdminDashboard() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "sessions" && (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150 md:col-span-1">
+                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
+                  <Calendar className="text-blue-600" />
+                  Add Academic Session
+                </h2>
+                <form onSubmit={handleCreateSession} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Semester
+                    </label>
+                    <select
+                      value={newSessionForm.semesterName}
+                      onChange={(e) =>
+                        setNewSessionForm({
+                          ...newSessionForm,
+                          semesterName: e.target.value,
+                        })
+                      }
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50 font-medium"
+                      required
+                    >
+                      <option value="Spring">Spring</option>
+                      <option value="Summer">Summer</option>
+                      <option value="Fall">Fall</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Academic Year
+                    </label>
+                    <input
+                      type="number"
+                      value={newSessionForm.academicYear}
+                      onChange={(e) =>
+                        setNewSessionForm({
+                          ...newSessionForm,
+                          academicYear: Number(e.target.value),
+                        })
+                      }
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50 font-medium"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Status
+                    </label>
+                    <select
+                      value={newSessionForm.status}
+                      onChange={(e) =>
+                        setNewSessionForm({
+                          ...newSessionForm,
+                          status: e.target.value,
+                        })
+                      }
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50 font-medium"
+                    >
+                      <option value="active">Active</option>
+                      <option value="completed">Completed</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={actionLoading}
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50"
+                  >
+                    {actionLoading ? "Saving..." : "Add Session"}
+                  </button>
+                </form>
+              </div>
+              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150 md:col-span-2">
+                <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
+                  Academic Sessions List
+                </h2>
+                {sessionsLoading ? (
+                  <div className="flex justify-center items-center py-12">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full table-auto">
+                      <thead>
+                        <tr className="border-b bg-gray-50 text-gray-600 text-sm font-semibold">
+                          <th className="text-left py-3 px-4">Semester</th>
+                          <th className="text-left py-3 px-4">Academic Year</th>
+                          <th className="text-center py-3 px-4">Status</th>
+                          <th className="text-right py-3 px-4">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {sessions.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan="4"
+                              className="text-center py-6 text-gray-500 italic"
+                            >
+                              No academic sessions configured yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          sessions.map((session) => (
+                            <tr
+                              key={session._id}
+                              className="hover:bg-gray-50/50 text-gray-700"
+                            >
+                              <td className="py-3.5 px-4 font-semibold text-indigo-900">
+                                {session.semesterName}
+                              </td>
+                              <td className="py-3.5 px-4 font-medium">
+                                {session.academicYear}
+                              </td>
+                              <td className="py-3.5 px-4 text-center">
+                                {editingSessionId === session._id ? (
+                                  <select
+                                    value={editingSessionStatus}
+                                    onChange={(e) => setEditingSessionStatus(e.target.value)}
+                                    className="border border-gray-300 px-2 py-1 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white text-xs font-semibold"
+                                  >
+                                    <option value="active">Active</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="inactive">Inactive</option>
+                                  </select>
+                                ) : session.status === "active" ? (
+                                  <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                    <CheckCircle size={12} /> Active
+                                  </span>
+                                ) : session.status === "completed" ? (
+                                  <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                    <CheckCircle size={12} /> Completed
+                                  </span>
+                                ) : (
+                                  <span className="bg-red-100 text-red-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                    <XCircle size={12} /> Inactive
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 text-right">
+                                {editingSessionId === session._id ? (
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      onClick={() => handleUpdateSessionStatus(session._id)}
+                                      className="text-green-600 hover:text-green-800 p-1 hover:bg-green-50 rounded-lg transition-colors"
+                                      title="Save status"
+                                    >
+                                      <Save size={16} />
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingSessionId(null)}
+                                      className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                                      title="Cancel"
+                                    >
+                                      <X size={16} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setEditingSessionId(session._id);
+                                      setEditingSessionStatus(session.status);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded-lg transition-colors"
+                                    title="Edit status"
+                                  >
+                                    <Edit2 size={16} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1260,12 +1573,21 @@ export default function AdminDashboard() {
 
         {activeTab === "courses" && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
-                  <BookOpen className="text-green-600" />
-                  {editingCourseId ? "Edit Course" : "Create Course"}
-                </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Form Card */}
+              <div className="lg:col-span-5 bg-white p-7 rounded-2xl shadow-sm border border-gray-200">
+                <div className="flex items-center gap-3 border-b border-gray-150 pb-4 mb-6">
+                  <div className="p-2.5 bg-emerald-100/80 text-emerald-800 rounded-xl">
+                    <BookOpen size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      {editingCourseId ? "Edit Master Course" : "Create Master Course"}
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">Configure course metadata and credit hours</p>
+                  </div>
+                </div>
+
                 <form
                   onSubmit={
                     editingCourseId ? handleUpdateCourse : handleCreateCourse
@@ -1273,7 +1595,7 @@ export default function AdminDashboard() {
                   className="space-y-4"
                 >
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Course Code
                     </label>
                     <input
@@ -1285,13 +1607,13 @@ export default function AdminDashboard() {
                           courseCode: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                      placeholder="CSE221"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-gray-50/30"
+                      placeholder="e.g. CSE 213"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
-                      Course Name
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Course Title
                     </label>
                     <input
                       type="text"
@@ -1302,17 +1624,16 @@ export default function AdminDashboard() {
                           courseName: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                      placeholder="Object Oriented Programming"
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-gray-50/30"
+                      placeholder="e.g. Object Oriented Programming Language"
                     />
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                         Credit Hours
                       </label>
-                      <input
-                        type="number"
+                      <select
                         value={courseForm.creditHours}
                         onChange={(e) =>
                           setCourseForm({
@@ -1320,201 +1641,357 @@ export default function AdminDashboard() {
                             creditHours: e.target.value,
                           })
                         }
-                        className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                      />
+                        className="w-full border border-gray-300 px-3.5 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-2xs"
+                      >
+                        <option value="1">1.0 Credit</option>
+                        <option value="1.5">1.5 Credits</option>
+                        <option value="2">2.0 Credits</option>
+                        <option value="3">3.0 Credits</option>
+                      </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                         No. of COs
                       </label>
-                      <input
-                        type="number"
-                        value={courseForm.numCOs}
-                        onChange={(e) =>
-                          setCourseForm({
-                            ...courseForm,
-                            numCOs: e.target.value,
-                          })
-                        }
-                        className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                      />
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={courseForm.numCOs}
+                          onChange={(e) => {
+                            const val = Math.max(1, Math.min(12, parseInt(e.target.value) || 1));
+                            setCourseForm({
+                              ...courseForm,
+                              numCOs: String(val),
+                            });
+                          }}
+                          className="w-full border border-gray-300 pl-3.5 pr-8 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-2xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <div className="absolute right-1 flex flex-col border-l border-gray-200 pl-0.5 pr-0.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const curr = parseInt(courseForm.numCOs) || 4;
+                              setCourseForm({
+                                ...courseForm,
+                                numCOs: String(Math.min(12, curr + 1)),
+                              });
+                            }}
+                            className="p-0.5 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 rounded transition active:scale-90"
+                            title="Increase CO count (+1)"
+                          >
+                            <ChevronUp size={13} strokeWidth={3} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const curr = parseInt(courseForm.numCOs) || 4;
+                              setCourseForm({
+                                ...courseForm,
+                                numCOs: String(Math.max(1, curr - 1)),
+                              });
+                            }}
+                            className="p-0.5 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 rounded transition active:scale-90"
+                            title="Decrease CO count (-1)"
+                          >
+                            <ChevronDown size={13} strokeWidth={3} />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
-                      Department
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Department / Offering Body
                     </label>
-                    <input
-                      type="text"
-                      value={courseForm.department}
+                    <select
+                      value={courseForm.department || "CSE"}
                       onChange={(e) =>
                         setCourseForm({
                           ...courseForm,
                           department: e.target.value,
                         })
                       }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                      placeholder="CSE"
-                    />
+                      className="w-full border border-gray-300 px-3.5 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-2xs"
+                    >
+                      <option value="CSE">CSE (Computer Science & Engineering)</option>
+                      <option value="EEE">EEE (Electrical & Electronic Engineering)</option>
+                      <option value="CE">CE (Civil Engineering)</option>
+                      <option value="BBA">BBA (Business Administration)</option>
+                    </select>
                   </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                  >
-                    {editingCourseId ? "Update Course" : "Create Course"}
-                  </button>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="submit"
+                      className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {editingCourseId ? <Save size={15} /> : <Plus size={15} />}
+                      {editingCourseId ? "Update Course" : "Create Course"}
+                    </button>
+                    {editingCourseId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCourseId(null);
+                          setCourseForm({ courseCode: "", courseName: "", creditHours: 3, numCOs: 4, department: "CSE" });
+                        }}
+                        className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </form>
               </div>
-              <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                  Course List
-                </h2>
+
+              {/* Course List */}
+              <div className="lg:col-span-7 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      Master Course Directory
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">Select a course below to manage its COs and CO-PO allocation matrix</p>
+                  </div>
+                  <span className="bg-emerald-50 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full border border-emerald-200">
+                    {courses.length} Active Courses
+                  </span>
+                </div>
+
                 {coursesLoading ? (
-                  <div className="flex justify-center items-center py-8">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-600 border-t-transparent" />
+                  <div className="flex justify-center items-center py-12">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                     {courses.length === 0 ? (
-                      <p className="text-gray-500 italic">No courses yet.</p>
+                      <p className="text-gray-400 italic text-xs py-6 text-center">No master courses created yet.</p>
                     ) : (
-                      courses.map((course) => (
-                        <div
-                          key={course._id}
-                          className="border rounded-xl p-4 hover:bg-green-50/40 transition-all"
-                        >
-                          <div className="flex justify-between items-start gap-3">
-                            <div>
-                              <p className="font-bold text-gray-800">
-                                {course.courseCode}
-                              </p>
-                              <p className="text-sm text-gray-600">
-                                {course.courseName}
-                              </p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {course.department} • {course.creditHours}{" "}
-                                Credits • {course.numCOs} COs
-                              </p>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => startEditCourse(course)}
-                                className="text-sm text-blue-600 font-semibold"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteCourse(course._id)}
-                                className="text-sm text-red-600 font-semibold"
-                              >
-                                Delete
-                              </button>
+                      courses.map((course) => {
+                        const isSelected = selectedCourse?._id === course._id;
+                        return (
+                          <div
+                            key={course._id}
+                            className={`p-4 rounded-xl transition-all border ${
+                              isSelected
+                                ? "bg-emerald-50/60 border-emerald-400 ring-2 ring-emerald-500/20 shadow-sm"
+                                : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-xs"
+                            }`}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-black text-gray-900 text-sm">{course.courseCode}</span>
+                                  <span className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded">
+                                    {course.department || 'CSE'}
+                                  </span>
+                                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                                    {course.creditHours} Credits
+                                  </span>
+                                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                                    {course.numCOs || 4} COs
+                                  </span>
+                                </div>
+                                <p className="text-xs font-semibold text-gray-600 mt-1">
+                                  {course.courseName}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  onClick={() => setSelectedCourse(course)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition flex items-center gap-1 border ${
+                                    isSelected
+                                      ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                                      : "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-200"
+                                  }`}
+                                >
+                                  <Layers size={13} />
+                                  Manage COs
+                                </button>
+
+                                <button
+                                  onClick={() => setSelectedCourse(course)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition flex items-center gap-1 border ${
+                                    isSelected
+                                      ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                                      : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border-indigo-200"
+                                  }`}
+                                >
+                                  <Network size={13} />
+                                  Map CO-PO
+                                </button>
+
+                                <button
+                                  onClick={() => startEditCourse(course)}
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition border border-blue-200"
+                                  title="Edit Course"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteCourse(course._id)}
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition border border-red-200"
+                                  title="Delete Course"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
-                          <div className="mt-3 flex gap-2">
-                            <button
-                              onClick={() => setSelectedCourse(course)}
-                              className="text-sm bg-gray-100 px-3 py-1.5 rounded-lg font-semibold"
-                            >
-                              Manage COs
-                            </button>
-                            <button
-                              onClick={() => setSelectedCourse(course)}
-                              className="text-sm bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-semibold"
-                            >
-                              Map CO-PO
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 )}
               </div>
             </div>
 
+            {/* Selected Course CO & CO-PO Allocation Matrix */}
             {selectedCourse && (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                  <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                    Manage COs for {selectedCourse.courseCode}
-                  </h3>
-                  <form
-                    onSubmit={handleCreateCourseOutcome}
-                    className="space-y-4 mb-6"
-                  >
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 pt-4 border-t border-gray-200">
+                {/* CO Management Card */}
+                <div className="xl:col-span-5 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+                  <div className="flex items-center justify-between border-b border-gray-150 pb-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        CO Code
-                      </label>
-                      <input
-                        type="text"
-                        value={courseOutcomeForm.code}
-                        onChange={(e) =>
-                          setCourseOutcomeForm({
-                            ...courseOutcomeForm,
-                            code: e.target.value,
-                          })
-                        }
-                        className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                        placeholder="CO1"
-                      />
+                      <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                        <Layers className="text-emerald-700" size={18} />
+                        Course Outcomes (COs)
+                      </h3>
+                      <p className="text-xs text-gray-500 font-medium">For <span className="font-bold text-gray-800">{selectedCourse.courseCode} — {selectedCourse.courseName}</span></p>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Description
-                      </label>
-                      <input
-                        type="text"
-                        value={courseOutcomeForm.description}
-                        onChange={(e) =>
-                          setCourseOutcomeForm({
-                            ...courseOutcomeForm,
-                            description: e.target.value,
-                          })
-                        }
-                        className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50"
-                        placeholder="Understand object-oriented principles"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 rounded-xl font-semibold shadow-lg"
-                    >
-                      {editingCourseOutcomeId ? "Update CO" : "Add CO"}
-                    </button>
-                  </form>
-                  <div className="space-y-3">
+                  </div>
+
+                  {(() => {
+                    const maxAllowedCOs = Number(selectedCourse.numCOs) || 4;
+                    const isMaxCOsReached = !editingCourseOutcomeId && courseOutcomes.length >= maxAllowedCOs;
+                    const totalOptions = Math.max(maxAllowedCOs, 12);
+                    const availableOptions = Array.from({ length: totalOptions }, (_, i) => `CO${i + 1}`);
+
+                    return (
+                      <form
+                        onSubmit={handleCreateCourseOutcome}
+                        className="bg-gray-50/70 p-4 rounded-xl border border-gray-200 space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row gap-3 items-start">
+                          <div className="w-full sm:w-1/3">
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
+                              CO SELECTION
+                            </label>
+                            <select
+                              value={
+                                courseOutcomeForm.code ||
+                                `CO${Math.min(maxAllowedCOs, courseOutcomes.length + 1)}`
+                              }
+                              onChange={(e) =>
+                                setCourseOutcomeForm({
+                                  ...courseOutcomeForm,
+                                  code: e.target.value,
+                                })
+                              }
+                              disabled={isMaxCOsReached}
+                              className="w-full border border-gray-300 px-3 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-xs disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                            >
+                              {availableOptions.map((coCode) => (
+                                <option key={coCode} value={coCode}>
+                                  {coCode}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="w-full sm:w-2/3">
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
+                              DESCRIPTION
+                            </label>
+                            <textarea
+                              rows={3}
+                              value={courseOutcomeForm.description}
+                              onChange={(e) =>
+                                setCourseOutcomeForm({
+                                  ...courseOutcomeForm,
+                                  description: e.target.value,
+                                })
+                              }
+                              disabled={isMaxCOsReached}
+                              className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-white resize-y min-h-[75px] disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                              placeholder={
+                                isMaxCOsReached
+                                  ? `Limit reached (${courseOutcomes.length}/${maxAllowedCOs} COs). Update "NO. OF COS" above to add more.`
+                                  : "Outcome description"
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        {isMaxCOsReached && (
+                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-amber-900 text-xs font-bold shadow-xs">
+                            <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                            <span>
+                              Maximum limit reached ({courseOutcomes.length}/{maxAllowedCOs} COs). Please update <strong>"NO. OF COS"</strong> under Edit Master Course to add more outcomes.
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            disabled={isMaxCOsReached || actionLoading}
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                          >
+                            {editingCourseOutcomeId ? <Save size={14} /> : <Plus size={14} />}
+                            {editingCourseOutcomeId ? "Update Outcome" : "Add Outcome"}
+                          </button>
+                          {editingCourseOutcomeId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCourseOutcomeId(null);
+                                setCourseOutcomeForm({ code: "", description: "" });
+                              }}
+                              className="px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold text-xs transition"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    );
+                  })()}
+
+                  <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
                     {courseOutcomes.length === 0 ? (
-                      <p className="text-gray-500 italic">
-                        No COs defined yet.
-                      </p>
+                      <p className="text-gray-400 italic text-xs py-4 text-center">No outcomes defined for this course yet.</p>
                     ) : (
                       courseOutcomes.map((outcome) => (
                         <div
                           key={outcome._id}
-                          className="flex items-center justify-between border rounded-lg p-3"
+                          className="flex items-center justify-between border border-gray-200 rounded-xl p-3.5 hover:bg-gray-50/80 transition"
                         >
-                          <div>
-                            <p className="font-semibold text-gray-800">
+                          <div className="flex items-center gap-3">
+                            <span className="bg-emerald-100 text-emerald-800 font-extrabold text-xs px-2.5 py-1 rounded-lg border border-emerald-200">
                               {outcome.code}
-                            </p>
-                            <p className="text-sm text-gray-600">
+                            </span>
+                            <p className="text-xs font-medium text-gray-800">
                               {outcome.description}
                             </p>
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex gap-1.5">
                             <button
                               onClick={() => startEditOutcome(outcome)}
-                              className="text-sm text-blue-600 font-semibold"
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
+                              title="Edit CO"
                             >
-                              Edit
+                              <Edit2 size={14} />
                             </button>
                             <button
                               onClick={() => handleDeleteOutcome(outcome._id)}
-                              className="text-sm text-red-600 font-semibold"
+                              className="p-1 text-red-600 hover:bg-red-50 rounded transition"
+                              title="Delete CO"
                             >
-                              Delete
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </div>
@@ -1522,77 +1999,132 @@ export default function AdminDashboard() {
                     )}
                   </div>
                 </div>
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-                  <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                    CO-PO Mapping for {selectedCourse.courseCode}
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50 text-gray-600">
-                          <th className="py-2 px-3 text-left">CO</th>
-                          {programOutcomes.map((po) => (
-                            <th key={po._id} className="py-2 px-3 text-left">
-                              {po.code}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {courseOutcomes.map((co) => (
-                          <tr key={co._id} className="border-t">
-                            <td className="py-2 px-3 font-semibold">
-                              {co.code}
-                            </td>
-                            {programOutcomes.map((po) => (
-                              <td
-                                key={`${co._id}-${po._id}`}
-                                className="py-2 px-3"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(
-                                    courseMapping[co.code]?.[po.code],
-                                  )}
-                                  onChange={(e) => {
-                                    const next = { ...courseMapping };
-                                    const row = { ...(next[co.code] || {}) };
-                                    row[po.code] = e.target.checked ? 1 : 0;
-                                    next[co.code] = row;
-                                    setCourseMapping(next);
-                                  }}
-                                />
-                              </td>
+
+                {/* CO-PO Allocation Matrix Card */}
+                {(() => {
+                  const displayPOs = programOutcomes.length > 0
+                    ? programOutcomes
+                    : Array.from({ length: 12 }, (_, i) => ({
+                        _id: `po-fallback-${i + 1}`,
+                        code: `PO${i + 1}`,
+                        description: `Program Outcome ${i + 1}`,
+                      }));
+
+                  return (
+                    <div className="xl:col-span-7 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+                      <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                        <div>
+                          <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                            <Network className="text-indigo-600" size={18} />
+                            CO-PO Allocation Matrix
+                          </h3>
+                          <p className="text-xs text-gray-500 font-medium">Click cells to toggle alignment between COs and POs for <span className="font-bold text-gray-800">{selectedCourse.courseCode}</span></p>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-xl border border-gray-200">
+                        <table className="w-full text-xs font-semibold">
+                          <thead>
+                            <tr className="bg-gray-100/80 border-b border-gray-200 text-gray-700 font-extrabold uppercase">
+                              <th className="py-3 px-3 text-left bg-gray-200/50">CO Code</th>
+                              {displayPOs.map((po) => (
+                                <th key={po._id} className="py-3 px-2 text-center" title={po.description}>
+                                  {po.code}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {courseOutcomes.map((co) => (
+                              <tr key={co._id} className="hover:bg-gray-50/50">
+                                <td className="py-3 px-3 font-extrabold text-emerald-800 bg-emerald-50/30 border-r border-gray-200">
+                                  {co.code}
+                                </td>
+                                {displayPOs.map((po) => {
+                                  const isMapped = Boolean(courseMapping[co.code]?.[po.code]);
+                                  return (
+                                    <td
+                                      key={`${co._id}-${po._id}`}
+                                      className="py-2 px-1.5 text-center"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const next = { ...courseMapping };
+                                          const row = { ...(next[co.code] || {}) };
+                                          row[po.code] = isMapped ? 0 : 1;
+                                          next[co.code] = row;
+                                          setCourseMapping(next);
+                                        }}
+                                        className={`w-full py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-0.5 ${
+                                          isMapped
+                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs ring-1 ring-emerald-600/30"
+                                            : "bg-slate-100 hover:bg-slate-200 text-slate-400 border border-slate-200/60"
+                                        }`}
+                                        title={`${co.code} -> ${po.code}: ${isMapped ? 'Mapped (1)' : 'Unmapped (0)'}`}
+                                      >
+                                        {isMapped ? (
+                                          <>
+                                            <Check size={12} strokeWidth={3} />
+                                            <span>1</span>
+                                          </>
+                                        ) : (
+                                          <span>0</span>
+                                        )}
+                                      </button>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
                             ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <button
-                    onClick={handleSaveCourseMapping}
-                    className="mt-6 w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white py-3 rounded-xl font-semibold"
-                  >
-                    Save CO-PO Mapping
-                  </button>
-                </div>
+                            {courseOutcomes.length === 0 && (
+                              <tr>
+                                <td colSpan={displayPOs.length + 1} className="py-6 text-center text-gray-400 italic text-xs">
+                                  Please add Course Outcomes (COs) on the left first to enable mapping matrix.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end pt-2">
+                        <button
+                          onClick={handleSaveCourseMapping}
+                          disabled={actionLoading}
+                          className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-2.5 px-6 rounded-xl font-extrabold text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <Save size={15} />
+                          Save CO-PO Allocation Matrix
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
         )}
 
         {activeTab === "programOutcomes" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-              <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
-                <Layers className="text-indigo-600" />
-                {editingProgramOutcomeId
-                  ? "Edit Program Outcome"
-                  : "Create Program Outcome"}
-              </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Create PO Form */}
+            <div className="lg:col-span-5 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+              <div className="flex items-center gap-3 border-b border-gray-150 pb-4">
+                <div className="p-2.5 bg-indigo-100/80 text-indigo-800 rounded-xl">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    {editingProgramOutcomeId ? "Edit Program Outcome" : "Create Program Outcome"}
+                  </h2>
+                  <p className="text-xs text-gray-500 font-medium">Define program outcome standards (PO1–PO12)</p>
+                </div>
+              </div>
+
               <form onSubmit={handleCreateProgramOutcome} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                     PO Code
                   </label>
                   <input
@@ -1604,12 +2136,12 @@ export default function AdminDashboard() {
                         code: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
-                    placeholder="PO1"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none text-xs font-extrabold bg-gray-50/30"
+                    placeholder="e.g. PO1"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                     Description
                   </label>
                   <input
@@ -1621,49 +2153,79 @@ export default function AdminDashboard() {
                         description: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50/50"
-                    placeholder="Engineering knowledge"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none text-xs font-semibold bg-gray-50/30"
+                    placeholder="e.g. Engineering Knowledge"
                   />
                 </div>
-                <button
-                  type="submit"
-                  className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white py-3 rounded-xl font-semibold"
-                >
-                  {editingProgramOutcomeId ? "Update PO" : "Create PO"}
-                </button>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
+                  >
+                    {editingProgramOutcomeId ? <Save size={15} /> : <Plus size={15} />}
+                    {editingProgramOutcomeId ? "Update Program Outcome" : "Create Program Outcome"}
+                  </button>
+                  {editingProgramOutcomeId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingProgramOutcomeId(null);
+                        setProgramOutcomeForm({ code: "", description: "" });
+                      }}
+                      className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-              <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                Program Outcomes
-              </h2>
-              <div className="space-y-3">
+
+            {/* PO List */}
+            <div className="lg:col-span-7 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    Program Outcomes (PO1–PO12) Directory
+                  </h2>
+                  <p className="text-xs text-gray-500 font-medium">Master list of degree program attainment metrics</p>
+                </div>
+                <span className="bg-indigo-50 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full border border-indigo-200">
+                  {programOutcomes.length} POs Defined
+                </span>
+              </div>
+
+              <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                 {programOutcomes.length === 0 ? (
-                  <p className="text-gray-500 italic">No POs yet.</p>
+                  <p className="text-gray-400 italic text-xs py-6 text-center">No Program Outcomes created yet.</p>
                 ) : (
                   programOutcomes.map((po) => (
                     <div
                       key={po._id}
-                      className="flex items-center justify-between border rounded-lg p-3"
+                      className="flex items-center justify-between border border-gray-200 rounded-xl p-4 hover:border-indigo-300 hover:shadow-xs transition"
                     >
-                      <div>
-                        <p className="font-semibold text-gray-800">{po.code}</p>
-                        <p className="text-sm text-gray-600">
+                      <div className="flex items-center gap-3">
+                        <span className="bg-indigo-100 text-indigo-900 font-black text-xs px-3 py-1.5 rounded-lg border border-indigo-200 min-w-[50px] text-center">
+                          {po.code}
+                        </span>
+                        <p className="text-xs font-bold text-gray-800">
                           {po.description}
                         </p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5">
                         <button
                           onClick={() => startEditProgramOutcome(po)}
-                          className="text-sm text-blue-600 font-semibold"
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition border border-blue-200"
+                          title="Edit PO"
                         >
-                          Edit
+                          <Edit2 size={14} />
                         </button>
                         <button
                           onClick={() => handleDeleteProgramOutcome(po._id)}
-                          className="text-sm text-red-600 font-semibold"
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition border border-red-200"
+                          title="Delete PO"
                         >
-                          Delete
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
@@ -2043,18 +2605,27 @@ export default function AdminDashboard() {
 
         {activeTab === "courseOfferings" && (
           <div className="space-y-8">
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-              <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2 border-b pb-4">
-                <ClipboardList className="text-orange-600" />
-                {editingOfferingId ? "Edit Course Offering" : "Create Course Offering"}
-              </h2>
+            {/* Create/Edit Course Offering Card */}
+            <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+              <div className="flex items-center gap-3 border-b border-gray-150 pb-4">
+                <div className="p-2.5 bg-orange-100/80 text-orange-800 rounded-xl">
+                  <ClipboardList size={20} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    {editingOfferingId ? "Edit Course Offering" : "Create Course Offering"}
+                  </h2>
+                  <p className="text-xs text-gray-500 font-medium">Assign a master course to a batch, section, and instructor for a specific session</p>
+                </div>
+              </div>
+
               <form
                 onSubmit={handleCreateOffering}
-                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
               >
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Course
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Master Course
                   </label>
                   <select
                     value={offeringForm.courseId}
@@ -2064,24 +2635,25 @@ export default function AdminDashboard() {
                         courseId: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   >
                     <option value="">Select course</option>
                     {courses.map((course) => (
                       <option key={course._id} value={course._id}>
-                        {course.courseCode} - {course.courseName}
+                        {course.courseCode} — {course.courseName}
                       </option>
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                     Batch
                   </label>
                   <select
                     value={offeringForm.batchId}
                     onChange={(e) => handleBatchChangeInOffering(e.target.value)}
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   >
                     <option value="">Select batch</option>
                     {batches.map((batch) => (
@@ -2091,9 +2663,10 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Teacher
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Assigned Instructor
                   </label>
                   <select
                     value={offeringForm.teacherId}
@@ -2103,21 +2676,22 @@ export default function AdminDashboard() {
                         teacherId: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   >
                     <option value="">Select teacher</option>
                     {users
                       .filter((u) => u.role !== "admin")
                       .map((user) => (
                         <option key={user.id || user._id || user.email} value={user.id || user._id}>
-                          {user.fullName}
+                          {user.fullName} ({user.email})
                         </option>
                       ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Session
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Academic Session
                   </label>
                   <select
                     value={offeringForm.semesterId}
@@ -2127,7 +2701,7 @@ export default function AdminDashboard() {
                         semesterId: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   >
                     <option value="">Select session</option>
                     {sessions.map((session) => (
@@ -2137,8 +2711,9 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                     Section
                   </label>
                   <select
@@ -2149,7 +2724,7 @@ export default function AdminDashboard() {
                         section: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl bg-white"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-white"
                     required
                   >
                     <option value="">Select section</option>
@@ -2160,8 +2735,9 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                     Academic Year
                   </label>
                   <input
@@ -2173,14 +2749,16 @@ export default function AdminDashboard() {
                         academicYear: e.target.value,
                       })
                     }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl"
+                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   />
                 </div>
-                <div className="md:col-span-2 flex gap-3">
+
+                <div className="md:col-span-2 lg:col-span-3 flex gap-3 pt-2">
                   <button
                     type="submit"
-                    className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 text-white py-3 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all"
+                    className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
                   >
+                    {editingOfferingId ? <Save size={15} /> : <Plus size={15} />}
                     {editingOfferingId ? "Update Course Offering" : "Save Course Offering"}
                   </button>
                   {editingOfferingId && (
@@ -2198,7 +2776,7 @@ export default function AdminDashboard() {
                         });
                         setOfferingSections([]);
                       }}
-                      className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold border transition-all"
+                      className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition"
                     >
                       Cancel
                     </button>
@@ -2206,47 +2784,74 @@ export default function AdminDashboard() {
                 </div>
               </form>
             </div>
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150">
-              <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-4">
-                Existing Course Offerings
-              </h2>
+
+            {/* Existing Course Offerings Directory */}
+            <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    Active Course Offerings
+                  </h2>
+                  <p className="text-xs text-gray-500 font-medium font-semibold">Configured offerings for student enrollment and assessment</p>
+                </div>
+                <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1 rounded-full border border-orange-200">
+                  {offerings.length} Active Offerings
+                </span>
+              </div>
+
               {offeringsLoading ? (
-                <div className="flex justify-center py-8">
+                <div className="flex justify-center py-12">
                   <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-600 border-t-transparent" />
                 </div>
               ) : (
                 <div className="space-y-3">
                   {offerings.length === 0 ? (
-                    <p className="text-gray-500 italic">
-                      No offerings created yet.
+                    <p className="text-gray-400 italic text-xs py-6 text-center">
+                      No course offerings created yet.
                     </p>
                   ) : (
                     offerings.map((offering) => (
-                      <div key={offering._id} className="border rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-gray-50/50 transition-all">
-                        <div>
-                          <p className="font-semibold text-gray-800">
-                            {offering.course?.courseCode} -{" "}
-                            {offering.course?.courseName}
-                          </p>
-                          <p className="text-sm text-gray-600 mt-1">
-                            Batch: {offering.batch?.name} • Teacher:{" "}
-                            {offering.teacher?.fullName || "Unassigned"} •
-                            Section: {offering.section} • Year:{" "}
-                            {offering.academicYear}
-                          </p>
+                      <div
+                        key={offering._id}
+                        className="p-4 rounded-xl border border-gray-200 hover:border-orange-300 hover:shadow-xs transition flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-gray-900 text-sm">
+                              {offering.course?.courseCode}
+                            </span>
+                            <span className="text-xs font-semibold text-gray-700">
+                              — {offering.course?.courseName}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="bg-purple-100 text-purple-900 text-xs font-black px-3 py-1 rounded-lg border border-purple-200 shadow-2xs">
+                              Batch: {offering.batch?.name || 'N/A'} • Sec {offering.section}
+                            </span>
+                            <span className="bg-blue-100 text-blue-900 text-xs font-black px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
+                              Teacher: {offering.teacher?.fullName || "Unassigned"}
+                            </span>
+                            <span className="bg-emerald-100 text-emerald-900 text-xs font-black px-3 py-1 rounded-lg border border-emerald-200 shadow-2xs">
+                              {offering.semester?.semesterName || 'Session'} ({offering.academicYear})
+                            </span>
+                          </div>
                         </div>
+
                         <div className="flex gap-2 self-end md:self-center">
                           <button
                             onClick={() => startEditOffering(offering)}
-                            className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-sm font-bold border border-blue-200 transition-all"
+                            className="p-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold border border-blue-200 transition"
+                            title="Edit Offering"
                           >
-                            Edit
+                            <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => handleDeleteOffering(offering._id)}
-                            className="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-sm font-bold border border-red-200 transition-all"
+                            className="p-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold border border-red-200 transition"
+                            title="Delete Offering"
                           >
-                            Delete
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </div>

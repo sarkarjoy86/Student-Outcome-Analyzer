@@ -31,6 +31,7 @@ import {
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
 import CourseSurvey from '../survey/CourseSurvey'
+import PORecommendationMatrix from '../reports/PORecommendationMatrix'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -630,7 +631,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
   // Load spreadsheet marks data, surveys, and activities when tab shifts
   useEffect(() => {
-    if (activeTab === 'marksEntry' || activeTab === 'reports' || activeTab === 'students') {
+    if (
+      activeTab === 'marksEntry' ||
+      activeTab === 'reports' ||
+      activeTab === 'students' ||
+      activeTab === 'poRecommendation'
+    ) {
       loadMarksSpreadsheet()
     } else if (activeTab === 'overview') {
       loadAllData()
@@ -959,6 +965,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           { id: 'marksEntry', label: 'Marks Entry', icon: CheckSquare },
           { id: 'attainment', label: 'Attainment', icon: Award },
           { id: 'reports', label: 'Reports', icon: BarChart3 },
+          { id: 'poRecommendation', label: 'PO Recommendation', icon: Award },
           { id: 'evaluation', label: 'Course Survey', icon: MessageSquare },
         ].map(tab => {
           const Icon = tab.icon
@@ -2603,6 +2610,13 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           {/* TAB 9: COURSE SURVEY */}
           {activeTab === 'evaluation' && (
             <CourseSurvey offering={offering} />
+          )}
+
+          {/* TAB 10: PO RECOMMENDATION */}
+          {activeTab === 'poRecommendation' && (
+            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
+              <PORecommendationMatrix offering={offering} initialStudentList={students} />
+            </div>
           )}
         </div>
       )}

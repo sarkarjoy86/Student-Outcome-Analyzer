@@ -43,6 +43,7 @@ import { calculateAllAttainments, getCOMarkAllocations } from '../../utils/compr
 import { downloadChartAsJPG } from '../../utils/chartDownload'
 import html2canvas from 'html2canvas'
 import { apiService } from '../../services/apiService'
+import PORecommendationMatrix from './PORecommendationMatrix'
 
 // University color scheme: Green, Gold/Yellow, Blue
 const UNIVERSITY_COLORS = {
@@ -3750,6 +3751,7 @@ const ComprehensiveReports = ({
             </div>
           </div>
         )}
+
       </div>
     </div>
   )

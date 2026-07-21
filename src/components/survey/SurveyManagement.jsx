@@ -623,7 +623,6 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
                           <p className="text-sm text-gray-800 font-normal">
                             <span className="text-emerald-700 font-semibold">Q{qIdx + 1}.</span>{' '}
                             {q.text}
-                            {q.coMapping && <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 ml-1.5">{q.coMapping}</span>}
                           </p>
                         </div>
                         <div className={`${isSection5 ? "col-span-12 md:col-span-7" : "col-span-12 md:col-span-5"} grid grid-cols-5 text-center`}>

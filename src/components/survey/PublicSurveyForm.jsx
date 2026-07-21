@@ -434,7 +434,7 @@ export default function PublicSurveyForm({ evaluationId, onBackToHome }) {
                         >
                           <div className={isSection5 ? "col-span-12 sm:col-span-5" : "col-span-12 sm:col-span-7"}>
                             <p className="text-sm text-gray-800 leading-relaxed font-normal">
-                              <span className="font-semibold text-emerald-700">Q{globalIdx + 1}.</span> {q.text} {q.coMapping && <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 border border-emerald-200 rounded ml-1.5 font-bold">{q.coMapping}</span>}
+                              <span className="font-semibold text-emerald-700">Q{globalIdx + 1}.</span> {q.text}
                             </p>
                             {ratingError && <p className="text-red-650 text-[10px] mt-1 font-semibold">This is a required question</p>}
                           </div>

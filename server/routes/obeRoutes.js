@@ -11,6 +11,11 @@ import Student from "../models/Student.js";
 import Enrollment from "../models/Enrollment.js";
 import Assessment from "../models/Assessment.js";
 import User from "../models/User.js";
+import StudentMarks from "../models/StudentMarks.js";
+import QuestionMetadata from "../models/QuestionMetadata.js";
+import COAttainment from "../models/COAttainment.js";
+import POAttainment from "../models/POAttainment.js";
+import { syncAllStudentsLongitudinalPO } from "./poRecommendationRoutes.js";
 import { logActivity } from "../utils/activityLogger.js";
 
 const router = express.Router();
@@ -182,15 +187,27 @@ router.delete("/courses/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ message: "Course not found." });
     }
 
+    const offerings = await CourseOffering.find({ course: course._id });
+    const offeringIds = offerings.map(o => o._id);
+
+    await Enrollment.deleteMany({ courseOffering: { $in: offeringIds } });
+    await Assessment.deleteMany({ courseOffering: { $in: offeringIds } });
+    await StudentMarks.deleteMany({ courseOffering: { $in: offeringIds } });
+    await QuestionMetadata.deleteMany({ courseOffering: { $in: offeringIds } });
+    await COAttainment.deleteMany({ courseOffering: { $in: offeringIds } });
+    await POAttainment.deleteMany({ courseOffering: { $in: offeringIds } });
+
     await CourseOutcome.deleteMany({ course: course._id });
     await CourseOffering.deleteMany({ course: course._id });
     await Course.findByIdAndDelete(course._id);
 
+    // Auto-recalculate student longitudinal PO attainments so deleted course contribution is subtracted
+    syncAllStudentsLongitudinalPO(60).catch(err => console.error("PO sync after course delete error:", err));
+
     res.status(200).json({ message: "Course deleted successfully." });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error deleting course", error: error.message });
+    console.error("Error in DELETE /courses/:id:", error);
+    res.status(500).json({ message: "Error deleting course", error: error.message });
   }
 });
 
@@ -1114,9 +1131,15 @@ router.delete("/course-offerings/:id", requireAuth, async (req, res) => {
 
     await Enrollment.deleteMany({ courseOffering: offering._id });
     await Assessment.deleteMany({ courseOffering: offering._id });
-    await Marks.deleteMany({ courseOffering: offering._id });
+    await StudentMarks.deleteMany({ courseOffering: offering._id });
+    await QuestionMetadata.deleteMany({ courseOffering: offering._id });
+    await COAttainment.deleteMany({ courseOffering: offering._id });
+    await POAttainment.deleteMany({ courseOffering: offering._id });
 
     await CourseOffering.findByIdAndDelete(offering._id);
+
+    // Auto-recalculate student longitudinal PO attainments so deleted course contribution is subtracted
+    syncAllStudentsLongitudinalPO(60).catch(err => console.error("PO sync after course offering delete error:", err));
 
     res.status(200).json({ message: "Course offering deleted successfully." });
   } catch (error) {

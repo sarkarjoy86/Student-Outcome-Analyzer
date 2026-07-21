@@ -13,6 +13,7 @@ import Section from '../models/Section.js'
 import mongoose from 'mongoose'
 import RecentActivity from '../models/RecentActivity.js'
 import { logActivity } from '../utils/activityLogger.js'
+import { syncAllStudentsLongitudinalPO } from './poRecommendationRoutes.js'
 
 const router = express.Router()
 
@@ -761,6 +762,9 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
 
     // Trigger attainment calculation
     await recalculateAttainments(offeringId)
+
+    // Trigger longitudinal PO database update for all students
+    syncAllStudentsLongitudinalPO(60).catch(err => console.error("PO sync error after marks save:", err));
 
     await logActivity(offeringId, req.user._id, 'Marks Saved', `Entered/Updated student marks for assessment: ${assessment.name}`)
     res.status(200).json({ message: 'Marks saved and attainments calculated successfully.' })

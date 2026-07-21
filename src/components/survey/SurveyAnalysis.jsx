@@ -1,51 +1,100 @@
-import { useState, useEffect } from 'react'
-import { apiService } from '../../services/apiService'
-import { 
-  ArrowLeft, FileText, Loader2, Download, Search, 
-  MessageSquare, User, Check, Eye, HelpCircle, Printer
-} from 'lucide-react'
-import { 
-  ResponsiveContainer, PieChart, Pie, Cell, 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  LineChart, Line, RadarChart, PolarGrid, PolarAngleAxis, Radar
-} from 'recharts'
+import { useState, useEffect } from 'react';
+import { apiService } from '../../services/apiService';
+import { downloadChartAsJPG } from '../../utils/chartDownload';
+import {
+  ArrowLeft,
+  FileText,
+  Loader2,
+  Download,
+  Search,
+  MessageSquare,
+  User,
+  Check,
+  Eye,
+  HelpCircle,
+  Printer,
+  ChevronDown,
+  ChevronUp,
+  Table,
+  Database,
+} from 'lucide-react';
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  LineChart,
+  Line,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  Radar,
+} from 'recharts';
 
-const RATING_COLORS = ['#047857', '#10b981', '#34d399', '#a7f3d0', '#ecfdf5']
-const RATING_LABELS = ['Excellent', 'Good', 'Average', 'Poor', 'Very Poor']
-const SCALE_POINTS = [5, 4, 3, 2, 1]
+const RATING_COLORS_1_5 = {
+  1: '#2563eb', // Blue (1 = Strongly Disagree)
+  2: '#dc2626', // Red (2 = Disagree)
+  3: '#f59e0b', // Orange (3 = Neutral)
+  4: '#16a34a', // Green (4 = Agree)
+  5: '#9333ea', // Purple (5 = Strongly Agree)
+};
+
+const RATING_COLORS_SEC5 = {
+  '10- Excellent': '#2563eb',
+  '08- Very Good': '#dc2626',
+  '06- Good': '#f59e0b',
+  '04- Average': '#16a34a',
+  '02- Below Average': '#9333ea',
+};
+
+const BROWN_BAR_COLOR = '#b45309';
+
+const SCALE_POINTS = [5, 4, 3, 2, 1];
+const RATING_LABELS = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree'];
 
 export default function SurveyAnalysis({ surveyId, onBack }) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [data, setData] = useState(null)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [selectedResponse, setSelectedResponse] = useState(null)
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedResponse, setSelectedResponse] = useState(null);
+
+  // Accordion toggle states (collapsed by default to keep page compact)
+  const [showQuestionGrid, setShowQuestionGrid] = useState(false);
+  const [showResponsesDb, setShowResponsesDb] = useState(false);
 
   useEffect(() => {
-    loadAnalytics()
-  }, [surveyId])
+    loadAnalytics();
+  }, [surveyId]);
 
   const loadAnalytics = async () => {
-    setLoading(true)
-    setError('')
+    setLoading(true);
+    setError('');
     try {
-      const res = await apiService.getSurveyAnalytics(surveyId)
-      setData(res)
+      const res = await apiService.getSurveyAnalytics(surveyId);
+      setData(res);
     } catch (err) {
-      console.error(err)
-      setError('Failed to load survey analytics.')
+      console.error(err);
+      setError('Failed to load survey analytics.');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   if (loading) {
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-12 text-center">
         <Loader2 className="animate-spin text-emerald-600 mb-2 inline-block" size={40} />
-        <p className="text-gray-500 font-semibold">Generating analytics...</p>
+        <p className="text-gray-500 font-semibold">Generating analytics report...</p>
       </div>
-    )
+    );
   }
 
   if (error || !data) {
@@ -54,736 +103,958 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
         {error || 'Data could not be loaded.'}
         <button onClick={onBack} className="block mt-2 text-xs underline font-bold">Go Back</button>
       </div>
-    )
+    );
   }
 
-  const { survey, responses, totalStudents } = data
-  const offering = survey.courseOfferingId
-  const course = offering?.course
-  const teacher = offering?.teacher
-  const semester = offering?.semester
+  const { survey, responses, totalStudents } = data;
+  const offering = survey.courseOfferingId;
+  const course = offering?.course;
+  const teacher = offering?.teacher;
+  const semester = offering?.semester;
 
-  const totalResponses = responses.length
-  const responseRate = totalStudents > 0 ? ((totalResponses / totalStudents) * 100).toFixed(1) : '0.0'
-  const pendingResponses = Math.max(0, totalStudents - totalResponses)
-
-  // 1. Calculate overall metrics
-  let totalRatingSum = 0
-  let totalRatingCount = 0
-  
-  // Distribution of all ratings
-  const ratingCounts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
-  
-  // Question-wise scores
-  const questionScores = survey.questions.map((q, idx) => {
-    return {
-      text: q.text,
-      index: idx + 1,
-      coMapping: q.coMapping || '',
-      section: q.section,
-      sum: 0,
-      count: 0,
-      dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
-    }
-  })
-
-  responses.forEach(resp => {
-    survey.questions.forEach((q, idx) => {
-      // Find rating for this question index or text
-      const rating = resp.ratings.get ? resp.ratings.get(String(idx)) : resp.ratings[String(idx)]
-      if (rating !== undefined && rating !== null) {
-        const val = Number(rating)
-        totalRatingSum += val
-        totalRatingCount++
-        ratingCounts[val] = (ratingCounts[val] || 0) + 1
-        
-        questionScores[idx].sum += val
-        questionScores[idx].count++
-        questionScores[idx].dist[val] = (questionScores[idx].dist[val] || 0) + 1
-      }
-    })
-  })
-
-  const averageRating = totalRatingCount > 0 ? (totalRatingSum / totalRatingCount).toFixed(2) : '0.00'
-  const positiveRatingsCount = ratingCounts[5] + ratingCounts[4]
-  const overallSatisfaction = totalRatingCount > 0 ? ((positiveRatingsCount / totalRatingCount) * 100).toFixed(1) : '0.0'
-
-  // 2. Prepare charts data
-  const pieChartData = RATING_LABELS.map((label, idx) => {
-    const val = SCALE_POINTS[idx]
-    return {
-      name: label,
-      value: ratingCounts[val] || 0
-    }
-  })
-
-  const barChartData = questionScores.map(qs => ({
-    name: `Q${qs.index}`,
-    Score: qs.count > 0 ? Number((qs.sum / qs.count).toFixed(2)) : 0,
-    fullText: qs.text
-  }))
-
-  const timelineDataMap = {}
-  responses.forEach(resp => {
-    const dateObj = new Date(resp.submittedAt)
-    const dateStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear()
-    timelineDataMap[dateStr] = (timelineDataMap[dateStr] || 0) + 1
-  })
-  const lineChartData = Object.keys(timelineDataMap).map(date => ({
-    date,
-    Submissions: timelineDataMap[date]
-  })).sort((a,b) => new Date(a.date) - new Date(b.date))
-
-  const radarChartData = questionScores.map(qs => ({
-    subject: `Q${qs.index}`,
-    Score: qs.count > 0 ? Number((qs.sum / qs.count).toFixed(2)) : 0,
-    fullMark: 5
-  }))
+  const totalResponses = responses.length;
+  const responseRate = totalStudents > 0 ? ((totalResponses / totalStudents) * 100).toFixed(1) : '0.0';
+  const pendingResponses = Math.max(0, totalStudents - totalResponses);
 
   // Map-safe comment getter helper
   const getCommentVal = (resp, key) => {
-    if (!resp?.comments) return ''
+    if (!resp?.comments) return '';
     if (resp.comments.get && typeof resp.comments.get === 'function') {
-      return resp.comments.get(key) || ''
+      return resp.comments.get(key) || '';
     }
-    return resp.comments[key] || ''
-  }
+    return resp.comments[key] || '';
+  };
 
-  // 3. Comments analysis
-  const learnedComments = responses.map(r => getCommentVal(r, 'learned')).filter(Boolean)
-  const improvedComments = responses.map(r => getCommentVal(r, 'improved')).filter(Boolean)
-  const additionalComments = responses.map(r => getCommentVal(r, 'additionalComments') || getCommentVal(r, 'suggestions')).filter(Boolean)
+  // 1. Calculate question-wise distribution scores
+  let totalRatingSum = 0;
+  let totalRatingCount = 0;
+  const ratingCounts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
 
-  const extractCommonKeywords = (commentList) => {
-    const stopWords = new Set(['the', 'and', 'a', 'to', 'of', 'in', 'is', 'it', 'for', 'this', 'that', 'with', 'on', 'was', 'as', 'but', 'are', 'be', 'should', 'more', 'have', 'very', 'were'])
-    const freq = {}
-    commentList.forEach(c => {
-      const words = c.toLowerCase().replace(/[^a-zA-Z\s]/g, '').split(/\s+/)
-      words.forEach(w => {
-        if (w.length > 3 && !stopWords.has(w)) {
-          freq[w] = (freq[w] || 0) + 1
-        }
-      })
-    })
-    return Object.keys(freq)
-      .map(word => ({ word, count: freq[word] }))
+  const questionScores = (survey.questions || []).map((q, idx) => {
+    const orderNum = q.order || idx + 1;
+    let sectionName = q.section;
+    if (!sectionName) {
+      if (orderNum <= 5) sectionName = 'Section 1';
+      else if (orderNum <= 10) sectionName = 'Section 2';
+      else if (orderNum <= 15) sectionName = 'Section 3';
+      else if (orderNum <= 20) sectionName = 'Section 4';
+      else if (orderNum <= 26) sectionName = 'Section 5';
+      else sectionName = 'Section 6';
+    }
+
+    return {
+      id: q._id || idx,
+      text: q.text,
+      index: orderNum,
+      section: sectionName,
+      sum: 0,
+      count: 0,
+      dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+    };
+  });
+
+  responses.forEach((resp) => {
+    survey.questions.forEach((q, idx) => {
+      const rating = resp.ratings?.get ? resp.ratings.get(String(idx)) : resp.ratings?.[String(idx)];
+      if (rating !== undefined && rating !== null) {
+        const val = Number(rating);
+        totalRatingSum += val;
+        totalRatingCount++;
+        ratingCounts[val] = (ratingCounts[val] || 0) + 1;
+
+        questionScores[idx].sum += val;
+        questionScores[idx].count++;
+        questionScores[idx].dist[val] = (questionScores[idx].dist[val] || 0) + 1;
+      }
+    });
+  });
+
+  const averageRating = totalRatingCount > 0 ? (totalRatingSum / totalRatingCount).toFixed(2) : '0.00';
+  const positiveRatingsCount = ratingCounts[5] + ratingCounts[4];
+  const overallSatisfaction = totalRatingCount > 0 ? ((positiveRatingsCount / totalRatingCount) * 100).toFixed(1) : '0.0';
+
+  // 2. Prepare Radar & Timeline Chart Data
+  const radarChartData = questionScores.map((qs) => ({
+    subject: `Q${qs.index}`,
+    Score: qs.count > 0 ? Number((qs.sum / qs.count).toFixed(2)) : 0,
+    fullMark: 5,
+  }));
+
+  const timelineDataMap = {};
+  responses.forEach((resp) => {
+    const dateObj = new Date(resp.submittedAt);
+    const dateStr =
+      dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + dateObj.getFullYear();
+    timelineDataMap[dateStr] = (timelineDataMap[dateStr] || 0) + 1;
+  });
+  const lineChartData = Object.keys(timelineDataMap)
+    .map((date) => ({
+      date,
+      Submissions: timelineDataMap[date],
+    }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // Helper to construct Recharts BarChart data for Sections 1–4
+  const buildSectionChartData = (secName) => {
+    const qs = questionScores.filter((q) => q.section === secName);
+    return qs.map((q) => {
+      const qCode = `Q${q.index}`;
+      const shortText = q.text.length > 25 ? q.text.substring(0, 25) + '...' : q.text;
+      return {
+        qCode,
+        label: `${qCode}. ${shortText}`,
+        fullText: `${qCode}. ${q.text}`,
+        1: q.dist[1] || 0,
+        2: q.dist[2] || 0,
+        3: q.dist[3] || 0,
+        4: q.dist[4] || 0,
+        5: q.dist[5] || 0,
+      };
+    });
+  };
+
+  // Helper to construct Recharts BarChart data for Section 5
+  const buildSection5ChartData = () => {
+    const qs = questionScores.filter((q) => q.section === 'Section 5');
+    return qs.map((q) => {
+      const qCode = `Q${q.index}`;
+      const shortText = q.text.length > 20 ? q.text.substring(0, 20) + '...' : q.text;
+      return {
+        qCode,
+        label: `${qCode}. ${shortText}`,
+        fullText: `${qCode}. ${q.text}`,
+        '10- Excellent': q.dist[5] || 0,
+        '08- Very Good': q.dist[4] || 0,
+        '06- Good': q.dist[3] || 0,
+        '04- Average': q.dist[2] || 0,
+        '02- Below Average': q.dist[1] || 0,
+      };
+    });
+  };
+
+  // Extract open-ended feedback for Section 6
+  const learnedComments = responses.map((r) => getCommentVal(r, 'learned')).filter(Boolean);
+  const improvedComments = responses.map((r) => getCommentVal(r, 'improved')).filter(Boolean);
+  const additionalComments = responses
+    .map((r) => getCommentVal(r, 'additionalComments') || getCommentVal(r, 'suggestions'))
+    .filter(Boolean);
+
+  const buildOpenEndedFrequencyData = (commentList) => {
+    if (commentList.length === 0) return [];
+    const categoryCounts = {};
+
+    commentList.forEach((c) => {
+      let trimmed = c.trim();
+      if (!trimmed) return;
+
+      let category = trimmed;
+      const lower = trimmed.toLowerCase();
+      if (lower.includes('c++') || lower.includes('basic') || lower.includes('syntax')) category = 'Basic C++ Language / Concepts';
+      else if (lower.includes('problem') || lower.includes('practice') || lower.includes('daily')) category = 'Daily practice & problem solving';
+      else if (lower.includes('explanation') || lower.includes('clear')) category = 'Clear explanations & slides';
+      else if (lower.includes('oop') || lower.includes('object')) category = 'Strong focus on OOP concepts';
+      else if (lower.includes('project') || lower.includes('interactive') || lower.includes('lab')) category = 'More interactive sessions & projects';
+      else if (lower.includes('no comment') || lower.includes('no suggestion') || lower.includes('nothing') || lower.includes('none') || lower.includes('no')) category = 'No suggestions / No comments';
+      else if (lower.includes('good') || lower.includes('overall') || lower.includes('well') || lower.includes('yes')) category = 'Overall course structure was good';
+      else {
+        category = trimmed.length > 35 ? trimmed.substring(0, 35) + '...' : trimmed;
+      }
+
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+    });
+
+    return Object.keys(categoryCounts)
+      .map((cat) => ({
+        category: cat.length > 25 ? cat.substring(0, 25) + '...' : cat,
+        fullCategory: cat,
+        count: categoryCounts[cat],
+      }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
-  }
+      .slice(0, 8);
+  };
 
-  const commonLearned = extractCommonKeywords(learnedComments)
-  const commonImproved = extractCommonKeywords(improvedComments)
-  const commonSuggestions = extractCommonKeywords(additionalComments)
+  const learnedChartData = buildOpenEndedFrequencyData(learnedComments);
+  const improvedChartData = buildOpenEndedFrequencyData(improvedComments);
+  const additionalChartData = buildOpenEndedFrequencyData(additionalComments);
 
-  const filteredResponses = responses.filter(r => {
-    const commentsObj = r.comments || {}
-    let matchParts = []
+  const renderCustomBarTopLabel = (props, totalRespCount) => {
+    const { x, y, width, value } = props;
+    if (!value || value === 0) return null;
+    const pct = totalRespCount > 0 ? ((value / totalRespCount) * 100).toFixed(1) : '0.0';
+    return (
+      <text
+        x={x + width / 2}
+        y={y - 6}
+        fill="#374151"
+        textAnchor="middle"
+        fontSize={10}
+        fontWeight="bold"
+      >
+        {`${value} (${pct}%)`}
+      </text>
+    );
+  };
+
+  const filteredResponses = responses.filter((r) => {
+    const commentsObj = r.comments || {};
+    let matchParts = [];
     if (commentsObj.get && typeof commentsObj.get === 'function') {
-      // Hydrated MongoDB Map
       if (typeof commentsObj.entries === 'function') {
         for (let [key, val] of commentsObj.entries()) {
-          if (val) matchParts.push(val)
+          if (val) matchParts.push(val);
         }
       } else {
-        const keys = ['learned', 'improved', 'additionalComments', 'suggestions']
-        keys.forEach(k => {
-          const val = commentsObj.get(k)
-          if (val) matchParts.push(val)
-        })
+        ['learned', 'improved', 'additionalComments', 'suggestions'].forEach((k) => {
+          const val = commentsObj.get(k);
+          if (val) matchParts.push(val);
+        });
       }
     } else {
-      // Plain object
-      Object.keys(commentsObj).forEach(k => {
-        const val = commentsObj[k]
-        if (val) matchParts.push(val)
-      })
+      Object.keys(commentsObj).forEach((k) => {
+        const val = commentsObj[k];
+        if (val) matchParts.push(val);
+      });
     }
-    const matchStr = matchParts.join(' ').toLowerCase()
-    return matchStr.includes(searchTerm.toLowerCase())
-  })
+    const matchStr = matchParts.join(' ').toLowerCase();
+    return matchStr.includes(searchTerm.toLowerCase());
+  });
 
-  // 4. Professional Word Report Downloader (Green/Emerald Themed)
+  // Download Word Report
   const handleDownloadWordReport = () => {
-    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' ` +
+    const header =
+      `<html xmlns:o='urn:schemas-microsoft-com:office:office' ` +
       `xmlns:w='urn:schemas-microsoft-com:office:word' ` +
       `xmlns='http://www.w3.org/TR/REC-html40'>` +
       `<head><title>Course Survey Report</title><style>` +
       `body { font-family: 'Arial', sans-serif; padding: 24px; font-size: 11pt; line-height: 1.5; color: #333333; }` +
       `h1 { text-align: center; font-size: 16pt; font-weight: bold; margin-bottom: 5px; color: #047857; }` +
       `h2 { font-size: 13pt; font-weight: bold; border-bottom: 2px solid #059669; padding-bottom: 3px; margin-top: 25px; margin-bottom: 10px; color: #065f46; }` +
-      `h3 { font-size: 11pt; font-weight: bold; margin-top: 15px; margin-bottom: 8px; color: #374151; }` +
       `table { border-collapse: collapse; width: 100%; margin: 15px 0; }` +
       `th { border: 1px solid #d1d5db; padding: 8px; text-align: left; background-color: #ecfdf5; font-weight: bold; font-size: 10pt; color: #065f46; }` +
       `td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 10pt; }` +
       `.summary-box { background-color: #f0fdf4; border: 1px solid #a7f3d0; padding: 12px; margin-bottom: 15px; border-radius: 6px; }` +
-      `.summary-box p { margin: 4px 0; }` +
-      `.signature-section { margin-top: 50px; width: 100%; }` +
-      `.signature-table { border: none !important; width: 100%; }` +
-      `.signature-table td { border: none !important; padding: 20px 0; text-align: center; width: 50%; }` +
-      `ol, ul { margin-top: 5px; padding-left: 20px; }` +
-      `li { margin-bottom: 5px; }` +
-      `</style></head><body>`
-    
-    const footer = `</body></html>`
+      `</style></head><body>`;
 
-    const tableRows = questionScores.map(qs => {
-      const avg = qs.count > 0 ? (qs.sum / qs.count).toFixed(2) : '0.00'
-      const distPct = {}
-      SCALE_POINTS.forEach(val => {
-        const count = qs.dist[val] || 0
-        distPct[val] = qs.count > 0 ? ((count / qs.count) * 100).toFixed(1) : '0.0'
-      })
+    const footer = `</body></html>`;
 
-      let interpretation = 'Average'
-      const numAvg = Number(avg)
-      if (numAvg >= 4.5) interpretation = 'Excellent'
-      else if (numAvg >= 4.0) interpretation = 'Good'
-      else if (numAvg >= 3.0) interpretation = 'Average'
-      else if (numAvg >= 2.0) interpretation = 'Poor'
-      else interpretation = 'Very Poor'
-
-      const coText = qs.coMapping ? ` (${qs.coMapping})` : ''
-
-      return `<tr>
+    const tableRows = questionScores
+      .map((qs) => {
+        const avg = qs.count > 0 ? (qs.sum / qs.count).toFixed(2) : '0.00';
+        return `<tr>
         <td>Q${qs.index}</td>
-        <td>${qs.text}${coText}</td>
-        <td>${distPct[5]}%</td>
-        <td>${distPct[4]}%</td>
-        <td>${distPct[3]}%</td>
-        <td>${distPct[2]}%</td>
-        <td>${distPct[1]}%</td>
+        <td>${qs.text}</td>
+        <td>${qs.dist[5] || 0}</td>
+        <td>${qs.dist[4] || 0}</td>
+        <td>${qs.dist[3] || 0}</td>
+        <td>${qs.dist[2] || 0}</td>
+        <td>${qs.dist[1] || 0}</td>
         <td style="font-weight: bold; background-color: #f9fafb;">${avg}</td>
-        <td>${interpretation}</td>
-      </tr>`
-    }).join('')
-
-    const listComments = (comments) => {
-      if (comments.length === 0) return '<li>No comments provided</li>'
-      return comments.map(c => `<li>${c}</li>`).join('')
-    }
+      </tr>`;
+      })
+      .join('');
 
     const htmlContent = `
       <h1>DEPARTMENT OF COMPUTER SCIENCE & ENGINEERING</h1>
-      <p style="text-align: center; font-size: 10pt; margin-top: 0; color: #4b5563; font-weight: bold;">OBE Student Course Survey Report (Washington Accord Compliant)</p>
-      <hr style="border: 0; border-top: 2px solid #e5e7eb; margin: 10px 0;" />
-
+      <p style="text-align: center; font-size: 10pt; margin-top: 0; color: #4b5563; font-weight: bold;">OBE Student Course Survey Evaluation Report</p>
+      <hr />
       <h2>I. Course & Instructor Information</h2>
       <table>
-        <tr>
-          <td style="font-weight: bold; width: 25%; background-color: #f9fafb;">Course Code/Name:</td>
-          <td>${course?.courseCode} — ${course?.courseName}</td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold; background-color: #f9fafb;">Course Instructor:</td>
-          <td>${teacher?.fullName || 'N/A'}</td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold; background-color: #f9fafb;">Batch & Section:</td>
-          <td>Batch ${offering?.batch?.name} • Section ${offering?.section}</td>
-        </tr>
-        <tr>
-          <td style="font-weight: bold; background-color: #f9fafb;">Academic Semester:</td>
-          <td>${semester?.semesterName} (${offering?.academicYear})</td>
-        </tr>
+        <tr><td><b>Course:</b></td><td>${course?.courseCode} — ${course?.courseName}</td></tr>
+        <tr><td><b>Instructor:</b></td><td>${teacher?.fullName || 'N/A'}</td></tr>
+        <tr><td><b>Batch & Section:</b></td><td>Batch ${offering?.batch?.name} • Section ${offering?.section}</td></tr>
       </table>
-
       <h2>II. Executive Summary</h2>
       <div class="summary-box">
-        <p><b>Total Students Enrolled:</b> ${totalStudents}</p>
-        <p><b>Total Survey Submissions:</b> ${totalResponses} / ${totalStudents} (${responseRate}%)</p>
-        <p><b>Overall Course Quality Score:</b> ${averageRating} / 5.00</p>
-        <p><b>Overall Course Satisfaction Meter:</b> ${overallSatisfaction}%</p>
+        <p><b>Total Responses:</b> ${totalResponses} / ${totalStudents} (${responseRate}%)</p>
+        <p><b>Average Rating:</b> ${averageRating} / 5.00</p>
       </div>
-
-      <h2>III. Questions-wise Survey Ratings</h2>
+      <h2>III. Survey Ratings Summary</h2>
       <table>
         <thead>
-          <tr>
-            <th style="width: 6%;">No.</th>
-            <th style="width: 44%;">Survey Evaluation Criteria</th>
-            <th style="width: 8%;">Excellent</th>
-            <th style="width: 8%;">Good</th>
-            <th style="width: 8%;">Average</th>
-            <th style="width: 8%;">Poor</th>
-            <th style="width: 8%;">V. Poor</th>
-            <th style="width: 10%;">Mean</th>
-            <th style="width: 10%;">Result</th>
-          </tr>
+          <tr><th>No.</th><th>Criteria</th><th>5</th><th>4</th><th>3</th><th>2</th><th>1</th><th>Mean</th></tr>
         </thead>
-        <tbody>
-          ${tableRows}
-        </tbody>
+        <tbody>${tableRows}</tbody>
       </table>
+    `;
 
-      <h2>IV. Open-ended Comments & Feedback Analysis</h2>
-      
-      <h3>1. What aspects of this course were most valuable to your learning experience?</h3>
-      <ul>
-        ${listComments(learnedComments.slice(0, 15))}
-      </ul>
+    const blob = new Blob(['\ufeff' + header + htmlContent + footer], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Course_Survey_${course?.courseCode || 'Report'}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
-      <h3>2. What improvements would you suggest for this course?</h3>
-      <ul>
-        ${listComments(improvedComments.slice(0, 15))}
-      </ul>
-
-      <h3>3. Additional suggestions / remarks:</h3>
-      <ul>
-        ${listComments(additionalComments.slice(0, 15))}
-      </ul>
-
-      <h2>V. Reflection, Action Plan, & Endorsements</h2>
-      <p style="color: #6b7280; font-style: italic; margin-bottom: 25px;">
-        To be filled by the instructor to address any key outcomes and action plans based on student feedback:
-      </p>
-      <div style="border: 1px dashed #d1d5db; height: 100px; padding: 10px; margin-bottom: 20px; background-color: #fafafa; color: #4b5563;">
-        Instructor Reflection & Planned Actions:
-      </div>
-
-      <div class="signature-section">
-        <table class="signature-table">
-          <tr>
-            <td>
-              <p>_____________________________________</p>
-              <p><b>Course Instructor Signature</b></p>
-              <p>Date: ____/____/________</p>
-            </td>
-            <td>
-              <p>_____________________________________</p>
-              <p><b>Head of Department Signature</b></p>
-              <p>Date: ____/____/________</p>
-            </td>
-          </tr>
-        </table>
-      </div>
-    `
-
-    const blob = new Blob(['\ufeff' + header + htmlContent + footer], {
-      type: 'application/msword'
-    })
-
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Course_Survey_${course?.courseCode || 'Report'}.doc`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
+  const sec1Data = buildSectionChartData('Section 1');
+  const sec2Data = buildSectionChartData('Section 2');
+  const sec3Data = buildSectionChartData('Section 3');
+  const sec4Data = buildSectionChartData('Section 4');
+  const sec5Data = buildSection5ChartData();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <style>{`
         @media print {
-          aside,
-          header,
-          nav,
-          .no-print,
-          .profile-avatar-container,
-          .profile-avatar-btn,
-          .profile-dropdown-wrapper,
-          button,
-          select,
-          input {
-            display: none !important;
-          }
-          
-          body, html {
-            background: white !important;
-            color: black !important;
-            padding: 10px !important;
-            margin: 0 !important;
-            font-size: 11px !important;
-          }
-          
-          main {
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-          
-          .bg-white {
-            border: 1px solid #e5e7eb !important;
-            box-shadow: none !important;
-            page-break-inside: avoid !important;
-            margin-bottom: 20px !important;
-          }
-          
-          .grid {
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 20px !important;
-            width: 100% !important;
-          }
-          .grid > div {
-            width: 100% !important;
-            margin-bottom: 0 !important;
-            page-break-inside: avoid !important;
-          }
-          
-          .h-64 {
-            height: 280px !important;
-            min-height: 280px !important;
-            display: block !important;
-            position: relative !important;
-          }
-          
-          .recharts-responsive-container {
-            height: 100% !important;
-            min-height: 260px !important;
-            page-break-inside: avoid !important;
-          }
-          .recharts-surface {
-            max-width: 100% !important;
-            max-height: 100% !important;
-          }
+          .no-print { display: none !important; }
+          body { background: white !important; padding: 0 !important; }
+          .printable-report { box-shadow: none !important; border: none !important; }
         }
       `}</style>
-      
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+
+      {/* Header Actions Bar (No-print) */}
+      <div className="no-print bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="no-print p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+            className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors border border-gray-200"
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={18} />
           </button>
           <div>
-            <h2 className="text-lg font-semibold text-gray-800">Course Survey Analysis</h2>
-            <p className="text-sm text-emerald-700 uppercase tracking-wider mt-0.5">
-              {course?.courseCode} • {course?.courseName} • Section {offering?.section}
+            <h2 className="text-xl font-extrabold text-gray-900">Student Course Survey Analysis & Report</h2>
+            <p className="text-xs text-green-800 font-bold uppercase tracking-wider mt-0.5">
+              {course?.courseCode} • {course?.courseName} • Section {offering?.section} • ({totalResponses} Submissions)
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 no-print">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => window.print()}
-            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-medium transition-all shadow-sm text-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-green-800 hover:bg-green-900 text-white rounded-xl font-bold text-xs shadow-md transition"
           >
-            <Printer size={16} />
-            Print Report
+            <Printer size={15} />
+            Print Survey Report
           </button>
           <button
             onClick={handleDownloadWordReport}
-            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium transition-all shadow-sm text-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-md transition"
           >
-            <Download size={16} />
-            Download Word Report
+            <Download size={15} />
+            Download Word (.doc)
           </button>
         </div>
       </div>
 
-      {/* Summary Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-1">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">Responses</p>
-          <p className="text-2xl font-black text-gray-800">
-            {totalResponses} <span className="text-xs font-semibold text-gray-400">/ {totalStudents}</span>
-          </p>
-          <p className="text-[10px] text-emerald-600">
-            {responseRate}% Submission Rate
-          </p>
+      {/* Executive Summary Stats */}
+      <div className="no-print grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+          <p className="text-xs font-bold text-gray-500 uppercase">Submissions</p>
+          <p className="text-2xl font-black text-gray-900 mt-1">{totalResponses} <span className="text-xs text-gray-400">/ {totalStudents}</span></p>
+          <p className="text-xs font-bold text-emerald-700 mt-1">{responseRate}% Response Rate</p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-1">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">Average Rating</p>
-          <p className="text-2xl font-black text-gray-800">{averageRating} <span className="text-xs font-semibold text-gray-400">/ 5.0</span></p>
-          <p className="text-[10px] text-gray-400">Overall mean score</p>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+          <p className="text-xs font-bold text-gray-500 uppercase">Average Rating</p>
+          <p className="text-2xl font-black text-gray-900 mt-1">{averageRating} <span className="text-xs text-gray-400">/ 5.00</span></p>
+          <p className="text-xs font-bold text-gray-500 mt-1">Overall Mean Score</p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-1">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">Course Satisfaction</p>
-          <p className="text-2xl font-black text-emerald-600">{overallSatisfaction}%</p>
-          <p className="text-[10px] text-gray-400">Ratings of Excellent or Good</p>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+          <p className="text-xs font-bold text-gray-500 uppercase">Course Satisfaction</p>
+          <p className="text-2xl font-black text-emerald-600 mt-1">{overallSatisfaction}%</p>
+          <p className="text-xs font-bold text-gray-500 mt-1">Agree & Strongly Agree</p>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-1">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">Pending Feedback</p>
-          <p className="text-2xl font-black text-amber-500">{pendingResponses}</p>
-          <p className="text-[10px] text-gray-400">Students yet to submit</p>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+          <p className="text-xs font-bold text-gray-500 uppercase">Pending Feedback</p>
+          <p className="text-2xl font-black text-amber-500 mt-1">{pendingResponses}</p>
+          <p className="text-xs font-bold text-gray-500 mt-1">Students Yet to Submit</p>
         </div>
       </div>
 
-      {/* Visual Analytics */}
+      {/* 2 ANALYTICS MODULES SIDE-BY-SIDE (BEFORE SECTION GRAPHS) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Pie Chart: Rating Distribution */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2">Overall Rating Distribution</h3>
-          <div className="h-64 flex items-center justify-center">
-            {totalResponses > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieChartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {pieChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={RATING_COLORS[index]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => [`${value} ratings`, 'Count']} />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-gray-400 italic">No ratings data yet.</p>
-            )}
+        {/* Module 1: COURSE ATTRIBUTE STRENGTHS (Radar Chart) */}
+        <div id="survey-chart-radar" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+            <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider">
+              COURSE ATTRIBUTE STRENGTHS
+            </h3>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-radar', 'Course_Attribute_Strengths')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print"
+              title="Download Graph Image"
+            >
+              <Download size={14} />
+            </button>
           </div>
-        </div>
-
-        {/* Bar Chart: Average Rating per Question */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2">Average Rating per Question</h3>
-          <div className="h-64">
+          <div className="h-72 flex items-center justify-center pt-2">
             {totalResponses > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barChartData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis type="number" domain={[0, 5]} stroke="#9ca3af" fontSize={11} />
-                  <YAxis dataKey="name" type="category" stroke="#9ca3af" fontSize={11} width={30} />
-                  <Tooltip formatter={(value) => [`${value} / 5.0`, 'Average Rating']} />
-                  <Bar dataKey="Score" radius={[0, 4, 4, 0]}>
-                    {barChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill="#059669" />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-gray-400 italic flex items-center justify-center h-full">No score data yet.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Radar Chart: Attribute Comparison */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2">Course Attribute Strengths</h3>
-          <div className="h-64 flex items-center justify-center">
-            {totalResponses > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarChartData}>
+                <RadarChart cx="50%" cy="50%" outerRadius="75%" data={radarChartData}>
                   <PolarGrid stroke="#e5e7eb" />
-                  <PolarAngleAxis dataKey="subject" stroke="#6b7280" fontSize={11} />
-                  <Radar name="Score" dataKey="Score" stroke="#047857" fill="#10b981" fillOpacity={0.4} />
-                  <Tooltip formatter={(value) => [value, 'Rating']} />
+                  <PolarAngleAxis dataKey="subject" stroke="#4b5563" fontSize={10} fontWeight={700} />
+                  <Radar name="Rating Score" dataKey="Score" stroke="#047857" fill="#10b981" fillOpacity={0.4} />
+                  <Tooltip formatter={(value) => [`${value} / 5.0`, 'Rating Score']} />
                 </RadarChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-sm text-gray-400 italic">No comparative data yet.</p>
+              <p className="text-sm text-gray-400 italic">No survey submission data available yet.</p>
             )}
           </div>
         </div>
 
-        {/* Timeline Chart: Responses trend */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2">Submission Trend</h3>
-          <div className="h-64">
+        {/* Module 2: SUBMISSION TREND (Line Chart) */}
+        <div id="survey-chart-trend" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+            <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider">
+              SUBMISSION TREND
+            </h3>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-trend', 'Submission_Trend')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print"
+              title="Download Graph Image"
+            >
+              <Download size={14} />
+            </button>
+          </div>
+          <div className="h-72 pt-2">
             {totalResponses > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={lineChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+                <LineChart data={lineChartData} margin={{ top: 15, right: 20, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} fontWeight={600} />
                   <YAxis stroke="#9ca3af" fontSize={11} allowDecimals={false} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="Submissions" stroke="#059669" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Tooltip formatter={(value) => [`${value} submissions`, 'Submissions']} />
+                  <Line
+                    type="monotone"
+                    dataKey="Submissions"
+                    stroke="#059669"
+                    strokeWidth={3}
+                    dot={{ r: 5, fill: '#059669', stroke: '#ffffff', strokeWidth: 2 }}
+                    activeDot={{ r: 7 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-sm text-gray-400 italic flex items-center justify-center h-full">No trend data yet.</p>
+              <p className="text-sm text-gray-400 italic flex items-center justify-center h-full">No timeline submission data available yet.</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* Heat Map / Question Breakdown Table Grid */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider border-b pb-2">Question Breakdown Grid</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-semibold text-gray-700">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100 text-gray-400 font-bold uppercase tracking-wider">
-                <th className="px-4 py-3">Question Text</th>
-                <th className="px-4 py-3 text-center">Excellent (5)</th>
-                <th className="px-4 py-3 text-center">Good (4)</th>
-                <th className="px-4 py-3 text-center">Average (3)</th>
-                <th className="px-4 py-3 text-center">Poor (2)</th>
-                <th className="px-4 py-3 text-center">Very Poor (1)</th>
-                <th className="px-4 py-3 text-center">Mean</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {questionScores.map((qs) => {
-                const avg = qs.count > 0 ? (qs.sum / qs.count).toFixed(2) : '0.00'
-                const distPct = {}
-                SCALE_POINTS.forEach(val => {
-                  const count = qs.dist[val] || 0
-                  distPct[val] = qs.count > 0 ? ((count / qs.count) * 100).toFixed(0) : '0'
-                })
+      {/* 6 SECTIONS OF SURVEY ANALYSIS REPORT */}
+      <div className="space-y-8 printable-report">
 
-                return (
-                  <tr key={qs.index} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3 text-sm font-semibold text-gray-800 max-w-sm">
-                      {qs.index}. {qs.text} {qs.coMapping && <span className="text-xs text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-bold">{qs.coMapping}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-center text-emerald-700 bg-emerald-50/20">{distPct[5]}%</td>
-                    <td className="px-4 py-3 text-center text-emerald-600 bg-emerald-50/10">{distPct[4]}%</td>
-                    <td className="px-4 py-3 text-center text-amber-700 bg-amber-50/20">{distPct[3]}%</td>
-                    <td className="px-4 py-3 text-center text-orange-700 bg-orange-50/20">{distPct[2]}%</td>
-                    <td className="px-4 py-3 text-center text-red-700 bg-red-50/20">{distPct[1]}%</td>
-                    <td className="px-4 py-3 text-center font-black bg-gray-50 text-sm">{avg}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        {/* SECTION 1: LEARNING OUTCOMES & STUDENT ACHIEVEMENT */}
+        <div id="survey-chart-sec1" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+                SECTION 1: LEARNING OUTCOMES & STUDENT ACHIEVEMENT
+              </h3>
+              <p className="text-xs text-gray-600 font-semibold mt-0.5">
+                (Please rate the following on a scale from 1 to 5, where 1 = Strongly Disagree and 5 = Strongly Agree.) Criteria
+              </p>
+            </div>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-sec1', 'Section1_Learning_Outcomes_Distribution')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+              title="Download Section 1 Graph"
+            >
+              <Download size={14} />
+            </button>
+          </div>
 
-      {/* Smart Keyword Suggestion Analysis */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2 flex items-center gap-1.5">
-            <MessageSquare size={16} className="text-emerald-700" />
-            Top Learning Valuable Aspects
-          </h3>
-          <div className="space-y-2">
-            {commonLearned.length > 0 ? commonLearned.map((kw, i) => (
-              <div key={i} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs font-bold border border-gray-150">
-                <span className="text-gray-700">"{kw.word}"</span>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">{kw.count} mentions</span>
-              </div>
-            )) : (
-              <p className="text-xs text-gray-400 italic">No comments analyzed.</p>
-            )}
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sec1Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
+                  labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
+                />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2 flex items-center gap-1.5">
-            <MessageSquare size={16} className="text-emerald-500" />
-            Areas for Improvement
-          </h3>
-          <div className="space-y-2">
-            {commonImproved.length > 0 ? commonImproved.map((kw, i) => (
-              <div key={i} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs font-bold border border-gray-150">
-                <span className="text-gray-700">"{kw.word}"</span>
-                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100">{kw.count} mentions</span>
-              </div>
-            )) : (
-              <p className="text-xs text-gray-400 italic">No comments analyzed.</p>
-            )}
+        {/* SECTION 2: COURSE CONTENT & DELIVERY */}
+        <div id="survey-chart-sec2" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+                SECTION 2: COURSE CONTENT & DELIVERY
+              </h3>
+              <p className="text-xs text-gray-600 font-semibold mt-0.5">
+                (Please rate the following on a scale from 1 to 5, where 1 = Strongly Disagree and 5 = Strongly Agree.) Criteria
+              </p>
+            </div>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-sec2', 'Section2_Course_Content_Delivery')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+              title="Download Section 2 Graph"
+            >
+              <Download size={14} />
+            </button>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sec2Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
+                  labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
+                />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          <h3 className="text-sm font-medium text-gray-800 uppercase tracking-wider border-b pb-2 flex items-center gap-1.5">
-            <MessageSquare size={16} className="text-teal-600" />
-            Common Suggestions
-          </h3>
-          <div className="space-y-2">
-            {commonSuggestions.length > 0 ? commonSuggestions.map((kw, i) => (
-              <div key={i} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs font-bold border border-gray-150">
-                <span className="text-gray-700">"{kw.word}"</span>
-                <span className="px-2 py-0.5 bg-teal-100 text-teal-800 rounded-full">{kw.count} mentions</span>
-              </div>
-            )) : (
-              <p className="text-xs text-gray-400 italic">No comments analyzed.</p>
-            )}
+        {/* SECTION 3: INSTRUCTOR EVALUATION */}
+        <div id="survey-chart-sec3" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+                SECTION 3: INSTRUCTOR EVALUATION
+              </h3>
+              <p className="text-xs text-gray-600 font-semibold mt-0.5">
+                (Please rate the following on a scale from 1 to 5, where 1 = Strongly Disagree and 5 = Strongly Agree.) Criteria
+              </p>
+            </div>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-sec3', 'Section3_Instructor_Evaluation')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+              title="Download Section 3 Graph"
+            >
+              <Download size={14} />
+            </button>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sec3Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
+                  labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
+                />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
-      </div>
 
-      {/* Individual Responses Database */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* SECTION 4: COURSE ASSESSMENT & WORKLOAD */}
+        <div id="survey-chart-sec4" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+                SECTION 4: COURSE ASSESSMENT & WORKLOAD
+              </h3>
+              <p className="text-xs text-gray-600 font-semibold mt-0.5">
+                (Please rate the following on a scale from 1 to 5, where 1 = Strongly Disagree and 5 = Strongly Agree.) Criteria
+              </p>
+            </div>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-sec4', 'Section4_Course_Assessment_Workload')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+              title="Download Section 4 Graph"
+            >
+              <Download size={14} />
+            </button>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sec4Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
+                  labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
+                />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* SECTION 5: OUTCOME ACHIEVEMENTS BY THE COURSE */}
+        <div id="survey-chart-sec5" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+                SECTION 5: OUTCOME ACHIEVEMENTS BY THE COURSE
+              </h3>
+              <p className="text-xs text-gray-600 font-semibold mt-0.5">Criteria</p>
+            </div>
+            <button
+              onClick={() => downloadChartAsJPG('survey-chart-sec5', 'Section5_Outcome_Achievements')}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+              title="Download Section 5 Graph"
+            >
+              <Download size={14} />
+            </button>
+          </div>
+
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sec5Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  formatter={(val, name) => [`${val} students`, name]}
+                  labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
+                />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
+                <Bar dataKey="10- Excellent" fill={RATING_COLORS_SEC5['10- Excellent']} name="10- Excellent" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="08- Very Good" fill={RATING_COLORS_SEC5['08- Very Good']} name="08- Very Good" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="06- Good" fill={RATING_COLORS_SEC5['06- Good']} name="06- Good" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="04- Average" fill={RATING_COLORS_SEC5['04- Average']} name="04- Average" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="02- Below Average" fill={RATING_COLORS_SEC5['02- Below Average']} name="02- Below Average" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* SECTION 6: STUDENT FEEDBACK (Open-Ended Questions) */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-8">
           <div>
-            <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider">Responses Database</h3>
-            <p className="text-xs text-gray-400 font-semibold mt-0.5">Search and view details of individual student submissions</p>
+            <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              SECTION 6: STUDENT FEEDBACK (Open-Ended Questions)
+            </h3>
           </div>
-          <div className="relative max-w-md w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input
-              type="text"
-              placeholder="Search by comment text..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-gray-250 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 text-xs font-semibold"
-            />
+
+          {/* Sub-question 1 */}
+          <div id="survey-chart-sec6-q1" className="space-y-2 border-b border-gray-100 pb-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-gray-800">
+                  1. What aspects of this course were most valuable to your learning experience?
+                </h4>
+                <p className="text-xs text-gray-500 font-semibold">{learnedComments.length} responses</p>
+              </div>
+              <button
+                onClick={() => downloadChartAsJPG('survey-chart-sec6-q1', 'Section6_Q1_Valuable_Aspects')}
+                className="p-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+                title="Download Graph Image"
+              >
+                <Download size={14} />
+              </button>
+            </div>
+
+            <div className="h-64 w-full pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={learnedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                  <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
+                  <Bar
+                    dataKey="count"
+                    fill={BROWN_BAR_COLOR}
+                    radius={[4, 4, 0, 0]}
+                    label={(props) => renderCustomBarTopLabel(props, learnedComments.length)}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Sub-question 2 */}
+          <div id="survey-chart-sec6-q2" className="space-y-2 border-b border-gray-100 pb-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-gray-800">
+                  2. What improvements would you suggest for this course?
+                </h4>
+                <p className="text-xs text-gray-500 font-semibold">{improvedComments.length} responses</p>
+              </div>
+              <button
+                onClick={() => downloadChartAsJPG('survey-chart-sec6-q2', 'Section6_Q2_Suggested_Improvements')}
+                className="p-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+                title="Download Graph Image"
+              >
+                <Download size={14} />
+              </button>
+            </div>
+
+            <div className="h-64 w-full pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={improvedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                  <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
+                  <Bar
+                    dataKey="count"
+                    fill={BROWN_BAR_COLOR}
+                    radius={[4, 4, 0, 0]}
+                    label={(props) => renderCustomBarTopLabel(props, improvedComments.length)}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Sub-question 3 */}
+          <div id="survey-chart-sec6-q3" className="space-y-2">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-gray-800">
+                  3. Additional comments or suggestions:
+                </h4>
+                <p className="text-xs text-gray-500 font-semibold">{additionalComments.length} responses</p>
+              </div>
+              <button
+                onClick={() => downloadChartAsJPG('survey-chart-sec6-q3', 'Section6_Q3_Additional_Comments')}
+                className="p-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg shadow-sm transition active:scale-95 no-print flex-shrink-0"
+                title="Download Graph Image"
+              >
+                <Download size={14} />
+              </button>
+            </div>
+
+            <div className="h-64 w-full pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={additionalChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                  <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
+                  <Bar
+                    dataKey="count"
+                    fill={BROWN_BAR_COLOR}
+                    radius={[4, 4, 0, 0]}
+                    label={(props) => renderCustomBarTopLabel(props, additionalComments.length)}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm font-semibold text-gray-700">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-550 uppercase tracking-wider">
-                <th className="px-6 py-4">Response</th>
-                <th className="px-6 py-4">Submission Date</th>
-                <th className="px-6 py-4 text-center">Avg Rating</th>
-                <th className="px-6 py-4 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredResponses.map((r) => {
-                let indSum = 0
-                let indCount = 0
-                survey.questions.forEach((_, idx) => {
-                  const rating = r.ratings.get ? r.ratings.get(String(idx)) : r.ratings[String(idx)]
-                  if (rating !== undefined && rating !== null) {
-                    indSum += Number(rating)
-                    indCount++
-                  }
-                })
-                const indAvg = indCount > 0 ? (indSum / indCount).toFixed(2) : '0.00'
-                const responseIndex = responses.findIndex(resp => resp._id === r._id) + 1
+      </div>
 
-                return (
-                  <tr key={r._id} className="hover:bg-gray-50/50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-gray-100 rounded-full text-gray-500">
-                          <User size={14} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-800">Response #{responseIndex}</p>
-                          <p className="text-xs text-gray-400 font-bold">Confidential Survey Response</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs text-gray-400 font-bold">
-                      {(() => { const dateObj = new Date(r.submittedAt); return dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear(); })()}
-                    </td>
-                    <td className="px-6 py-4 text-center font-black">
-                      {indAvg}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => setSelectedResponse(r)}
-                        className="px-3 py-1.5 bg-gray-150 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all border border-gray-250 inline-flex items-center gap-1"
-                      >
-                        <Eye size={12} />
-                        View
-                      </button>
-                    </td>
+      {/* COLLAPSIBLE ACCORDION 1: QUESTION BREAKDOWN GRID */}
+      <div className="no-print bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <button
+          onClick={() => setShowQuestionGrid(!showQuestionGrid)}
+          className="w-full p-5 bg-gray-50/80 hover:bg-gray-100/80 transition flex items-center justify-between border-b border-gray-200 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+              <Table size={18} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider">
+                QUESTION BREAKDOWN GRID
+              </h3>
+              <p className="text-xs text-gray-500 font-medium">
+                {showQuestionGrid ? 'Click to collapse question rating breakdown grid' : 'Click to expand question rating breakdown grid'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+              {showQuestionGrid ? 'Expanded' : 'Collapsed'}
+            </span>
+            {showQuestionGrid ? <ChevronUp className="text-gray-500" size={20} /> : <ChevronDown className="text-gray-500" size={20} />}
+          </div>
+        </button>
+
+        {showQuestionGrid && (
+          <div className="p-6 space-y-4 animate-in fade-in duration-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs font-semibold text-gray-700">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 font-bold uppercase tracking-wider">
+                    <th className="px-4 py-3">Question Text</th>
+                    <th className="px-4 py-3 text-center">Excellent (5)</th>
+                    <th className="px-4 py-3 text-center">Good (4)</th>
+                    <th className="px-4 py-3 text-center">Average (3)</th>
+                    <th className="px-4 py-3 text-center">Poor (2)</th>
+                    <th className="px-4 py-3 text-center">Very Poor (1)</th>
+                    <th className="px-4 py-3 text-center">Mean</th>
                   </tr>
-                )
-              })}
-              {filteredResponses.length === 0 && (
-                <tr>
-                  <td colSpan="4" className="px-6 py-8 text-center text-gray-400 italic">
-                    No submissions match search criteria.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {questionScores.map((qs) => {
+                    const avg = qs.count > 0 ? (qs.sum / qs.count).toFixed(2) : '0.00';
+                    const distPct = {};
+                    SCALE_POINTS.forEach((val) => {
+                      const count = qs.dist[val] || 0;
+                      distPct[val] = qs.count > 0 ? ((count / qs.count) * 100).toFixed(0) : '0';
+                    });
+
+                    return (
+                      <tr key={qs.index} className="hover:bg-gray-50/50">
+                        <td className="px-4 py-3 text-xs font-semibold text-gray-800 max-w-sm">
+                          {qs.index}. {qs.text}
+                        </td>
+                        <td className="px-4 py-3 text-center text-emerald-700 font-bold bg-emerald-50/20">{distPct[5]}%</td>
+                        <td className="px-4 py-3 text-center text-emerald-600 font-bold bg-emerald-50/10">{distPct[4]}%</td>
+                        <td className="px-4 py-3 text-center text-amber-700 font-bold bg-amber-50/20">{distPct[3]}%</td>
+                        <td className="px-4 py-3 text-center text-orange-700 font-bold bg-orange-50/20">{distPct[2]}%</td>
+                        <td className="px-4 py-3 text-center text-red-700 font-bold bg-red-50/20">{distPct[1]}%</td>
+                        <td className="px-4 py-3 text-center font-black bg-gray-50 text-xs text-gray-900">{avg}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* COLLAPSIBLE ACCORDION 2: RESPONSES DATABASE */}
+      <div className="no-print bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <button
+          onClick={() => setShowResponsesDb(!showResponsesDb)}
+          className="w-full p-5 bg-gray-50/80 hover:bg-gray-100/80 transition flex items-center justify-between border-b border-gray-200 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center font-bold">
+              <Database size={18} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-wider">
+                RESPONSES DATABASE
+              </h3>
+              <p className="text-xs text-gray-500 font-medium">
+                Search and view details of individual student submissions ({totalResponses} Submissions)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
+              {showResponsesDb ? 'Expanded' : 'Collapsed'}
+            </span>
+            {showResponsesDb ? <ChevronUp className="text-gray-500" size={20} /> : <ChevronDown className="text-gray-500" size={20} />}
+          </div>
+        </button>
+
+        {showResponsesDb && (
+          <div className="p-6 space-y-4 animate-in fade-in duration-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-3">
+              <div className="relative max-w-md w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                <input
+                  type="text"
+                  placeholder="Search by comment text..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 text-xs font-semibold"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm font-semibold text-gray-700">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3">Response</th>
+                    <th className="px-6 py-3">Submission Date</th>
+                    <th className="px-6 py-3 text-center">Avg Rating</th>
+                    <th className="px-6 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredResponses.map((r) => {
+                    let indSum = 0;
+                    let indCount = 0;
+                    survey.questions.forEach((_, idx) => {
+                      const rating = r.ratings?.get ? r.ratings.get(String(idx)) : r.ratings?.[String(idx)];
+                      if (rating !== undefined && rating !== null) {
+                        indSum += Number(rating);
+                        indCount++;
+                      }
+                    });
+                    const indAvg = indCount > 0 ? (indSum / indCount).toFixed(2) : '0.00';
+                    const responseIndex = responses.findIndex((resp) => resp._id === r._id) + 1;
+
+                    return (
+                      <tr key={r._id} className="hover:bg-gray-50/50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-gray-100 rounded-full text-gray-500">
+                              <User size={14} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-gray-800 text-xs">Response #{responseIndex}</p>
+                              <p className="text-[10px] text-gray-400 font-bold">Confidential Survey Response</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-gray-500 font-bold">
+                          {(() => {
+                            const dateObj = new Date(r.submittedAt);
+                            return (
+                              dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) +
+                              ', ' +
+                              dateObj.getFullYear()
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-4 text-center font-black text-xs text-gray-900">{indAvg}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={() => setSelectedResponse(r)}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all border border-gray-200 inline-flex items-center gap-1"
+                          >
+                            <Eye size={12} />
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredResponses.length === 0 && (
+                    <tr>
+                      <td colSpan="4" className="px-6 py-8 text-center text-gray-400 italic text-xs">
+                        No submissions match search criteria.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Response Detail Modal */}
@@ -793,7 +1064,7 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <h3 className="text-lg font-bold text-gray-800">
-                  Response Details — Response #{responses.findIndex(x => x._id === selectedResponse._id) + 1}
+                  Response Details — Response #{responses.findIndex((x) => x._id === selectedResponse._id) + 1}
                 </h3>
                 <p className="text-xs text-gray-400 font-bold mt-0.5">
                   Submitted: {(() => { const dateObj = new Date(selectedResponse.submittedAt); return dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + dateObj.getFullYear(); })()} • Confidential Survey Response
@@ -809,14 +1080,14 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
 
             {/* Ratings Breakdown */}
             <div className="space-y-3">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ratings Breakdown</h4>
+              <h4 className="text-xs font-extrabold text-gray-400 uppercase tracking-wider">Ratings Breakdown</h4>
               <div className="space-y-2.5">
                 {survey.questions.map((q, idx) => {
-                  const rating = selectedResponse.ratings.get ? selectedResponse.ratings.get(String(idx)) : selectedResponse.ratings[String(idx)]
+                  const rating = selectedResponse.ratings?.get ? selectedResponse.ratings.get(String(idx)) : selectedResponse.ratings?.[String(idx)];
                   return (
-                    <div key={idx} className="flex justify-between items-center text-xs border-b pb-2 animate-pulse-subtle">
+                    <div key={idx} className="flex justify-between items-center text-xs border-b pb-2">
                       <span className="text-gray-700 font-semibold max-w-lg">
-                        {idx + 1}. {q.text} {q.coMapping && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1 rounded font-bold">{q.coMapping}</span>}
+                        {idx + 1}. {q.text}
                       </span>
                       <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] ${
                         rating === 5 ? 'bg-emerald-100 text-emerald-800' :
@@ -828,59 +1099,49 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
                         {rating ? RATING_LABELS[5 - rating] : 'N/A'} ({rating})
                       </span>
                     </div>
-                  )
+                  );
                 })}
               </div>
             </div>
 
-            {/* Open comments */}
-            <div className="space-y-4 pt-2">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Comments</h4>
-              
+            {/* COMMENTS SECTION */}
+            <div className="space-y-4 pt-4 border-t border-gray-200">
+              <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider">
+                COMMENTS
+              </h4>
+
               <div className="space-y-3">
-                <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-150">
-                  <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider mb-1">
-                    What aspects of this course were most valuable to your learning experience?
+                <div className="bg-gray-50/80 p-4 rounded-2xl border border-gray-200 shadow-xs">
+                  <p className="text-[11px] font-extrabold text-emerald-800 uppercase tracking-wider mb-1">
+                    WHAT ASPECTS OF THIS COURSE WERE MOST VALUABLE TO YOUR LEARNING EXPERIENCE?
                   </p>
-                  <p className="text-sm font-semibold text-gray-700 whitespace-pre-wrap">
+                  <p className="text-sm font-semibold text-gray-800 whitespace-pre-wrap">
                     {getCommentVal(selectedResponse, 'learned') || '—'}
                   </p>
                 </div>
 
-                <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-150">
-                  <p className="text-[10px] font-bold text-orange-850 uppercase tracking-wider mb-1">
-                    What improvements would you suggest for this course?
+                <div className="bg-gray-50/80 p-4 rounded-2xl border border-gray-200 shadow-xs">
+                  <p className="text-[11px] font-extrabold text-emerald-800 uppercase tracking-wider mb-1">
+                    WHAT IMPROVEMENTS WOULD YOU SUGGEST FOR THIS COURSE?
                   </p>
-                  <p className="text-sm font-semibold text-gray-700 whitespace-pre-wrap">
+                  <p className="text-sm font-semibold text-gray-800 whitespace-pre-wrap">
                     {getCommentVal(selectedResponse, 'improved') || '—'}
                   </p>
                 </div>
 
-                <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-150">
-                  <p className="text-[10px] font-bold text-teal-800 uppercase tracking-wider mb-1">
-                    Additional comments or suggestions?
+                <div className="bg-gray-50/80 p-4 rounded-2xl border border-gray-200 shadow-xs">
+                  <p className="text-[11px] font-extrabold text-emerald-800 uppercase tracking-wider mb-1">
+                    ADDITIONAL COMMENTS OR SUGGESTIONS?
                   </p>
-                  <p className="text-sm font-semibold text-gray-700 whitespace-pre-wrap">
+                  <p className="text-sm font-semibold text-gray-800 whitespace-pre-wrap">
                     {getCommentVal(selectedResponse, 'additionalComments') || getCommentVal(selectedResponse, 'suggestions') || '—'}
                   </p>
                 </div>
-
-                {/* Custom Section 6 questions comments */}
-                {(survey.questions || []).filter(q => q.section === 'Section 6').map((q, idx) => (
-                  <div key={idx} className="bg-gray-50 p-3.5 rounded-xl border border-gray-150 border-l-4 border-l-emerald-500 pl-3">
-                    <p className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider mb-1">
-                      {q.text}
-                    </p>
-                    <p className="text-sm font-semibold text-gray-700 whitespace-pre-wrap">
-                      {getCommentVal(selectedResponse, q.text) || '—'}
-                    </p>
-                  </div>
-                ))}
               </div>
             </div>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
