@@ -10,7 +10,7 @@ import {
   Toolbar,
   Table
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus } from 'lucide-react'
 import mammoth from 'mammoth'
 
 // Syncfusion CSS imports
@@ -39,10 +39,14 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
   const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
-  const [level, setLevel] = useState(assessment.level || '')
-  const [term, setTerm] = useState(assessment.term || '')
+  const [level, setLevel] = useState(assessment.level || offering?.course?.level || '1')
+  const [term, setTerm] = useState(assessment.term || offering?.course?.term || 'I')
 
   const BLOOM_OPTIONS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
+
+  const isExtraCT = Boolean(assessment.isExtraCT || (assessment.name && assessment.name.toLowerCase().startsWith('extra ct')))
+  const matchedParent = assessment.name ? assessment.name.match(/\(([^)]+)\)/) : null
+  const parentName = assessment.parentCTName || (matchedParent && matchedParent[1] ? matchedParent[1].replace(/^for\s+/i, '') : 'Target CT')
 
   const rteRef = useRef(null)
   const uploadingCountRef = useRef(0)
@@ -91,8 +95,10 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
       const currentAssessment = res.assessment || assessment
       setExamDuration(currentAssessment.examDuration || '')
-      setLevel(currentAssessment.level || '')
-      setTerm(currentAssessment.term || '')
+      setLevel(currentAssessment.level || offering.course?.level || '1')
+      setTerm(currentAssessment.term || offering.course?.term || 'I')
+
+      const isExtra = Boolean(currentAssessment.isExtraCT || (currentAssessment.name && currentAssessment.name.toLowerCase().startsWith('extra ct')))
 
       // If questions are not initialized, generate array based on assessment.numQuestions
       const qList = res.questions || []
@@ -112,11 +118,12 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       for (let i = 1; i <= targetNum; i++) {
         const qNum = `Q${i}`
         const existing = qList.find(q => q.questionNumber === qNum)
+        const defaultCO = isExtra ? (currentAssessment.co || 'NONE') : 'NONE'
         if (existing) {
           finalQs.push({
             questionNumber: qNum,
             maxMarks: existing.maxMarks ?? 0,
-            co: existing.co || 'NONE',
+            co: isExtra ? defaultCO : (existing.co || 'NONE'),
             bloom: existing.bloom || ''
           })
         } else {
@@ -125,7 +132,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           finalQs.push({
             questionNumber: qNum,
             maxMarks: i === targetNum ? defaultMax + (currentAssessment.maxMarks % (targetNum || 1)) : defaultMax,
-            co: 'NONE',
+            co: defaultCO,
             bloom: ''
           })
         }
@@ -142,8 +149,11 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     const val = Math.max(0, parseInt(newVal) || 0)
     setNumQuestions(val)
 
+    const isExtra = Boolean(assessment.isExtraCT || (assessment.name && assessment.name.toLowerCase().startsWith('extra ct')))
+
     setQuestions(prev => {
       const updated = [...prev]
+      const defaultCO = isExtra ? (assessment.co || 'NONE') : 'NONE'
       if (updated.length < val) {
         // Add new questions
         for (let i = updated.length + 1; i <= val; i++) {
@@ -152,7 +162,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           updated.push({
             questionNumber: qNum,
             maxMarks: i === val ? defaultMax + (assessment.maxMarks % (val || 1)) : defaultMax,
-            co: 'NONE',
+            co: defaultCO,
             bloom: ''
           })
         }
@@ -227,12 +237,21 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
     setSaving(true)
     try {
-      // 1. Update Assessment fields (examDuration, numQuestions, level, term)
+      const validCOs = Array.from(new Set(
+        questions
+          .map(q => q.co)
+          .filter(c => c && c !== 'NONE' && c !== '')
+      ))
+      const aggregatedCO = validCOs.join(', ')
+
+      // 1. Update Assessment fields (examDuration, numQuestions, level, term, co, status)
       await apiService.updateAssessment(assessment._id, {
         examDuration,
         numQuestions,
         level,
-        term
+        term,
+        co: aggregatedCO || assessment.co || '',
+        status: validCOs.length > 0 ? 'Published' : assessment.status
       })
 
       // 2. Save Question Paper content and metadata questions (including bloom levels)
@@ -284,15 +303,19 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     const semesterFull = academicYear ? `${semesterName} ${academicYear}` : semesterName
     const ctParts = []
     
+    const creditsVal = parseFloat(offering.course?.creditHours || offering.course?.numCredits) || 3
+    const standardCTCount = Math.max(1, Math.floor(creditsVal))
+    const formattedAssessmentName = isExtraCT ? `Extra CT (CT-${standardCTCount + 1})` : assessmentName
+
     let typeName = ''
     if (aType === 'cts') {
-      typeName = `Class Test: ${assessmentName}`
+      typeName = `Class Test: ${formattedAssessmentName}`
     } else if (aType === 'midTerm') {
       typeName = `Mid Term Examination`
     } else if (aType === 'final') {
       typeName = `Final Examination`
     } else {
-      typeName = `${typeLabel}: ${assessmentName}`
+      typeName = `${typeLabel}: ${formattedAssessmentName}`
     }
     
     if (typeName) ctParts.push(typeName)
@@ -682,7 +705,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
               <ArrowLeft size={16} />
             </button>
             <h1 className="text-2xl font-extrabold text-gray-800">
-              Question Paper Editor: {assessment.name}
+              Question Paper Editor: {isExtraCT ? `Extra CT (CT-${Math.max(1, Math.floor(parseFloat(offering.course?.creditHours) || 3)) + 1})` : assessment.name}
             </h1>
           </div>
           <p className="text-sm text-gray-500 font-semibold pl-9">
@@ -793,23 +816,27 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-gray-600 mb-1">Level</label>
-                  <input
-                    type="text"
-                    value={level}
+                  <select
+                    value={level || '1'}
                     onChange={(e) => setLevel(e.target.value)}
-                    placeholder="e.g. 4"
-                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
-                  />
+                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-white font-extrabold text-gray-800 shadow-2xs"
+                  >
+                    <option value="1">Level 1</option>
+                    <option value="2">Level 2</option>
+                    <option value="3">Level 3</option>
+                    <option value="4">Level 4</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block font-bold text-gray-600 mb-1">Term</label>
-                  <input
-                    type="text"
-                    value={term}
+                  <select
+                    value={term || 'I'}
                     onChange={(e) => setTerm(e.target.value)}
-                    placeholder="e.g. 2"
-                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
-                  />
+                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-white font-extrabold text-gray-800 shadow-2xs"
+                  >
+                    <option value="I">Term I</option>
+                    <option value="II">Term II</option>
+                  </select>
                 </div>
               </div>
               <div>
@@ -824,13 +851,32 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
               </div>
               <div>
                 <label className="block font-bold text-gray-600 mb-1">Number of Questions</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={numQuestions}
-                  onChange={(e) => handleNumQuestionsChange(e.target.value)}
-                  className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
-                />
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => handleNumQuestionsChange(Math.max(0, Number(numQuestions) - 1))}
+                    disabled={Number(numQuestions) <= 0}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black rounded-l-xl border border-r-0 border-gray-300 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center shrink-0"
+                    title="Decrease number of questions"
+                  >
+                    <Minus size={15} strokeWidth={2.5} />
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    value={numQuestions}
+                    onChange={(e) => handleNumQuestionsChange(e.target.value)}
+                    className="w-full border border-gray-300 py-2 text-center focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-extrabold text-gray-800 text-sm min-w-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleNumQuestionsChange(Number(numQuestions) + 1)}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-r-xl border border-l-0 border-emerald-600 transition flex items-center justify-center shrink-0"
+                    title="Increase number of questions"
+                  >
+                    <Plus size={15} strokeWidth={2.5} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -838,6 +884,12 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           {/* Question wise CO Mapping Card */}
           <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
             <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3 font-sans">Question wise CO Mapping</h3>
+            {isExtraCT && (
+              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-semibold text-indigo-900 flex items-center gap-2">
+                <AlertCircle size={16} className="text-indigo-600 shrink-0" />
+                <span>All questions for this Extra CT are auto-mapped to <strong>{assessment.co || 'Target CO'}</strong> (inherited from {parentName}). Question count and Bloom's levels remain fully customizable.</span>
+              </div>
+            )}
             <p className="text-xs text-gray-500 font-semibold mb-4">Map each question to its marks, CO, and Bloom's Taxonomy level.</p>
 
             {questions.length === 0 ? (
@@ -869,11 +921,19 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
                       </div>
 
                       <div>
-                        <label className="block font-bold text-gray-600 mb-1">Mapped CO</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block font-bold text-gray-600">Mapped CO</label>
+                          {isExtraCT && (
+                            <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                              Auto-Mapped
+                            </span>
+                          )}
+                        </div>
                         <select
                           value={q.co}
-                          onChange={(e) => handleMetadataChange(idx, 'co', e.target.value)}
-                          className="w-full border border-gray-300 px-2 py-1.5 rounded-lg bg-white font-semibold"
+                          disabled={isExtraCT}
+                          onChange={(e) => !isExtraCT && handleMetadataChange(idx, 'co', e.target.value)}
+                          className={`w-full border border-gray-300 px-2 py-1.5 rounded-lg font-semibold ${isExtraCT ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-dashed' : 'bg-white'}`}
                         >
                           {availableCOs.map(coVal => (
                             <option key={coVal} value={coVal}>{coVal}</option>

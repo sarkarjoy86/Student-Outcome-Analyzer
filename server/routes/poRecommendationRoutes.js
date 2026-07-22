@@ -395,6 +395,46 @@ export async function syncAllStudentsLongitudinalPO(targetThreshold = 60) {
 }
 
 /**
+ * Sync Only Allocated Students of a Specific Course Offering into StudentLongitudinalPO collection
+ */
+export async function syncCourseOfferingStudentsLongitudinalPO(offeringId, targetThreshold = 60) {
+  if (!offeringId || !mongoose.Types.ObjectId.isValid(offeringId)) return 0;
+
+  const offering = await CourseOffering.findById(offeringId);
+  if (!offering) return 0;
+
+  let studentIds = [];
+  const batchId = offering.batch;
+  const sectionName = offering.section;
+  const sectionDoc = await Section.findOne({ batchId, sectionName });
+
+  if (sectionDoc) {
+    const studentsInSection = await Student.find({ batchId, sectionId: sectionDoc._id }).select('_id');
+    studentIds = studentsInSection.map(s => s._id.toString());
+  }
+
+  if (studentIds.length === 0) {
+    const enrollments = await Enrollment.find({ courseOffering: offeringId }).select('student');
+    studentIds = Array.from(new Set(enrollments.map(e => e.student.toString())));
+  }
+
+  if (studentIds.length === 0) return 0;
+
+  let count = 0;
+  await Promise.all(studentIds.map(async (sId) => {
+    try {
+      await calculateAndSyncStudentPO(sId, targetThreshold);
+      count++;
+    } catch (err) {
+      console.error(`Failed to sync PO for student ${sId}:`, err.message);
+    }
+  }));
+
+  console.log(`Synchronized longitudinal PO records for ${count} allocated students of course offering.`);
+  return count;
+}
+
+/**
  * GET /api/po-recommendation/students
  * Get pre-calculated student longitudinal PO summary list directly from MongoDB collection
  */

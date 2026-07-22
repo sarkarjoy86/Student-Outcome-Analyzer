@@ -28,6 +28,16 @@ const courseSchema = new mongoose.Schema(
       required: true,
       default: 4,
     },
+    level: {
+      type: String,
+      default: "1",
+      trim: true,
+    },
+    term: {
+      type: String,
+      default: "I",
+      trim: true,
+    },
     coPoMapping: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

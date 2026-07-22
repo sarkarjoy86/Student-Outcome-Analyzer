@@ -23,10 +23,17 @@ import {
   Printer,
   Download,
   AlertCircle,
+  AlertTriangle,
   MessageSquare,
   Calendar,
   Bell,
-  CheckCircle2
+  CheckCircle2,
+  Maximize2,
+  Minimize2,
+  User,
+  GraduationCap,
+  Layers,
+  History
 } from 'lucide-react'
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
@@ -155,6 +162,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [saving, setSaving] = useState(false)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showPreviewPaper, setShowPreviewPaper] = useState(null) // holds paper doc
+  const [isTableFullscreen, setIsTableFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isTableFullscreen) {
+        setIsTableFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isTableFullscreen])
   const [newAssessment, setNewAssessment] = useState({
     type: 'cts',
     maxMarks: 10,
@@ -262,25 +280,25 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
 
     // Check if configuration matches maxMarks and all mapped to COs
-    const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
-    if (isExamType) {
-      if (questions.length > 0) {
-        const totalAllocated = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
-        const allQuestionsHaveCO = questions.every(q => q.co && q.co !== 'NONE' && q.co !== '')
-        const isFullyConfigured = Math.abs(totalAllocated - a.maxMarks) < 0.01 && allQuestionsHaveCO
-        if (isFullyConfigured) {
-          return 'Assigned'
-        }
-      }
-    } else {
-      // Attendance and Presentation do not have Draft option (always Assigned or Evaluated)
-      if (['attendance', 'presentation'].includes(a.type)) {
+    if (questions.length > 0) {
+      const totalAllocated = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+      const allQuestionsHaveCO = questions.every(q => q.co && q.co !== 'NONE' && q.co !== '')
+      const hasAnyValidCO = questions.some(q => q.co && q.co !== 'NONE' && q.co !== '')
+      if ((Math.abs(totalAllocated - a.maxMarks) < 0.01 && allQuestionsHaveCO) || hasAnyValidCO) {
         return 'Assigned'
       }
-      // Assignment, Performance
-      if (a.co && a.co !== 'NONE' && a.co !== '') {
-        return 'Assigned'
-      }
+    }
+
+    if (a.co && a.co !== 'NONE' && a.co !== '') {
+      return 'Assigned'
+    }
+
+    if (a.status === 'Published') {
+      return 'Assigned'
+    }
+
+    if (['attendance', 'presentation'].includes(a.type)) {
+      return 'Assigned'
     }
 
     return 'Draft'
@@ -343,12 +361,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         else if (a.type === 'attendance') typeLabel = 'Attendance'
         else if (a.type === 'performance') typeLabel = 'Performance'
 
+        const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+        const standardCTCount = Math.max(1, Math.floor(creditsVal))
+        const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+        const displayName = isExtra ? `Extra CT (CT-${standardCTCount + 1})` : a.name
+
         list.push({
           type: 'marks',
           id: `marks_pending_${a._id}`,
           priority: 1, // High Priority
-          title: `Pending Marks: ${a.name}`,
-          text: `Marks for ${typeLabel} (${a.name}) are not fully entered. (${enteredCount}/${studentsList.length} student marks recorded)`,
+          title: `Pending Marks: ${displayName}`,
+          text: `Marks for ${typeLabel} (${displayName}) are not fully entered. (${enteredCount}/${studentsList.length} student marks recorded)`,
           actionLabel: 'Enter Marks',
           actionTab: 'marksEntry',
           actionAssessmentId: a._id
@@ -754,8 +777,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
   // Build create assessment payload based on type
   const buildAssessmentPayload = () => {
-    const { type, maxMarks, durationValue, durationUnit, co, deadline } = newAssessment
-    const payload = { type, maxMarks }
+    const { type, maxMarks, durationValue, durationUnit, co, deadline, isExtraCT, parentCTId, parentCTName } = newAssessment
+    const payload = { type, maxMarks, isExtraCT, parentCTId, parentCTName }
 
     if (type === 'cts' || type === 'midTerm' || type === 'final') {
       // Duration as formatted string
@@ -776,11 +799,28 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
   // Smart defaults when assessment type changes
   const handleAssessmentTypeChange = (type) => {
-    const defaults = { type, maxMarks: newAssessment.maxMarks }
+    const defaults = { type, maxMarks: newAssessment.maxMarks, isExtraCT: false, parentCTId: '', parentCTName: '' }
     const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+    const standardCTCount = Math.max(1, Math.floor(credits))
 
     if (type === 'cts') {
-      Object.assign(defaults, { maxMarks: 10, durationValue: 30, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+      const existingCTs = assessments.filter(a => a.type === 'cts')
+      const stdCTs = existingCTs.filter(a => !a.isExtraCT)
+      if (stdCTs.length >= standardCTCount && stdCTs.length > 0) {
+        const parent = stdCTs[0]
+        Object.assign(defaults, {
+          isExtraCT: true,
+          parentCTId: parent._id,
+          parentCTName: parent.name,
+          maxMarks: parent.maxMarks || 10,
+          durationValue: 30,
+          durationUnit: 'Minutes',
+          co: parent.co || 'NONE',
+          deadline: ''
+        })
+      } else {
+        Object.assign(defaults, { maxMarks: 10, durationValue: 30, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
+      }
     } else if (type === 'midTerm') {
       Object.assign(defaults, { maxMarks: Math.round(credits * 30), durationValue: 90, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
     } else if (type === 'final') {
@@ -791,6 +831,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       Object.assign(defaults, { maxMarks: type === 'attendance' ? 5 : 10, durationValue: 0, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
     }
     setNewAssessment(defaults)
+  }
+
+  const openCreateModal = () => {
+    const existingTypes = {}
+    assessments.forEach(a => { existingTypes[a.type] = true })
+    let typeToUse = newAssessment.type || 'cts'
+    if (['midTerm', 'final', 'attendance', 'performance', 'presentation'].includes(typeToUse) && existingTypes[typeToUse]) {
+      typeToUse = 'cts'
+    }
+    handleAssessmentTypeChange(typeToUse)
+    setShowCreateDialog(true)
   }
 
   // Create assessment
@@ -945,6 +996,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           </p>
         </div>
         <div className="flex items-center gap-2 pl-9 md:pl-0">
+          <span className="bg-purple-50 text-purple-700 border border-purple-200 text-xs px-3 py-1.5 rounded-lg font-bold">
+            Level {offering.course?.level || '1'}, Term {offering.course?.term || 'I'}
+          </span>
           <span className="bg-blue-50 text-blue-700 border border-blue-200 text-xs px-3 py-1.5 rounded-lg font-bold">
             {offering.course?.creditHours} Credits
           </span>
@@ -998,32 +1052,103 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Course Details (Left, Row 1) */}
               <div className="lg:col-span-2">
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 h-full">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">Course Details</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-gray-400 font-semibold">Course Code</p>
-                      <p className="text-gray-800 font-bold">{offering.course?.courseCode}</p>
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
+                  {/* Top Header */}
+                  <div className="flex items-center justify-between border-b pb-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200/80 shadow-xs">
+                        <BookOpen size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900 tracking-tight">Course Details</h3>
+                        <p className="text-xs text-gray-500 font-medium">Academic course specifications & instructor overview</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-gray-400 font-semibold">Course Name</p>
-                      <p className="text-gray-800 font-bold">{offering.course?.courseName}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-emerald-100/80 text-emerald-950 border border-emerald-300/80 text-xs font-black rounded-lg shadow-xs">
+                        {offering.course?.courseCode}
+                      </span>
+                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold rounded-lg flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                        Active Session
+                      </span>
                     </div>
-                    <div>
-                      <p className="text-gray-400 font-semibold">Credit Hours</p>
-                      <p className="text-gray-800 font-bold">{offering.course?.creditHours} Credits</p>
+                  </div>
+
+                  {/* Course Title Banner */}
+                  <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 rounded-xl p-4 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 border border-emerald-950/20">
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider">Course Name & Subject</div>
+                      <h4 className="text-lg font-extrabold tracking-tight text-white">{offering.course?.courseName}</h4>
                     </div>
-                    <div>
-                      <p className="text-gray-400 font-semibold">Department</p>
-                      <p className="text-gray-800 font-bold">{offering.course?.department}</p>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <span className="px-3 py-1.5 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 shadow-xs">
+                        <Award size={14} className="text-emerald-300" />
+                        {offering.course?.creditHours} Credit Hours
+                      </span>
                     </div>
-                    <div>
-                      <p className="text-gray-400 font-semibold">Assigned Teacher</p>
-                      <p className="text-gray-800 font-bold">{offering.teacher?.fullName || 'Not Assigned'}</p>
+                  </div>
+
+                  {/* Details Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <Layers size={14} className="text-indigo-600 shrink-0" />
+                        <span>Level & Term</span>
+                      </div>
+                      <p className="text-indigo-950 font-black text-xs bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 inline-block">
+                        Level {offering.course?.level || '1'}, Term {offering.course?.term || 'I'}
+                      </p>
                     </div>
-                    <div>
-                      <p className="text-gray-400 font-semibold">Academic Session</p>
-                      <p className="text-gray-800 font-bold">{offering.semester?.semesterName} ({offering.academicYear})</p>
+
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <GraduationCap size={14} className="text-emerald-600 shrink-0" />
+                        <span>Department</span>
+                      </div>
+                      <p className="text-emerald-950 font-black text-xs bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-block">
+                        Department of {offering.course?.department || 'CSE'}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <User size={14} className="text-blue-600 shrink-0" />
+                        <span>Assigned Instructor</span>
+                      </div>
+                      <p className="text-slate-900 font-extrabold text-xs truncate">
+                        {offering.teacher?.fullName || 'Not Assigned'}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <Calendar size={14} className="text-teal-600 shrink-0" />
+                        <span>Academic Session</span>
+                      </div>
+                      <p className="text-slate-900 font-extrabold text-xs">
+                        {offering.semester?.semesterName} ({offering.academicYear})
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <Users size={14} className="text-purple-600 shrink-0" />
+                        <span>Batch / Section</span>
+                      </div>
+                      <p className="text-purple-950 font-black text-xs bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 inline-block">
+                        {offering.batch?.batchName || 'Batch'} {offering.section ? `- Sec ${offering.section}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                        <CheckSquare size={14} className="text-amber-600 shrink-0" />
+                        <span>Course Outcomes</span>
+                      </div>
+                      <p className="text-amber-950 font-black text-xs bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 inline-block">
+                        {offering.course?.numCOs || 4} Mapped COs
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1031,41 +1156,61 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
               {/* Course Reminders (Right, Row 1) */}
               <div className="lg:col-span-1">
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col h-full max-h-[290px]">
-                  <div className="flex items-center gap-2 border-b pb-3 shrink-0">
-                    <Bell className="text-emerald-600" size={20} />
-                    <h3 className="text-lg font-extrabold text-gray-800">Course Reminders</h3>
-                    {reminders.length > 0 && (
-                      <span className="bg-rose-50 text-rose-700 border border-rose-200 text-xs px-2.5 py-0.5 rounded-full font-extrabold ml-auto">
-                        {reminders.length}
+                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col h-full lg:max-h-[383px] space-y-4">
+                  <div className="flex items-center justify-between border-b pb-3.5 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-rose-50 text-rose-700 rounded-xl border border-rose-200/80 shadow-xs">
+                        <Bell size={18} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 tracking-tight">Course Reminders</h3>
+                        <p className="text-[11px] text-gray-500 font-medium">Pending tasks & action items</p>
+                      </div>
+                    </div>
+                    {reminders.length > 0 ? (
+                      <span className="bg-rose-100/90 text-rose-900 border border-rose-300 text-xs px-2.5 py-0.5 rounded-full font-black shadow-xs">
+                        {reminders.length} Pending
+                      </span>
+                    ) : (
+                      <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                        Completed
                       </span>
                     )}
                   </div>
-                  <div className="overflow-y-auto pr-1 mt-3 space-y-3 flex-1" style={{ scrollbarWidth: 'thin', scrollbarColor: '#10b981 transparent' }}>
+
+                  <div className="overflow-y-auto pr-1 space-y-3 flex-1 min-h-0 max-h-[260px]" style={{ scrollbarWidth: 'thin', scrollbarColor: '#10b981 transparent' }}>
                     {reminders.length === 0 ? (
-                      <div className="text-center py-8">
+                      <div className="text-center py-8 bg-emerald-50/40 rounded-xl border border-emerald-100 p-4">
                         <CheckCircle2 className="text-emerald-600 mx-auto mb-2" size={28} />
-                        <p className="text-xs text-gray-405 font-bold">All caught up! No pending reminders.</p>
+                        <p className="text-xs text-emerald-900 font-extrabold">All Caught Up!</p>
+                        <p className="text-[11px] text-emerald-700 font-medium mt-0.5">No pending reminders for this course.</p>
                       </div>
                     ) : (
                       reminders.map((reminder) => {
+                        let borderStyle = 'border-l-4 border-l-blue-500 bg-blue-50/30 border-gray-150'
                         let iconBg = 'bg-blue-50 border-blue-200 text-blue-700'
-                        if (reminder.priority === 1) iconBg = 'bg-rose-50 border-rose-200 text-rose-700'
-                        else if (reminder.priority === 2) iconBg = 'bg-amber-50 border-amber-200 text-amber-705'
-                        
+                        if (reminder.priority === 1) {
+                          borderStyle = 'border-l-4 border-l-rose-500 bg-rose-50/20 border-gray-150'
+                          iconBg = 'bg-rose-50 border-rose-200 text-rose-700'
+                        } else if (reminder.priority === 2) {
+                          borderStyle = 'border-l-4 border-l-amber-500 bg-amber-50/20 border-gray-150'
+                          iconBg = 'bg-amber-50 border-amber-200 text-amber-800'
+                        }
+
                         return (
-                          <div key={reminder.id} className="p-3 bg-neutral-50/50 border border-gray-150 rounded-xl flex items-start gap-2.5 hover:bg-gray-50 transition-colors">
+                          <div key={reminder.id} className={`p-3 rounded-xl border flex items-start gap-2.5 hover:shadow-xs transition-all ${borderStyle}`}>
                             <div className={`p-1.5 rounded-lg border shrink-0 ${iconBg}`}>
                               <AlertCircle size={15} />
                             </div>
-                            <div className="flex-1 min-w-0 space-y-0.5">
-                              <p className="text-xs font-bold text-gray-800 truncate">{reminder.title}</p>
-                              <p className="text-[11px] text-gray-500 font-semibold leading-relaxed">{reminder.text}</p>
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <p className="text-xs font-extrabold text-slate-900 truncate">{reminder.title}</p>
+                              <p className="text-[11px] text-slate-600 font-medium leading-snug">{reminder.text}</p>
                               <button
                                 onClick={() => handleReminderAction(reminder)}
-                                className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-0.5 mt-1 hover:underline outline-none"
+                                className="text-[11px] text-emerald-700 hover:text-emerald-800 font-extrabold flex items-center gap-1 mt-1 hover:underline outline-none group"
                               >
-                                {reminder.actionLabel} <ChevronRight size={10} />
+                                <span>{reminder.actionLabel}</span>
+                                <ChevronRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
                               </button>
                             </div>
                           </div>
@@ -1079,80 +1224,153 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               {/* Assessment Summary (Left, Row 2) */}
               <div className="lg:col-span-2">
                 <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 h-full">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">Assessment Summary</h3>
+                  <div className="flex items-center justify-between border-b pb-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-teal-50 text-teal-700 rounded-xl border border-teal-200/80 shadow-xs">
+                        <ClipboardList size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900 tracking-tight">Assessment Summary</h3>
+                        <p className="text-xs text-gray-500 font-medium">Evaluation modules, mark distributions, & execution status</p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 bg-slate-100 text-slate-800 border border-slate-200 text-xs font-black rounded-lg shadow-xs">
+                      {assessments.length} Configured Modules
+                    </span>
+                  </div>
+
                   {assessments.length === 0 ? (
-                    <p className="text-gray-500 text-sm">No assessments configured yet. Create one in the Assessments tab.</p>
+                    <p className="text-gray-500 text-sm py-6 text-center italic font-semibold">No assessments configured yet. Create one in the Assessments tab.</p>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left border-collapse">
+                    <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
+                      <table className="w-full text-xs text-left border-collapse">
                         <thead>
-                          <tr className="border-b text-gray-400 font-semibold">
-                            <th className="py-2">Assessment Name</th>
-                            <th className="py-2">Type</th>
-                            <th className="py-2">Max Marks</th>
-                            <th className="py-2">Questions</th>
-                            <th className="py-2">Duration / Deadline</th>
-                            <th className="py-2">Status</th>
+                          <tr className="bg-slate-50/90 text-slate-700 font-black uppercase text-[11px] border-b border-gray-200 tracking-wider">
+                            <th className="py-3 px-3.5">Assessment Name</th>
+                            <th className="py-3 px-3">Creation Date</th>
+                            <th className="py-3 px-3 text-center">Max Marks</th>
+                            <th className="py-3 px-3 text-center">Questions</th>
+                            <th className="py-3 px-3">Duration / Deadline</th>
+                            <th className="py-3 px-3 text-center">Status</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y text-gray-700 font-medium">
-                          {assessments.map(a => (
-                            <tr key={a._id}>
-                              <td className="py-3 font-bold text-gray-800">{a.name}</td>
-                              <td className="py-3 capitalize">{a.type}</td>
-                              <td className="py-3">{a.maxMarks}</td>
-                              <td className="py-3">{a.numQuestions || 0}</td>
-                              <td className="py-3">
-                                {['assignments', 'presentation'].includes(a.type)
-                                  ? (a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A')
-                                  : (a.examDuration || 'N/A')}
-                              </td>
-                              <td className="py-3">
-                                {(() => {
-                                  const status = getAssessmentStatus(a)
-                                  let badgeStyle = 'bg-yellow-50 text-yellow-750 border border-yellow-200'
-                                  if (status === 'Evaluated') badgeStyle = 'bg-emerald-50 text-emerald-700 border border-emerald-250'
-                                  else if (status === 'Assigned') badgeStyle = 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  return (
-                                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${badgeStyle}`}>
-                                      {status}
-                                    </span>
-                                  )
-                                })()}
-                              </td>
-                            </tr>
-                          ))}
+                        <tbody className="divide-y divide-gray-150 text-gray-700 font-medium">
+                          {assessments.map(a => {
+                            const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                            const standardCTCount = Math.max(1, Math.floor(creditsVal))
+                            const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+                            const displayName = isExtra ? `Extra CT (CT-${standardCTCount + 1})` : a.name
+
+                            // Determine Creation Date
+                            let dateObj = null
+                            if (a.createdAt) {
+                              const d = new Date(a.createdAt)
+                              if (!isNaN(d.getTime())) dateObj = d
+                            }
+
+                            if (!dateObj && a._id) {
+                              try {
+                                const hex = a._id.toString().substring(0, 8)
+                                const ts = parseInt(hex, 16) * 1000
+                                if (!isNaN(ts) && ts > 0) dateObj = new Date(ts)
+                              } catch (err) {}
+                            }
+
+                            if (!dateObj && Array.isArray(activities) && activities.length > 0) {
+                              const aNameLower = (a.name || '').toLowerCase().trim()
+                              const aTypeLower = (a.type || '').toLowerCase().trim()
+
+                              const matchAct = activities.find(act => {
+                                const details = (act.details || '').toLowerCase()
+                                const action = (act.action || '').toLowerCase()
+                                const isCreate = action.includes('created') || details.includes('created')
+                                if (!isCreate) return false
+
+                                if (isExtra && (details.includes('extra ct') || details.includes('extra'))) return true
+                                if (aNameLower && details.includes(aNameLower)) return true
+                                if (aTypeLower === 'cts' && (details.includes('class test') || details.includes('ct'))) return true
+                                if (aTypeLower === 'midterm' && details.includes('mid')) return true
+                                if (aTypeLower === 'final' && details.includes('final')) return true
+                                if (aTypeLower === 'assignments' && details.includes('assign')) return true
+                                if (aTypeLower === 'attendance' && details.includes('attend')) return true
+                                if (aTypeLower === 'performance' && details.includes('perform')) return true
+                                if (aTypeLower === 'presentation' && details.includes('present')) return true
+
+                                return false
+                              })
+
+                              if (matchAct && matchAct.createdAt) {
+                                const d = new Date(matchAct.createdAt)
+                                if (!isNaN(d.getTime())) dateObj = d
+                              }
+                            }
+
+                            const formattedCreationDate = dateObj
+                              ? dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                              : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+
+                            return (
+                              <tr key={a._id} className="hover:bg-emerald-50/30 transition-colors">
+                                <td className="py-3 px-3.5 font-extrabold text-slate-900">{displayName}</td>
+                                <td className="py-3 px-3 text-slate-600 font-semibold">{formattedCreationDate}</td>
+                                <td className="py-3 px-3 text-center">
+                                  <span className="inline-block px-2.5 py-0.5 bg-slate-100 text-slate-800 border border-slate-200/80 font-black text-xs rounded-md">
+                                    {a.maxMarks}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-3 text-center font-extrabold text-slate-700">{a.numQuestions || 0}</td>
+                                <td className="py-3 px-3 font-semibold text-slate-700">
+                                  {['assignments', 'presentation'].includes(a.type)
+                                    ? (a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A')
+                                    : (a.examDuration || 'N/A')}
+                                </td>
+                                <td className="py-3 px-3 text-center">
+                                  {(() => {
+                                    const status = getAssessmentStatus(a)
+                                    let badgeStyle = 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    if (status === 'Evaluated') badgeStyle = 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                                    else if (status === 'Assigned') badgeStyle = 'bg-blue-50 text-blue-800 border border-blue-200'
+                                    return (
+                                      <span className={`text-[11px] px-2.5 py-0.5 rounded-lg font-black tracking-tight shadow-2xs ${badgeStyle}`}>
+                                        {status}
+                                      </span>
+                                    )
+                                  })()}
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
                   )}
 
                   {/* Status Explanation Legend */}
-                  <div className="mt-5 pt-4 border-t border-gray-100 text-xs font-semibold">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full text-gray-500">
-                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-yellow-50 text-yellow-750 border border-yellow-200">
+                  <div className="mt-4 pt-3.5 border-t border-gray-150 text-xs font-semibold">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full text-gray-500">
+                      <div className="flex items-start gap-2.5 bg-amber-50/40 p-2.5 rounded-xl border border-amber-200/60">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-amber-100 text-amber-900 border border-amber-300">
                           Draft
                         </span>
-                        <span className="leading-normal font-medium text-gray-600">
+                        <span className="leading-snug font-medium text-slate-700 text-[11px]">
                           Assessment templates, marks division, or Course Outcome (CO) mappings are incomplete.
                         </span>
                       </div>
-                      
-                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">
+
+                      <div className="flex items-start gap-2.5 bg-blue-50/40 p-2.5 rounded-xl border border-blue-200/60">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-blue-100 text-blue-900 border border-blue-300">
                           Assigned
                         </span>
-                        <span className="leading-normal font-medium text-gray-600">
+                        <span className="leading-snug font-medium text-slate-700 text-[11px]">
                           Templates and mappings are complete. Ready for evaluation, but marks entry is pending.
                         </span>
                       </div>
-                      
-                      <div className="flex items-start gap-2.5 bg-gray-50/50 p-2.5 rounded-xl border border-gray-100">
-                        <span className="shrink-0 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-250">
+
+                      <div className="flex items-start gap-2.5 bg-emerald-50/40 p-2.5 rounded-xl border border-emerald-200/60">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
                           Evaluated
                         </span>
-                        <span className="leading-normal font-medium text-gray-600">
+                        <span className="leading-snug font-medium text-slate-700 text-[11px]">
                           Evaluation is complete. Student marks have been fully entered and recorded.
                         </span>
                       </div>
@@ -1187,12 +1405,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                     return (
                       <>
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-3 gap-2">
-                          <h3 className="text-base font-extrabold text-gray-800">Recent Activities</h3>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-3.5 gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200/80">
+                              <History size={16} />
+                            </div>
+                            <h3 className="text-base font-black text-slate-900 tracking-tight">Recent Activities</h3>
+                          </div>
                           <select
                             value={activityFilter}
                             onChange={(e) => setActivityFilter(e.target.value)}
-                            className="text-[11px] bg-gray-50 border border-gray-200 text-gray-700 px-2.5 py-1 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-bold select-none cursor-pointer"
+                            className="text-[11px] bg-slate-50 border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-extrabold cursor-pointer shadow-2xs"
                           >
                             <option value="today">Today</option>
                             <option value="yesterday">Yesterday (Day 1 - 2)</option>
@@ -1306,7 +1529,6 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   if (percentage >= 55) return { grade: 'B-', gp: 2.75 }
                   if (percentage >= 50) return { grade: 'C+', gp: 2.50 }
                   if (percentage >= 45) return { grade: 'C', gp: 2.25 }
-                  if (percentage >= 40) return { grade: 'D', gp: 2.00 }
                   return { grade: 'F', gp: 0.00 }
                 }
 
@@ -1342,19 +1564,56 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                 // Build marksheet columns
                 const cols = []
+                const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                const standardCTCount = Math.max(1, Math.floor(credits))
+                const ctAsmts = allAsmts.filter(a => a.type === 'cts')
+                const stdCTs = ctAsmts.filter(a => !a.isExtraCT && !(a.name && a.name.toLowerCase().startsWith('extra ct')))
+
                 // CTs
-                allAsmts.filter(a => a.type === 'cts').forEach(a => {
-                  cols.push({ id: a._id?.toString() || `cts_${a.name}`, name: a.name, parent: 'CT', assessment: a, isQuestion: false, co: a.co, maxMarks: parseFloat(a.maxMarks) || 0 })
+                ctAsmts.forEach(a => {
+                  const qMeta = meta[a._id?.toString()] || []
+                  const mappedCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
+                  const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+                  const displayName = isExtra ? `Extra CT (CT-${standardCTCount + 1})` : a.name
+                  cols.push({
+                    id: a._id?.toString() || `cts_${a.name}`,
+                    name: displayName,
+                    parent: 'CT',
+                    assessment: a,
+                    isQuestion: false,
+                    co: mappedCO,
+                    maxMarks: parseFloat(a.maxMarks) || 0
+                  })
                 })
+
+                // Best CT Total summary column (Only added IF AND ONLY IF an Extra CT exists!)
+                const hasExtraCT = ctAsmts.some(a => Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct'))))
+                if (hasExtraCT && ctAsmts.length > 0) {
+                  const maxBestCTTotal = credits === 2 ? 20 : 30
+                  cols.push({
+                    id: 'best_ct_total',
+                    name: 'Best CT Total',
+                    parent: 'CT',
+                    isBestCTTotal: true,
+                    co: `BEST ${stdCTs.length || standardCTCount}`,
+                    maxMarks: maxBestCTTotal
+                  })
+                }
+
                 // Others
                 allAsmts.filter(a => ['assignments', 'presentation', 'attendance', 'performance'].includes(a.type)).forEach(a => {
-                  cols.push({ id: a._id?.toString() || `${a.type}_${a.name}`, name: a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name, parent: 'Others', assessment: a, isQuestion: false, co: a.co, maxMarks: parseFloat(a.maxMarks) || 0 })
+                  const qMeta = meta[a._id?.toString()] || []
+                  const mappedCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
+                  cols.push({ id: a._id?.toString() || `${a.type}_${a.name}`, name: a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name, parent: 'Others', assessment: a, isQuestion: false, co: mappedCO, maxMarks: parseFloat(a.maxMarks) || 0 })
                 })
                 // Mid Term
                 allAsmts.filter(a => a.type === 'midTerm').forEach(a => {
                   const questions = meta[a._id?.toString()]
                   if (questions && questions.length > 0) {
-                    questions.forEach(q => { cols.push({ id: `${a._id}_q_${q.questionNumber}`, name: `Q${q.questionNumber}`, parent: 'Mid Term', assessment: a, isQuestion: true, questionNumber: q.questionNumber, co: q.co, maxMarks: parseFloat(q.maxMarks) || 0 }) })
+                    questions.forEach(q => {
+                      const qName = (q.questionNumber || '').toString().startsWith('Q') ? q.questionNumber : `Q${q.questionNumber}`
+                      cols.push({ id: `${a._id}_q_${q.questionNumber}`, name: qName, parent: 'Mid Term', assessment: a, isQuestion: true, questionNumber: q.questionNumber, co: q.co, maxMarks: parseFloat(q.maxMarks) || 0 })
+                    })
                   } else {
                     cols.push({ id: a._id?.toString() || `mid_${a.name}`, name: a.name, parent: 'Mid Term', assessment: a, isQuestion: false, co: a.co, maxMarks: parseFloat(a.maxMarks) || 0 })
                   }
@@ -1363,21 +1622,42 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 allAsmts.filter(a => a.type === 'final').forEach(a => {
                   const questions = meta[a._id?.toString()]
                   if (questions && questions.length > 0) {
-                    questions.forEach(q => { cols.push({ id: `${a._id}_q_${q.questionNumber}`, name: `Q${q.questionNumber}`, parent: 'Term Final', assessment: a, isQuestion: true, questionNumber: q.questionNumber, co: q.co, maxMarks: parseFloat(q.maxMarks) || 0 }) })
+                    questions.forEach(q => {
+                      const qName = (q.questionNumber || '').toString().startsWith('Q') ? q.questionNumber : `Q${q.questionNumber}`
+                      cols.push({ id: `${a._id}_q_${q.questionNumber}`, name: qName, parent: 'Term Final', assessment: a, isQuestion: true, questionNumber: q.questionNumber, co: q.co, maxMarks: parseFloat(q.maxMarks) || 0 })
+                    })
                   } else {
                     cols.push({ id: a._id?.toString() || `final_${a.name}`, name: a.name, parent: 'Term Final', assessment: a, isQuestion: false, co: a.co, maxMarks: parseFloat(a.maxMarks) || 0 })
                   }
                 })
 
-                // Parent header col-spans
-                const parentHeaders = { 'CT': 0, 'Others': 0, 'Mid Term': 0, 'Term Final': 0 }
-                cols.forEach(c => { if (parentHeaders[c.parent] !== undefined) parentHeaders[c.parent]++ })
+                // Parent header section max marks and col-spans
+                const contMax = credits === 2 ? 40 : 60
+                const midMax = credits === 2 ? 60 : 90
+                const finalMax = credits === 2 ? 100 : 150
+                const courseTotalMax = credits === 2 ? 200 : 300
 
-                // Total max marks
-                const totalMax = allAsmts.reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+                const contSpan = cols.filter(c => c.parent === 'CT' || c.parent === 'Others').length
+                const midSpan = cols.filter(c => c.parent === 'Mid Term').length
+                const finalSpan = cols.filter(c => c.parent === 'Term Final').length
+
+                // Total max marks (Set strictly to standard course total: 300 for 3-credits, 200 for 2-credits)
+                const totalMax = courseTotalMax
 
                 // Helper to get a student's mark for a specific column
                 const getColMark = (student, col) => {
+                  if (col.isBestCTTotal) {
+                    let bestSum = 0
+                    const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.slice(0, standardCTCount)
+                    activeStdCTs.forEach(stdCT => {
+                      const stdId = stdCT._id ? stdCT._id.toString() : ''
+                      const extraList = ctAsmts.filter(a => (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct'))) && (a.parentCTId?.toString() === stdId || a.parentCTName === stdCT.name || true))
+                      const pairedGroup = [stdCT, ...extraList]
+                      const marks = pairedGroup.map(asmt => parseFloat(getStudentAssessmentMark(student, asmt) || 0))
+                      bestSum += Math.max(0, ...marks)
+                    })
+                    return bestSum
+                  }
                   const a = col.assessment
                   const aId = a._id ? a._id.toString() : ''
                   const studentDbId = student._id ? student._id.toString() : ''
@@ -1407,21 +1687,42 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   return sMarks.totalMark ?? sMarks.marks ?? 0
                 }
 
-                // Compute student totals
+                // Compute student totals taking Best CTs for paired CT slots
                 const studentTotals = {}
+                const nonCTs = allAsmts.filter(a => a.type !== 'cts')
+
                 students.forEach(s => {
                   let obtained = 0
-                  allAsmts.forEach(a => { obtained += parseFloat(getStudentAssessmentMark(s, a) || 0) })
+                  // Non-CT assessments
+                  nonCTs.forEach(a => {
+                    obtained += parseFloat(getStudentAssessmentMark(s, a) || 0)
+                  })
+
+                  // CT slots (Standard CT + Extra CT pair best mark)
+                  stdCTs.forEach(stdCT => {
+                    const stdId = stdCT._id ? stdCT._id.toString() : ''
+                    const extraList = ctAsmts.filter(a => a.isExtraCT && (a.parentCTId?.toString() === stdId || a.parentCTName === stdCT.name))
+                    const pairedGroup = [stdCT, ...extraList]
+                    const marks = pairedGroup.map(asmt => parseFloat(getStudentAssessmentMark(s, asmt) || 0))
+                    obtained += Math.max(0, ...marks)
+                  })
+
                   studentTotals[s.id] = obtained
                 })
 
                 // Compute column averages and batch average GPA
                 let totalGP = 0
+                let passCount = 0
                 students.forEach(s => {
                   const pct = totalMax > 0 ? (studentTotals[s.id] / totalMax) * 100 : 0
-                  totalGP += getGradeAndGP(pct).gp
+                  const { gp } = getGradeAndGP(pct)
+                  totalGP += gp
+                  if (pct >= (attainmentData.kpiConfig?.targetPassMarks || 40)) {
+                    passCount++
+                  }
                 })
                 const avgGPA = students.length > 0 ? totalGP / students.length : 0
+                const passRatePct = students.length > 0 ? ((passCount / students.length) * 100).toFixed(0) : 0
                 const totalAvg = students.length > 0 ? Object.values(studentTotals).reduce((s, v) => s + v, 0) / students.length : 0
 
                 // Check if any assessment or marks data exists
@@ -1437,10 +1738,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                   if (!hasAssessments || !hasMarks) {
                     return sortedStudents.map(student => (
-                      <tr key={student._id || student.id} className="hover:bg-green-50/30 group">
-                        <td className="px-3 py-3 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-green-50/20 z-20 w-[120px]">{student.id}</td>
-                        <td className="px-3 py-3 border border-gray-200 font-semibold text-gray-700">{student.name}</td>
-                        <td className="px-3 py-3 border border-gray-200 text-center text-gray-400 italic font-semibold">No assessments/marks entered yet.</td>
+                      <tr key={student._id || student.id} className="hover:bg-green-50/30 transition-colors">
+                        <td className="px-3 py-2 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-green-50/20 z-20 w-[135px] text-xs text-gray-900">{student.id}</td>
+                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 text-xs">{student.name}</td>
+                        <td className="px-3 py-2 border border-gray-200 text-center text-gray-400 italic font-medium text-xs">No assessments/marks entered yet.</td>
                       </tr>
                     ))
                   }
@@ -1451,19 +1752,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     const { grade, gp } = getGradeAndGP(pct)
                     const isPassed = pct >= (attainmentData.kpiConfig?.targetPassMarks || 40)
                     return (
-                      <tr key={student._id || student.id} className="hover:bg-green-50/30 group">
-                        <td className="px-3 py-2 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-green-50/20 z-20 w-[120px]">{student.id}</td>
-                        <td className="px-3 py-2 border border-gray-200 font-semibold sticky left-[120px] bg-white group-hover:bg-green-50/20 z-20 w-[160px] truncate shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">{student.name}</td>
+                      <tr key={student._id || student.id} className="group transition-colors duration-150 hover:bg-emerald-50/40">
+                        <td className="px-3 py-2 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-[#ecfdf5] transition-colors duration-150 z-20 text-gray-900 text-xs w-[135px] min-w-[135px] whitespace-nowrap">{student.id}</td>
+                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 sticky left-[135px] bg-white group-hover:bg-[#ecfdf5] transition-colors duration-150 z-20 w-[170px] min-w-[170px] truncate shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)] text-xs">{student.name}</td>
                         {cols.map(col => (
-                          <td key={col.id} className="px-2 py-2 border border-gray-200 text-center font-medium text-gray-700">
+                          <td key={col.id} className={`px-2 py-2 border border-gray-200 text-center text-xs transition-colors duration-150 ${col.isBestCTTotal ? 'bg-emerald-50/70 group-hover:bg-emerald-100/90 font-bold text-emerald-950 border-x border-green-300' : 'font-normal text-gray-700 group-hover:bg-emerald-50/30'}`}>
                             {getColMark(student, col)}
                           </td>
                         ))}
-                        <td className="px-3 py-2 border border-gray-200 text-center font-black text-green-950 bg-green-50/20">{totalScore.toFixed(1)}</td>
-                        <td className="px-3 py-2 border border-gray-200 text-center font-black text-gray-800">{grade}</td>
-                        <td className="px-3 py-2 border border-gray-200 text-center text-gray-600 font-bold">{gp.toFixed(2)}</td>
-                        <td className="px-3 py-2 border border-gray-200 text-center text-xs">
-                          <span className={`px-2 py-0.5 rounded-full font-bold shadow-sm ${isPassed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        <td className="px-3 py-2 border border-gray-200 text-center font-bold text-emerald-950 bg-green-50/40 group-hover:bg-emerald-100/70 transition-colors duration-150 text-xs">{totalScore.toFixed(1)}</td>
+                        <td className="px-3 py-2 border border-gray-200 text-center font-bold text-emerald-950 bg-emerald-50/60 group-hover:bg-emerald-100/80 transition-colors duration-150 text-xs">{pct.toFixed(1)}</td>
+                        <td className="px-3 py-2 border border-gray-200 text-center font-bold text-gray-800 group-hover:bg-emerald-50/30 transition-colors duration-150 text-xs">{grade}</td>
+                        <td className="px-3 py-2 border border-gray-200 text-center font-semibold text-gray-700 group-hover:bg-emerald-50/30 transition-colors duration-150 text-xs">{gp.toFixed(2)}</td>
+                        <td className="px-3 py-2 border border-gray-200 text-center group-hover:bg-emerald-50/30 transition-colors duration-150 text-xs">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${isPassed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                             {isPassed ? 'Pass' : 'Fail'}
                           </span>
                         </td>
@@ -1472,72 +1774,146 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   })
                 }
 
-                return (
-                  <div className="bg-white rounded-2xl shadow-lg p-6 border border-green-100">
-                    <h3 className="text-lg font-black text-green-950 mb-4 border-b-2 border-green-800 pb-1.5 uppercase tracking-wide">
-                      Student Table
-                    </h3>
-                    <div className="overflow-x-auto max-h-[600px] border border-gray-200 rounded-xl bg-white shadow-inner">
-                      <table className="w-full border-collapse text-xs text-left" style={{ tableLayout: 'auto' }}>
-                        <thead className="sticky top-0 z-30">
-                          {hasAssessments && hasMarks ? (
-                            <>
-                              <tr className="bg-gradient-to-r from-green-700 to-green-800 text-white text-[10px] uppercase">
-                                <th colSpan="2" className="px-3 py-3 border border-green-900 sticky left-0 bg-green-800 z-40 text-left">Student Info</th>
-                                {parentHeaders['CT'] > 0 && <th colSpan={parentHeaders['CT']} className="px-2 py-3 border border-green-900 bg-green-700 text-center">CT</th>}
-                                {parentHeaders['Others'] > 0 && <th colSpan={parentHeaders['Others']} className="px-2 py-3 border border-green-900 bg-green-600 text-center">Others</th>}
-                                {parentHeaders['Mid Term'] > 0 && <th colSpan={parentHeaders['Mid Term']} className="px-2 py-3 border border-green-900 bg-green-700 text-center">Mid Term</th>}
-                                {parentHeaders['Term Final'] > 0 && <th colSpan={parentHeaders['Term Final']} className="px-2 py-3 border border-green-900 bg-green-600 text-center">Term-Final</th>}
-                                <th colSpan="4" className="px-3 py-3 border border-green-900 bg-green-800 text-center">Overall Results</th>
-                              </tr>
-                              <tr className="bg-green-50 text-green-800 border-b border-gray-300 font-bold text-[10px]">
-                                <th className="px-3 py-3 border border-gray-300 sticky left-0 bg-green-50 z-40 w-[120px]">Roll ID</th>
-                                <th className="px-3 py-3 border border-gray-300 sticky left-[120px] bg-green-50 z-40 w-[160px] truncate shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Student Name</th>
-                                {cols.map(col => (
-                                  <th key={col.id} className="px-2 py-3 border border-gray-300 min-w-[70px] text-center bg-green-50">
-                                    <div>{col.name}</div>
-                                    {col.co && <div className="text-[8px] text-green-700">({col.co})</div>}
-                                    <div className="text-[7px] text-gray-400">Max: {col.maxMarks}</div>
-                                  </th>
-                                ))}
-                                <th className="px-3 py-3 border border-gray-300 min-w-[80px] bg-green-100 text-green-900 text-center">Total ({totalMax})</th>
-                                <th className="px-3 py-3 border border-gray-300 min-w-[60px] bg-green-100 text-green-900 text-center">Grade</th>
-                                <th className="px-3 py-3 border border-gray-300 min-w-[60px] bg-green-100 text-green-900 text-center">CGPA</th>
-                                <th className="px-3 py-3 border border-gray-300 min-w-[70px] bg-green-100 text-green-900 text-center">Pass/Fail</th>
-                              </tr>
-                            </>
-                          ) : (
-                            <tr className="bg-green-700 text-white text-[10px] uppercase font-bold">
-                              <th className="px-3 py-3 border border-green-800 w-[120px]">Roll ID</th>
-                              <th className="px-3 py-3 border border-green-800">Student Name</th>
-                              <th className="px-3 py-3 border border-green-800 text-center">Status</th>
+                const renderTableMarkup = (isFullscreen = false) => (
+                  <div className={`border border-gray-200 rounded-xl bg-white shadow-inner overflow-auto ${isFullscreen ? 'h-full w-full max-h-full' : 'max-h-[600px]'}`}>
+                    <table className="w-full border-collapse text-left text-xs" style={{ tableLayout: 'auto' }}>
+                      <thead className="sticky top-0 z-30">
+                        {hasAssessments && hasMarks ? (
+                          <>
+                            <tr className="bg-gradient-to-r from-emerald-900 via-green-800 to-emerald-900 text-white text-xs uppercase font-bold tracking-wider shadow-sm">
+                              <th colSpan="2" className="px-3.5 py-3 border border-emerald-950 sticky left-0 bg-emerald-950 z-40 text-left font-bold w-[305px]">Student Info</th>
+                              {contSpan > 0 && (
+                                <th colSpan={contSpan} className="px-2 py-3 border border-emerald-950 bg-emerald-800 text-center font-bold">
+                                  Continuous Assessment ({contMax} Marks)
+                                </th>
+                              )}
+                              {midSpan > 0 && (
+                                <th colSpan={midSpan} className="px-2 py-3 border border-emerald-950 bg-green-700 text-center font-bold">
+                                  Mid Term ({midMax} Marks)
+                                </th>
+                              )}
+                              {finalSpan > 0 && (
+                                <th colSpan={finalSpan} className="px-2 py-3 border border-emerald-950 bg-emerald-800 text-center font-bold">
+                                  Term-Final ({finalMax} Marks)
+                                </th>
+                              )}
+                              <th colSpan="5" className="px-3.5 py-3 border border-emerald-950 bg-emerald-950 text-center font-bold">
+                                Overall Results ({courseTotalMax} Marks)
+                              </th>
                             </tr>
-                          )}
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {renderTableBody()}
-                          {hasAssessments && hasMarks && (
-                            <tr className="bg-green-50 font-black text-green-950 text-xs">
-                              <td colSpan="2" className="px-3 py-2.5 border-t border-green-800 sticky left-0 bg-green-50 z-20">Class Average</td>
-                              {cols.map(col => {
-                                const marksList = students.map(s => getColMark(s, col))
-                                const avg = marksList.length > 0 ? marksList.reduce((sum, val) => sum + val, 0) / marksList.length : 0
-                                return (
-                                  <td key={col.id} className="px-2 py-2.5 border border-gray-200 text-center text-green-900">
-                                    {avg.toFixed(1)}
-                                  </td>
-                                )
-                              })}
-                              <td className="px-3 py-2.5 border border-gray-200 text-center text-green-900 bg-green-100/50">{totalAvg.toFixed(1)}</td>
-                              <td colSpan="3" className="px-3 py-2.5 border border-gray-200 text-center text-green-900">
-                                Avg GPA: {avgGPA.toFixed(2)}
-                              </td>
+                            <tr className="bg-green-50/90 text-green-950 border-b-2 border-green-800 font-bold text-xs">
+                              <th className="px-3 py-2.5 border border-green-300 sticky left-0 bg-green-50 z-40 w-[135px] min-w-[135px] font-bold text-green-950">Roll ID</th>
+                              <th className="px-3 py-2.5 border border-green-300 sticky left-[135px] bg-green-50 z-40 w-[170px] min-w-[170px] truncate font-bold text-green-950 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)]">Student Name</th>
+                              {cols.map(col => (
+                                <th key={col.id} className={`px-2 py-2.5 border border-green-300 min-w-[80px] text-center ${col.isBestCTTotal ? 'bg-green-100/90 text-green-950 font-bold' : 'bg-green-50/90'}`}>
+                                  <div className="text-xs font-bold text-green-950 tracking-tight">{col.name}</div>
+                                  {col.co && <div className="text-[10px] font-semibold text-green-700">({col.co})</div>}
+                                  <div className="text-[9px] font-normal text-gray-500">Max: {col.maxMarks}</div>
+                                </th>
+                              ))}
+                              <th className="px-3 py-2.5 border border-green-300 min-w-[80px] bg-green-100/90 text-green-950 text-center font-bold">Total ({totalMax})</th>
+                              <th className="px-3 py-2.5 border border-green-300 min-w-[80px] bg-emerald-100/90 text-emerald-950 text-center font-bold">Total (100)</th>
+                              <th className="px-3 py-2.5 border border-green-300 min-w-[60px] bg-green-100/90 text-green-950 text-center font-bold">Grade</th>
+                              <th className="px-3 py-2.5 border border-green-300 min-w-[60px] bg-green-100/90 text-green-950 text-center font-bold">CGPA</th>
+                              <th className="px-3 py-2.5 border border-green-300 min-w-[75px] bg-green-100/90 text-green-950 text-center font-bold">Pass/Fail</th>
                             </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                          </>
+                        ) : (
+                          <tr className="bg-green-700 text-white text-xs font-bold uppercase">
+                            <th className="px-3 py-3 border border-green-800 w-[135px]">Roll ID</th>
+                            <th className="px-3 py-3 border border-green-800 w-[170px]">Student Name</th>
+                            <th className="px-3 py-3 border border-green-800 text-center">Status</th>
+                          </tr>
+                        )}
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {renderTableBody(isFullscreen)}
+                        {hasAssessments && hasMarks && students.length > 0 && (
+                          <tr className="bg-green-100/90 font-bold text-green-950 border-t-2 border-green-800">
+                            <td colSpan="2" className="px-3 py-2.5 border border-green-300 font-bold sticky left-0 bg-green-100 text-green-950 z-20 text-xs w-[305px]">
+                              Class Average
+                            </td>
+                            {cols.map(col => {
+                              const marksList = students.map(s => getColMark(s, col))
+                              const avg = marksList.length > 0 ? marksList.reduce((sum, val) => sum + val, 0) / marksList.length : 0
+                              return (
+                                <td key={col.id} className="px-2 py-2 border border-green-300 text-center text-xs font-bold text-green-950 bg-green-50">
+                                  {avg.toFixed(1)}
+                                </td>
+                              )
+                            })}
+                            <td className="px-3 py-2 border border-green-300 text-center font-bold text-green-950 bg-green-100 text-xs">{totalAvg.toFixed(1)}</td>
+                            <td className="px-3 py-2 border border-green-300 text-center font-bold text-emerald-950 bg-emerald-100 text-xs">{(totalMax > 0 ? (totalAvg / totalMax) * 100 : 0).toFixed(1)}</td>
+                            <td className="px-3 py-2 border border-green-300 text-center font-bold text-gray-500 text-xs">-</td>
+                            <td className="px-3 py-2 border border-green-300 text-center font-bold text-green-950 bg-green-100 text-xs">Avg GPA: {avgGPA.toFixed(2)}</td>
+                            <td className="px-3 py-2 border border-green-300 text-center font-bold text-green-900 bg-green-100 text-xs">
+                              <span className="px-2 py-0.5 rounded-full bg-green-200 text-green-900 text-xs font-bold">
+                                {passRatePct}% Pass
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
+                )
+
+                return (
+                  <>
+                    <div className="bg-white rounded-2xl shadow-lg p-6 border border-green-100 space-y-4">
+                      <div className="flex items-center justify-between border-b-2 border-green-800 pb-2">
+                        <h3 className="text-lg font-black text-green-950 uppercase tracking-wide">
+                          Student Table
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setIsTableFullscreen(true)}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-300 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer group"
+                          title="View Student Table Fullscreen"
+                        >
+                          <Maximize2 size={14} className="group-hover:scale-110 transition-transform text-green-700" />
+                          <span>Full Screen</span>
+                        </button>
+                      </div>
+                      {renderTableMarkup(false)}
+                    </div>
+
+                    {/* Fullscreen Table Modal */}
+                    {isTableFullscreen && (
+                      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md p-4 sm:p-6 flex flex-col items-center justify-center animate-fadeIn">
+                        <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full h-full flex flex-col p-5 space-y-4 overflow-hidden">
+                          <div className="flex items-center justify-between border-b border-gray-200 pb-3 shrink-0">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-green-100 text-green-800 rounded-xl border border-green-200">
+                                <Users size={22} />
+                              </div>
+                              <div>
+                                <h3 className="text-lg font-black text-green-950 uppercase tracking-wide flex items-center gap-2">
+                                  Student Table — Full Screen View
+                                </h3>
+                                <p className="text-xs text-gray-500 font-medium">
+                                  Comprehensive marks overview for <span className="font-bold text-gray-800">{offering.course?.courseCode} — {offering.course?.courseName}</span>
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setIsTableFullscreen(false)}
+                              className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer border border-slate-300"
+                              title="Exit Full Screen (Esc)"
+                            >
+                              <Minimize2 size={16} />
+                              <span>Exit Full Screen</span>
+                            </button>
+                          </div>
+
+                          <div className="flex-1 min-h-0 w-full overflow-hidden">
+                            {renderTableMarkup(true)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )
               })()}
             </div>
@@ -1549,7 +1925,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-extrabold text-gray-800">Assessments Management</h2>
                 <button
-                  onClick={() => setShowCreateDialog(true)}
+                  onClick={openCreateModal}
                   className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl transition-all font-bold shadow-md hover:shadow-lg"
                 >
                   <Plus size={16} />
@@ -1567,11 +1943,25 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
                     const isSubmissionType = ['assignments', 'presentation'].includes(a.type)
                     const isDirectMarksType = ['attendance', 'performance'].includes(a.type)
+                    const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+                    const targetParentName = a.parentCTName || (a.name?.match(/\(([^)]+)\)/)?.[1]?.replace(/^for\s+/i, '') || '')
+                    const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                    const standardCTCount = Math.max(1, Math.floor(creditsVal))
+
                     return (
                       <div key={a._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
                         <div className="space-y-4">
                           <div className="flex items-center justify-between border-b pb-2">
-                            <h3 className="text-lg font-bold text-gray-800">{a.name}</h3>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-lg font-bold text-gray-800">
+                                {isExtra ? `Extra CT (CT-${standardCTCount + 1})` : a.name}
+                              </h3>
+                              {isExtra && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-md font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                  Extra CT
+                                </span>
+                              )}
+                            </div>
                             {(() => {
                               const status = getAssessmentStatus(a)
                               let badgeStyle = 'bg-yellow-50 text-yellow-750 border border-yellow-250'
@@ -1596,11 +1986,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             {isSubmissionType && (
                               <div className="col-span-2">Deadline: <span className="font-bold text-orange-700">{a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Not Set'}</span></div>
                             )}
-                            {(isDirectMarksType || isSubmissionType) && a.co && a.co !== 'NONE' && (
-                              <div className="col-span-2">Mapped CO: <span className="font-bold text-blue-700">{a.co}</span></div>
-                            )}
-                            {isDirectMarksType && (!a.co || a.co === 'NONE') && (
-                              <div className="col-span-2">Mapped CO: <span className="font-bold text-gray-400">None</span></div>
+                            {(() => {
+                              const qMeta = (marksSpreadsheetData.metadata || {})[a._id] || []
+                              const displayCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
+                              if (displayCO && displayCO !== 'NONE' && displayCO !== '') {
+                                return <div className="col-span-2">Mapped CO: <span className="font-bold text-blue-700">{displayCO}</span></div>
+                              } else {
+                                return <div className="col-span-2">Mapped CO: <span className="font-bold text-gray-400">None</span></div>
+                              }
+                            })()}
+                            {isExtra && targetParentName && (
+                              <div className="col-span-2 text-indigo-900 bg-indigo-50/80 px-2.5 py-1.5 rounded-lg border border-indigo-200/80 font-bold flex items-center justify-between text-xs mt-1">
+                                <span className="text-indigo-700 font-semibold">Mapped Target:</span>
+                                <span className="font-extrabold text-indigo-950 bg-white px-2 py-0.5 rounded shadow-xs border border-indigo-200">{targetParentName}</span>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1643,6 +2042,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   ? dbCourseOutcomes.map(o => o.code)
                   : Array.from({ length: offering.course?.numCOs || 4 }, (_, i) => `CO${i + 1}`)
 
+                const singleTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation']
+                const existingTypes = {}
+                assessments.forEach(a => { existingTypes[a.type] = true })
+                const isTypeDisabled = singleTypes.includes(newAssessment.type) && existingTypes[newAssessment.type]
+
                 return (
                   <div className="fixed inset-0 bg-black/55 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-2xl border max-w-md w-full p-6 space-y-6">
@@ -1657,26 +2061,169 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
                           >
                             <option value="cts">Class Test (CT)</option>
-                            <option value="midTerm">Mid Term Examination</option>
-                            <option value="final">Final Examination</option>
-                            <option value="assignments">Assignment</option>
-                            <option value="attendance">Attendance</option>
-                            <option value="performance">Class Performance</option>
-                            <option value="presentation">Presentation</option>
+                            <option value="midTerm" disabled={Boolean(existingTypes['midTerm'])}>
+                              Mid Term Examination {existingTypes['midTerm'] ? '(Already Created)' : ''}
+                            </option>
+                            <option value="final" disabled={Boolean(existingTypes['final'])}>
+                              Final Examination {existingTypes['final'] ? '(Already Created)' : ''}
+                            </option>
+                            <option value="assignments">
+                              Assignment (Multiple Allowed)
+                            </option>
+                            <option value="attendance" disabled={Boolean(existingTypes['attendance'])}>
+                              Attendance {existingTypes['attendance'] ? '(Already Created)' : ''}
+                            </option>
+                            <option value="performance" disabled={Boolean(existingTypes['performance'])}>
+                              Class Performance {existingTypes['performance'] ? '(Already Created)' : ''}
+                            </option>
+                            <option value="presentation" disabled={Boolean(existingTypes['presentation'])}>
+                              Presentation {existingTypes['presentation'] ? '(Already Created)' : ''}
+                            </option>
                           </select>
+                          {isTypeDisabled && (
+                            <p className="text-[11px] font-bold text-red-600 mt-1.5 bg-red-50 p-2 rounded-xl border border-red-200">
+                              This assessment type has already been created for this course offering. Only 1 instance is allowed.
+                            </p>
+                          )}
                         </div>
+
+                        {/* Category Mark Limit Validation System */}
+                        {(() => {
+                          const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                          const continuousLimit = credits === 2 ? 40 : 60
+                          const midLimit = credits === 2 ? 60 : 90
+                          const finalLimit = credits === 2 ? 100 : 150
+
+                          const isContinuous = ['cts', 'assignments', 'attendance', 'presentation', 'performance'].includes(newAssessment.type)
+                          const isMid = newAssessment.type === 'midTerm'
+                          const isFinal = newAssessment.type === 'final'
+
+                          const currentContinuous = assessments
+                            .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))) && ['cts', 'assignments', 'attendance', 'presentation', 'performance'].includes(a.type))
+                            .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+
+                          const currentMid = assessments
+                            .filter(a => a.type === 'midTerm')
+                            .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+
+                          const currentFinal = assessments
+                            .filter(a => a.type === 'final')
+                            .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+
+                          let prospective = 0
+                          let limit = 60
+                          let catName = ''
+
+                          if (isContinuous) {
+                            const addedMarks = newAssessment.isExtraCT ? 0 : (parseFloat(newAssessment.maxMarks) || 0)
+                            prospective = currentContinuous + addedMarks
+                            limit = continuousLimit
+                            catName = 'Continuous Assessments (CTs, Assignments, Attendance, Presentation, Performance)'
+                          } else if (isMid) {
+                            prospective = currentMid + (parseFloat(newAssessment.maxMarks) || 0)
+                            limit = midLimit
+                            catName = 'Mid Term Examination'
+                          } else if (isFinal) {
+                            prospective = currentFinal + (parseFloat(newAssessment.maxMarks) || 0)
+                            limit = finalLimit
+                            catName = 'Final Term Examination'
+                          }
+
+                          if (prospective > limit) {
+                            return (
+                              <div className="p-3 bg-amber-50 border-2 border-amber-300 rounded-xl space-y-1 text-xs text-amber-900 shadow-sm">
+                                <div className="flex items-center gap-2 font-black text-amber-950">
+                                  <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                                  <span>Category Mark Limit Warning ({prospective} / {limit} Marks)</span>
+                                </div>
+                                <p className="text-[11px] font-semibold text-amber-900 leading-relaxed">
+                                  Adding this assessment will set total marks for <strong>{catName}</strong> to <strong>{prospective} Marks</strong>, which exceeds the standard limit of <strong>{limit} Marks</strong> for a {credits}-credit course (Total: {credits === 2 ? '200' : '300'} Marks).
+                                </p>
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
+
+                        {/* Extra CT Notice & Target CT Selection */}
+                        {newAssessment.type === 'cts' && (() => {
+                          const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                          const standardCTCount = Math.max(1, Math.floor(credits))
+                          const existingCTs = assessments.filter(a => a.type === 'cts')
+                          const stdCTs = existingCTs.filter(a => !a.isExtraCT)
+                          const isExtra = newAssessment.isExtraCT || stdCTs.length >= standardCTCount
+
+                          if (isExtra && stdCTs.length > 0) {
+                            const currentParent = stdCTs.find(c => c._id === newAssessment.parentCTId) || stdCTs[0]
+                            return (
+                              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2 text-xs">
+                                <div className="flex items-center gap-2 font-bold text-indigo-900">
+                                  <AlertCircle size={16} className="text-indigo-600 shrink-0" />
+                                  <span>Standard CT Limit ({stdCTs.length}/{standardCTCount} CTs) Reached</span>
+                                </div>
+                                <p className="text-[11px] text-indigo-700 font-medium leading-relaxed">
+                                  Creating an <strong>Extra CT</strong> mapped to a standard CT. The system will calculate the <strong>Best Mark</strong> between them for total marks and CO attainment.
+                                </p>
+
+                                <div>
+                                  <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                                    Target Standard CT to Map With:
+                                  </label>
+                                  <select
+                                    value={currentParent._id}
+                                    onChange={(e) => {
+                                      const sel = stdCTs.find(c => c._id === e.target.value) || stdCTs[0]
+                                      setNewAssessment({
+                                        ...newAssessment,
+                                        isExtraCT: true,
+                                        parentCTId: sel._id,
+                                        parentCTName: sel.name,
+                                        maxMarks: sel.maxMarks || 10,
+                                        co: sel.co || 'NONE'
+                                      })
+                                    }}
+                                    className="w-full border border-indigo-300 px-3 py-2 rounded-lg bg-white font-extrabold text-indigo-950 text-xs outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                  >
+                                    {stdCTs.map(ct => (
+                                      <option key={ct._id} value={ct._id}>
+                                        {ct.name} (Max: {ct.maxMarks}{ct.co && ct.co !== 'NONE' ? `, CO: ${ct.co}` : ''})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="text-[10px] font-semibold text-indigo-800 bg-indigo-100/60 px-2 py-1 rounded">
+                                  Extra CT Name: <span className="font-bold text-indigo-950">Extra CT (CT-${standardCTCount + 1})</span>
+                                </div>
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
 
                         {/* Total Marks — all types */}
                         <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">Total Marks</label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-bold text-gray-700">Total Marks</label>
+                            {newAssessment.isExtraCT && (
+                              <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                                Auto-Mapped ({newAssessment.parentCTName || 'Target CT'})
+                              </span>
+                            )}
+                          </div>
                           <input
                             type="number"
                             min="1"
                             value={newAssessment.maxMarks}
-                            onChange={(e) => setNewAssessment({ ...newAssessment, maxMarks: parseInt(e.target.value) || 0 })}
-                            className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-semibold"
+                            disabled={Boolean(newAssessment.isExtraCT)}
+                            onChange={(e) => !newAssessment.isExtraCT && setNewAssessment({ ...newAssessment, maxMarks: parseInt(e.target.value) || 0 })}
+                            className={`w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none font-semibold ${newAssessment.isExtraCT ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-dashed' : 'bg-gray-50/50'}`}
                             required
                           />
+                          {newAssessment.isExtraCT && (
+                            <p className="text-[10px] text-indigo-600 mt-1 font-semibold italic">
+                              Total Marks are locked to match {newAssessment.parentCTName || 'the target standard CT'}'s max marks. Only exam duration can be modified.
+                            </p>
+                          )}
                         </div>
 
                         {/* Duration — CT / Mid / Final only */}
@@ -2217,11 +2764,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   <p className="text-sm text-gray-500 mt-1 font-semibold">This mapping is allocated to this course by the Administrator and is read-only.</p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse border border-gray-200">
+                <div className="w-full overflow-hidden">
+                  <table className="w-full border-collapse border border-gray-200 table-fixed">
                     <thead>
                       <tr className="bg-gray-50 text-xs font-bold text-gray-600 border-b">
-                        <th className="border p-3 min-w-[90px] text-gray-700 bg-gray-100 font-extrabold text-sm">CO \\ PO</th>
+                        <th className="border px-1 py-3.5 w-[65px] sm:w-[75px] text-gray-700 bg-gray-100 font-black text-xs sm:text-sm text-center align-middle">CO \\ PO</th>
                         {poListSorted.map((poNum) => {
                           const dbPoDescription = dbProgramOutcomes.find(p => p.code.replace(/\s+/g, '').toUpperCase() === poNum)?.description || PO_NAMES[poNum]
                           const colorClass = PO_COLORS[poNum] || 'bg-gray-50'
@@ -2229,11 +2776,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           return (
                             <th
                               key={poNum}
-                              className={`border p-2 text-center min-w-[95px] ${colorClass} ${textColorClass}`}
+                              className={`border px-0.5 py-3 text-center align-middle ${colorClass} ${textColorClass}`}
                               title={dbPoDescription}
                             >
-                              <div className="font-black text-[11px] mb-0.5">{poNum}</div>
-                              <div className="text-[9px] font-semibold leading-snug break-words max-w-[90px] mx-auto opacity-95">
+                              <div className="font-black text-xs sm:text-sm mb-1 uppercase tracking-tight">{poNum}</div>
+                              <div className="text-[9px] sm:text-[10px] font-semibold leading-tight break-words text-center px-0.5 opacity-95">
                                 {dbPoDescription}
                               </div>
                             </th>
@@ -2244,15 +2791,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     <tbody>
                       {coListSorted.map((coNum) => {
                         return (
-                          <tr key={coNum} className="hover:bg-green-50/20">
-                            <td className="border px-4 py-2.5 font-bold text-blue-700 bg-blue-50/30">{coNum}</td>
+                          <tr key={coNum} className="hover:bg-green-50/20 transition-colors">
+                            <td className="border px-1 py-2.5 sm:py-3 font-bold text-blue-700 bg-blue-50/30 text-center text-xs sm:text-sm align-middle">{coNum}</td>
                             {poListSorted.map((poNum) => {
                               const isMapped = coMapping[coNum]?.[poNum] === 1
                               return (
                                 <td
                                   key={poNum}
-                                  className={`border p-2 text-center cursor-default transition-all duration-150 select-none ${isMapped
-                                    ? 'bg-green-500 text-white font-extrabold shadow-inner'
+                                  className={`border px-1 py-2.5 sm:py-3 text-center align-middle cursor-default transition-all duration-150 select-none text-xs sm:text-base ${isMapped
+                                    ? 'bg-green-500 text-white font-black shadow-xs'
                                     : 'bg-yellow-50/50 text-transparent'
                                     }`}
                                 >
@@ -2266,7 +2813,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                       {/* Totals Row */}
                       <tr className="bg-gray-150/70 border-t-2 border-gray-300">
-                        <td className="border px-4 py-3 font-extrabold text-gray-700 bg-gray-200 text-sm">Total</td>
+                        <td className="border px-1 py-3 font-black text-gray-700 bg-gray-200 text-center text-xs sm:text-sm align-middle">Total</td>
                         {poListSorted.map((poNum) => {
                           let total = 0
                           coListSorted.forEach((coNum) => {
@@ -2277,7 +2824,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           return (
                             <td
                               key={poNum}
-                              className="border p-2 text-center font-extrabold text-gray-800 bg-gray-100/50 text-sm"
+                              className="border px-1 py-3 text-center align-middle font-black text-gray-800 bg-gray-100/50 text-xs sm:text-sm"
                             >
                               {total}
                             </td>

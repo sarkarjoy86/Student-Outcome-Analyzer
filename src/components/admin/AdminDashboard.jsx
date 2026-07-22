@@ -85,8 +85,10 @@ export default function AdminDashboard() {
     courseCode: "",
     courseName: "",
     creditHours: "3",
-    department: "",
+    department: "CSE",
     numCOs: "4",
+    level: "1",
+    term: "I",
   });
   const [editingCourseId, setEditingCourseId] = useState(null);
   const [selectedCourse, setSelectedCourse] = useState(null);
@@ -424,13 +426,17 @@ export default function AdminDashboard() {
         creditHours: parseFloat(courseForm.creditHours) || 3,
         department: courseForm.department.trim(),
         numCOs: parseInt(courseForm.numCOs) || 4,
+        level: courseForm.level || "1",
+        term: courseForm.term || "I",
       });
       setCourseForm({
         courseCode: "",
         courseName: "",
         creditHours: "3",
-        department: "",
+        department: "CSE",
         numCOs: "4",
+        level: "1",
+        term: "I",
       });
       fetchCourses();
       alert("Course created successfully.");
@@ -450,6 +456,8 @@ export default function AdminDashboard() {
         creditHours: parseFloat(courseForm.creditHours) || 3,
         department: courseForm.department.trim(),
         numCOs: updatedNumCOs,
+        level: courseForm.level || "1",
+        term: courseForm.term || "I",
       });
       if (selectedCourse?._id === editingCourseId) {
         setSelectedCourse((prev) =>
@@ -461,6 +469,8 @@ export default function AdminDashboard() {
                 creditHours: parseFloat(courseForm.creditHours) || 3,
                 department: courseForm.department.trim(),
                 numCOs: updatedNumCOs,
+                level: courseForm.level || "1",
+                term: courseForm.term || "I",
               }
             : prev,
         );
@@ -470,8 +480,10 @@ export default function AdminDashboard() {
         courseCode: "",
         courseName: "",
         creditHours: "3",
-        department: "",
+        department: "CSE",
         numCOs: "4",
+        level: "1",
+        term: "I",
       });
       fetchCourses();
       alert("Course updated successfully.");
@@ -486,8 +498,10 @@ export default function AdminDashboard() {
       courseCode: course.courseCode,
       courseName: course.courseName,
       creditHours: String(course.creditHours || 3),
-      department: course.department,
+      department: course.department || "CSE",
       numCOs: String(course.numCOs || 4),
+      level: String(course.level || "1"),
+      term: String(course.term || "I"),
     });
   };
 
@@ -1701,6 +1715,48 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Level & Term Dropdowns */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                        Level
+                      </label>
+                      <select
+                        value={courseForm.level || "1"}
+                        onChange={(e) =>
+                          setCourseForm({
+                            ...courseForm,
+                            level: e.target.value,
+                          })
+                        }
+                        className="w-full border border-gray-300 px-3.5 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-2xs"
+                      >
+                        <option value="1">Level 1</option>
+                        <option value="2">Level 2</option>
+                        <option value="3">Level 3</option>
+                        <option value="4">Level 4</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                        Term
+                      </label>
+                      <select
+                        value={courseForm.term || "I"}
+                        onChange={(e) =>
+                          setCourseForm({
+                            ...courseForm,
+                            term: e.target.value,
+                          })
+                        }
+                        className="w-full border border-gray-300 px-3.5 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-2xs"
+                      >
+                        <option value="I">Term I</option>
+                        <option value="II">Term II</option>
+                      </select>
+                    </div>
+                  </div>
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Department / Offering Body
@@ -1790,6 +1846,9 @@ export default function AdminDashboard() {
                                   <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
                                     {course.creditHours} Credits
                                   </span>
+                                  <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                                    L-{course.level || '1'} T-{course.term || 'I'}
+                                  </span>
                                   <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded">
                                     {course.numCOs || 4} COs
                                   </span>
@@ -1853,162 +1912,183 @@ export default function AdminDashboard() {
             {selectedCourse && (
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 pt-4 border-t border-gray-200">
                 {/* CO Management Card */}
-                <div className="xl:col-span-5 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
-                  <div className="flex items-center justify-between border-b border-gray-150 pb-4">
-                    <div>
-                      <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
-                        <Layers className="text-emerald-700" size={18} />
-                        Course Outcomes (COs)
-                      </h3>
-                      <p className="text-xs text-gray-500 font-medium">For <span className="font-bold text-gray-800">{selectedCourse.courseCode} — {selectedCourse.courseName}</span></p>
+                <div className="xl:col-span-5 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-between space-y-6">
+                  <div className="space-y-6 flex-1 flex flex-col">
+                    <div className="flex items-center justify-between border-b border-gray-150 pb-4 shrink-0">
+                      <div>
+                        <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                          <Layers className="text-emerald-700" size={18} />
+                          Course Outcomes (COs)
+                        </h3>
+                        <p className="text-xs text-gray-500 font-medium">For <span className="font-bold text-gray-800">{selectedCourse.courseCode} — {selectedCourse.courseName}</span></p>
+                      </div>
                     </div>
-                  </div>
 
-                  {(() => {
-                    const maxAllowedCOs = Number(selectedCourse.numCOs) || 4;
-                    const isMaxCOsReached = !editingCourseOutcomeId && courseOutcomes.length >= maxAllowedCOs;
-                    const totalOptions = Math.max(maxAllowedCOs, 12);
-                    const availableOptions = Array.from({ length: totalOptions }, (_, i) => `CO${i + 1}`);
+                    {(() => {
+                      const maxAllowedCOs = Number(selectedCourse.numCOs) || 4;
+                      const isMaxCOsReached = !editingCourseOutcomeId && courseOutcomes.length >= maxAllowedCOs;
+                      const totalOptions = Math.max(maxAllowedCOs, 12);
+                      const availableOptions = Array.from({ length: totalOptions }, (_, i) => `CO${i + 1}`);
 
-                    return (
-                      <form
-                        onSubmit={handleCreateCourseOutcome}
-                        className="bg-gray-50/70 p-4 rounded-xl border border-gray-200 space-y-3"
-                      >
-                        <div className="flex flex-col sm:flex-row gap-3 items-start">
-                          <div className="w-full sm:w-1/3">
-                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
-                              CO SELECTION
-                            </label>
-                            <select
-                              value={
-                                courseOutcomeForm.code ||
-                                `CO${Math.min(maxAllowedCOs, courseOutcomes.length + 1)}`
-                              }
-                              onChange={(e) =>
-                                setCourseOutcomeForm({
-                                  ...courseOutcomeForm,
-                                  code: e.target.value,
-                                })
-                              }
-                              disabled={isMaxCOsReached}
-                              className="w-full border border-gray-300 px-3 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-xs disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                            >
-                              {availableOptions.map((coCode) => (
-                                <option key={coCode} value={coCode}>
-                                  {coCode}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="w-full sm:w-2/3">
-                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
-                              DESCRIPTION
-                            </label>
-                            <textarea
-                              rows={3}
-                              value={courseOutcomeForm.description}
-                              onChange={(e) =>
-                                setCourseOutcomeForm({
-                                  ...courseOutcomeForm,
-                                  description: e.target.value,
-                                })
-                              }
-                              disabled={isMaxCOsReached}
-                              className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-white resize-y min-h-[75px] disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                              placeholder={
-                                isMaxCOsReached
-                                  ? `Limit reached (${courseOutcomes.length}/${maxAllowedCOs} COs). Update "NO. OF COS" above to add more.`
-                                  : "Outcome description"
-                              }
-                            />
-                          </div>
-                        </div>
-
-                        {isMaxCOsReached && (
-                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-amber-900 text-xs font-bold shadow-xs">
-                            <AlertCircle size={16} className="text-amber-600 shrink-0" />
-                            <span>
-                              Maximum limit reached ({courseOutcomes.length}/{maxAllowedCOs} COs). Please update <strong>"NO. OF COS"</strong> under Edit Master Course to add more outcomes.
-                            </span>
-                          </div>
-                        )}
-
-                        <div className="flex gap-2">
-                          <button
-                            type="submit"
-                            disabled={isMaxCOsReached || actionLoading}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
-                          >
-                            {editingCourseOutcomeId ? <Save size={14} /> : <Plus size={14} />}
-                            {editingCourseOutcomeId ? "Update Outcome" : "Add Outcome"}
-                          </button>
-                          {editingCourseOutcomeId && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingCourseOutcomeId(null);
-                                setCourseOutcomeForm({ code: "", description: "" });
-                              }}
-                              className="px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold text-xs transition"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </form>
-                    );
-                  })()}
-
-                  <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                    {courseOutcomes.length === 0 ? (
-                      <p className="text-gray-400 italic text-xs py-4 text-center">No outcomes defined for this course yet.</p>
-                    ) : (
-                      courseOutcomes.map((outcome) => (
-                        <div
-                          key={outcome._id}
-                          className="flex items-center justify-between border border-gray-200 rounded-xl p-3.5 hover:bg-gray-50/80 transition"
+                      return (
+                        <form
+                          onSubmit={handleCreateCourseOutcome}
+                          className="bg-gray-50/70 p-4 rounded-xl border border-gray-200 space-y-3 shrink-0"
                         >
-                          <div className="flex items-center gap-3">
-                            <span className="bg-emerald-100 text-emerald-800 font-extrabold text-xs px-2.5 py-1 rounded-lg border border-emerald-200">
-                              {outcome.code}
-                            </span>
-                            <p className="text-xs font-medium text-gray-800">
-                              {outcome.description}
-                            </p>
+                          <div className="flex flex-col sm:flex-row gap-3 items-start">
+                            <div className="w-full sm:w-1/3">
+                              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
+                                CO SELECTION
+                              </label>
+                              <select
+                                value={
+                                  courseOutcomeForm.code ||
+                                  `CO${Math.min(maxAllowedCOs, courseOutcomes.length + 1)}`
+                                }
+                                onChange={(e) =>
+                                  setCourseOutcomeForm({
+                                    ...courseOutcomeForm,
+                                    code: e.target.value,
+                                  })
+                                }
+                                disabled={isMaxCOsReached}
+                                className="w-full border border-gray-300 px-3 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-extrabold bg-white shadow-xs disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                              >
+                                {availableOptions.map((coCode) => (
+                                  <option key={coCode} value={coCode}>
+                                    {coCode}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="w-full sm:w-2/3">
+                              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
+                                DESCRIPTION
+                              </label>
+                              <textarea
+                                rows={3}
+                                value={courseOutcomeForm.description}
+                                onChange={(e) =>
+                                  setCourseOutcomeForm({
+                                    ...courseOutcomeForm,
+                                    description: e.target.value,
+                                  })
+                                }
+                                disabled={isMaxCOsReached}
+                                className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-white resize-y min-h-[75px] disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                placeholder={
+                                  isMaxCOsReached
+                                    ? `Limit reached (${courseOutcomes.length}/${maxAllowedCOs} COs). Update "NO. OF COS" above to add more.`
+                                    : "Outcome description"
+                                }
+                              />
+                            </div>
                           </div>
-                          <div className="flex gap-1.5">
+
+                          {isMaxCOsReached && (
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-amber-900 text-xs font-bold shadow-xs">
+                              <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                              <span>
+                                Maximum limit reached ({courseOutcomes.length}/{maxAllowedCOs} COs). Please update <strong>"NO. OF COS"</strong> under Edit Master Course to add more outcomes.
+                              </span>
+                            </div>
+                          )}
+
+                          <div className="flex gap-2">
                             <button
-                              onClick={() => startEditOutcome(outcome)}
-                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
-                              title="Edit CO"
+                              type="submit"
+                              disabled={isMaxCOsReached || actionLoading}
+                              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
                             >
-                              <Edit2 size={14} />
+                              {editingCourseOutcomeId ? <Save size={14} /> : <Plus size={14} />}
+                              {editingCourseOutcomeId ? "Update Outcome" : "Add Outcome"}
                             </button>
-                            <button
-                              onClick={() => handleDeleteOutcome(outcome._id)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded transition"
-                              title="Delete CO"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            {editingCourseOutcomeId && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCourseOutcomeId(null);
+                                  setCourseOutcomeForm({ code: "", description: "" });
+                                }}
+                                className="px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold text-xs transition"
+                              >
+                                Cancel
+                              </button>
+                            )}
                           </div>
-                        </div>
-                      ))
-                    )}
+                        </form>
+                      );
+                    })()}
+
+                    <div className="space-y-2.5 flex-1 min-h-[300px] max-h-[580px] overflow-y-auto pr-1">
+                      {courseOutcomes.length === 0 ? (
+                        <p className="text-gray-400 italic text-xs py-4 text-center">No outcomes defined for this course yet.</p>
+                      ) : (
+                        courseOutcomes.map((outcome) => (
+                          <div
+                            key={outcome._id}
+                            className="flex items-center justify-between border border-gray-200 rounded-xl p-3.5 hover:bg-gray-50/80 transition"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="bg-emerald-100 text-emerald-800 font-extrabold text-xs px-2.5 py-1 rounded-lg border border-emerald-200">
+                                {outcome.code}
+                              </span>
+                              <p className="text-xs font-medium text-gray-800">
+                                {outcome.description}
+                              </p>
+                            </div>
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => startEditOutcome(outcome)}
+                                className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
+                                title="Edit CO"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOutcome(outcome._id)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded transition"
+                                title="Delete CO"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* CO-PO Allocation Matrix Card */}
                 {(() => {
-                  const displayPOs = programOutcomes.length > 0
-                    ? programOutcomes
-                    : Array.from({ length: 12 }, (_, i) => ({
-                        _id: `po-fallback-${i + 1}`,
-                        code: `PO${i + 1}`,
-                        description: `Program Outcome ${i + 1}`,
-                      }));
+                  const DEFAULT_PO_NAMES = {
+                    PO1: "Engineering knowledge",
+                    PO2: "Problem analysis",
+                    PO3: "Design/development of solutions",
+                    PO4: "Investigation",
+                    PO5: "Modern tool usage",
+                    PO6: "The engineer and society",
+                    PO7: "Environment & sustainability",
+                    PO8: "Ethics",
+                    PO9: "Individual work and teamwork",
+                    PO10: "Communication",
+                    PO11: "Project management and finance",
+                    PO12: "Life-long learning",
+                  };
+
+                  const displayPOs =
+                    programOutcomes.length > 0
+                      ? programOutcomes
+                      : Array.from({ length: 12 }, (_, i) => {
+                          const code = `PO${i + 1}`;
+                          return {
+                            _id: `po-fallback-${i + 1}`,
+                            code,
+                            description: DEFAULT_PO_NAMES[code] || `Program Outcome ${i + 1}`,
+                          };
+                        });
 
                   return (
                     <div className="xl:col-span-7 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
@@ -2097,6 +2177,46 @@ export default function AdminDashboard() {
                           <Save size={15} />
                           Save CO-PO Allocation Matrix
                         </button>
+                      </div>
+
+                      {/* Program Outcomes (POs) Reference & Details Section */}
+                      <div className="pt-6 border-t border-gray-200 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
+                              <BookOpen size={18} />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
+                                Program Outcomes (POs) Details & Reference
+                              </h4>
+                              <p className="text-xs text-gray-500 font-medium">
+                                Quick description guide for mapping COs to POs
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-xs font-extrabold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-200">
+                            {displayPOs.length} POs Available
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+                          {displayPOs.map((po) => (
+                            <div
+                              key={po._id || po.code}
+                              className="p-3 bg-gradient-to-br from-slate-50 to-indigo-50/20 hover:to-indigo-50/40 border border-gray-200 hover:border-indigo-300 rounded-xl transition-all shadow-xs group flex items-start gap-2.5"
+                            >
+                              <span className="bg-indigo-600 text-white font-black text-xs px-2.5 py-1 rounded-lg shrink-0 shadow-2xs group-hover:bg-indigo-700 transition-colors">
+                                {po.code}
+                              </span>
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-bold text-gray-800 group-hover:text-indigo-950 leading-snug">
+                                  {po.description || `Program Outcome ${po.code}`}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   );

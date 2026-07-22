@@ -51,6 +51,20 @@ const assessmentSchema = new mongoose.Schema({
     enum: ['Draft', 'Published', 'Evaluated'],
     default: 'Draft'
   },
+  isExtraCT: {
+    type: Boolean,
+    default: false
+  },
+  parentCTName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  parentCTId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Assessment',
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now

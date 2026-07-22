@@ -117,6 +117,8 @@ router.post("/courses", requireAuth, async (req, res) => {
       creditHours = 3,
       department,
       numCOs = 4,
+      level = "1",
+      term = "I",
     } = req.body;
     if (!courseCode || !courseName || !department) {
       return res.status(400).json({
@@ -138,6 +140,8 @@ router.post("/courses", requireAuth, async (req, res) => {
       creditHours: parseFloat(creditHours),
       department: department.trim(),
       numCOs: parseInt(numCOs),
+      level: String(level || "1").trim(),
+      term: String(term || "I").trim(),
     });
 
     res.status(201).json({ message: "Course created successfully.", course });
@@ -151,7 +155,7 @@ router.post("/courses", requireAuth, async (req, res) => {
 // Update course
 router.put("/courses/:id", requireAuth, async (req, res) => {
   try {
-    const { courseCode, courseName, creditHours, department, numCOs } =
+    const { courseCode, courseName, creditHours, department, numCOs, level, term } =
       req.body;
     const updatedCourse = await Course.findByIdAndUpdate(
       req.params.id,
@@ -161,6 +165,8 @@ router.put("/courses/:id", requireAuth, async (req, res) => {
         creditHours: parseFloat(creditHours) || 3,
         department: department?.trim(),
         numCOs: parseInt(numCOs) || 4,
+        ...(level !== undefined && { level: String(level).trim() }),
+        ...(term !== undefined && { term: String(term).trim() }),
       },
       { returnDocument: 'after' },
     );
@@ -1416,6 +1422,15 @@ router.get(
       };
 
       dbAssessments.forEach((a) => {
+        const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')));
+        let parentName = a.parentCTName || '';
+        if (isExtra && !parentName && a.name) {
+          const match = a.name.match(/\(([^)]+)\)/);
+          if (match && match[1]) {
+            parentName = match[1].replace(/^for\s+/i, '');
+          }
+        }
+
         const item = {
           _id: a._id,
           name: a.name,
@@ -1425,7 +1440,11 @@ router.get(
           numQuestions: a.numQuestions,
           examDuration: a.examDuration,
           status: a.status,
-          deadline: a.deadline
+          deadline: a.deadline,
+          isExtraCT: isExtra,
+          parentCTName: parentName,
+          parentCTId: a.parentCTId,
+          createdAt: a.createdAt || (a._id && typeof a._id.getTimestamp === 'function' ? a._id.getTimestamp() : new Date())
         };
         if (["cts", "midTerm", "final", "assignments"].includes(a.type)) {
           assessments[a.type].push(item);

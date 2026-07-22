@@ -174,7 +174,7 @@ export default function Dashboard({ onSelectOffering }) {
 
                         <div className="grid grid-cols-2 gap-2 pt-2 text-xs text-gray-500 font-semibold border-t border-gray-50">
                           <div>Batch: <span className="font-bold text-gray-700">{offering.batch?.name || 'N/A'}</span></div>
-                          <div>Academic Year: <span className="font-bold text-gray-700">{offering.academicYear || 'N/A'}</span></div>
+                          <div>Level & Term: <span className="font-bold text-purple-800">L-{offering.course?.level || '1'}, T-{offering.course?.term || 'I'}</span></div>
                           <div>Credits: <span className="font-bold text-gray-700">{offering.course?.creditHours} Credits</span></div>
                           <div className="flex items-center gap-1">
                             <GraduationCap size={12} className="text-green-600" />

@@ -613,9 +613,10 @@ const ComprehensiveReports = ({
       const questions = metadataMap[a._id?.toString()]
       if (questions && questions.length > 0) {
         questions.forEach(q => {
+          const qName = (q.questionNumber || '').toString().startsWith('Q') ? q.questionNumber : `Q${q.questionNumber}`
           cols.push({
             id: `${a._id}_q_${q.questionNumber}`,
-            name: `Q${q.questionNumber}`,
+            name: qName,
             parent: 'Mid Term',
             assessment: a,
             isQuestion: true,
@@ -643,9 +644,10 @@ const ComprehensiveReports = ({
       const questions = metadataMap[a._id?.toString()]
       if (questions && questions.length > 0) {
         questions.forEach(q => {
+          const qName = (q.questionNumber || '').toString().startsWith('Q') ? q.questionNumber : `Q${q.questionNumber}`
           cols.push({
             id: `${a._id}_q_${q.questionNumber}`,
-            name: `Q${q.questionNumber}`,
+            name: qName,
             parent: 'Term Final',
             assessment: a,
             isQuestion: true,

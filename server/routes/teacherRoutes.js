@@ -13,7 +13,7 @@ import Section from '../models/Section.js'
 import mongoose from 'mongoose'
 import RecentActivity from '../models/RecentActivity.js'
 import { logActivity } from '../utils/activityLogger.js'
-import { syncAllStudentsLongitudinalPO } from './poRecommendationRoutes.js'
+import { syncCourseOfferingStudentsLongitudinalPO } from './poRecommendationRoutes.js'
 
 const router = express.Router()
 
@@ -75,7 +75,9 @@ async function recalculateAttainments(offeringId) {
     const coMaxMarks = {}
     for (let i = 1; i <= 12; i++) coMaxMarks[`CO${i}`] = 0
 
-    assessments.forEach(a => {
+    // Separate standard assessments vs extra CTs
+    const nonExtraAssessments = assessments.filter(a => !(a.type === 'cts' && a.isExtraCT))
+    nonExtraAssessments.forEach(a => {
       const aId = a._id.toString()
       const questions = metadataMap[aId]
       if (questions && questions.length > 0) {
@@ -101,7 +103,9 @@ async function recalculateAttainments(offeringId) {
       const coObtainedMarks = {}
       for (let i = 1; i <= 12; i++) coObtainedMarks[`CO${i}`] = 0
 
-      assessments.forEach(a => {
+      // 1. Calculate non-CT assessments
+      const nonCtAsmts = assessments.filter(a => a.type !== 'cts')
+      nonCtAsmts.forEach(a => {
         const aId = a._id.toString()
         const sMarks = marksMap[sId]?.[aId]
         if (!sMarks) return
@@ -111,7 +115,7 @@ async function recalculateAttainments(offeringId) {
           questions.forEach(q => {
             const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
             if (coKey && coKey !== 'NONE' && coKey !== '') {
-              const qMarkObj = sMarks.questionMarks.find(qm => qm.questionNumber === q.questionNumber)
+              const qMarkObj = sMarks.questionMarks?.find(qm => qm.questionNumber === q.questionNumber)
               const obtainedMark = qMarkObj ? (qMarkObj.mark || 0) : 0
               coObtainedMarks[coKey] += obtainedMark
             }
@@ -120,6 +124,44 @@ async function recalculateAttainments(offeringId) {
           const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
           if (coKey && coKey !== 'NONE' && coKey !== '') {
             coObtainedMarks[coKey] += sMarks.totalMark || 0
+          }
+        }
+      })
+
+      // 2. Calculate CT assessments with Best CT pairing (Standard CT vs Extra CT)
+      const ctAsmts = assessments.filter(a => a.type === 'cts')
+      const stdCTs = ctAsmts.filter(a => !a.isExtraCT)
+      stdCTs.forEach(stdCT => {
+        const stdId = stdCT._id.toString()
+        const extraList = ctAsmts.filter(a => a.isExtraCT && (a.parentCTId?.toString() === stdId || a.parentCTName === stdCT.name))
+        const pairedGroup = [stdCT, ...extraList]
+
+        const stdQuestions = metadataMap[stdId] || []
+        if (stdQuestions.length > 0) {
+          stdQuestions.forEach(q => {
+            const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
+            if (coKey && coKey !== 'NONE' && coKey !== '') {
+              const questionMarks = pairedGroup.map(asmt => {
+                const asmtId = asmt._id.toString()
+                const sMarks = marksMap[sId]?.[asmtId]
+                if (!sMarks) return 0
+                const qObj = sMarks.questionMarks?.find(qm => qm.questionNumber === q.questionNumber)
+                return qObj ? (qObj.mark || 0) : (sMarks.totalMark || 0)
+              })
+              const bestQMark = Math.max(0, ...questionMarks)
+              coObtainedMarks[coKey] += bestQMark
+            }
+          })
+        } else {
+          const coKey = (stdCT.co || '').replace(/\s+/g, '').toUpperCase()
+          if (coKey && coKey !== 'NONE' && coKey !== '') {
+            const slotMarks = pairedGroup.map(asmt => {
+              const asmtId = asmt._id.toString()
+              const sMarks = marksMap[sId]?.[asmtId]
+              return sMarks ? (sMarks.totalMark || 0) : 0
+            })
+            const bestSlotMark = Math.max(0, ...slotMarks)
+            coObtainedMarks[coKey] += bestSlotMark
           }
         }
       })
@@ -299,12 +341,11 @@ router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, re
     res.status(500).json({ message: 'Error fetching offering students', error: error.message })
   }
 })
-
 // 3. Create single assessment with auto-generated name
 router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req, res) => {
   try {
     const offeringId = req.params.id
-    const { type, maxMarks, numQuestions, examDuration, co, deadline } = req.body
+    const { type, maxMarks, numQuestions, examDuration, co, deadline, isExtraCT, parentCTName, parentCTId } = req.body
 
     if (!type || maxMarks === undefined) {
       return res.status(400).json({ message: 'Type and Max Marks are required.' })
@@ -322,11 +363,41 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
     else if (type === 'performance') baseName = 'Performance'
     else baseName = 'Assessment'
 
-    let name = ''
-    if (type === 'cts' || type === 'assignments' || existing.length > 0) {
-      name = `${baseName}-${existing.length + 1}`
-    } else {
-      name = baseName
+    // Enforce single instance per course offering for non-multiple assessment types
+    const singleInstanceTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation']
+    if (singleInstanceTypes.includes(type) && existing.length > 0) {
+      return res.status(400).json({ message: `${baseName} has already been created for this course offering. Only one ${baseName} is allowed.` })
+    }
+
+    let name = req.body.name || ''
+    let parentId = parentCTId || null
+    let targetParentName = parentCTName || ''
+    let inheritedCO = co || ''
+
+    if (type === 'cts' && isExtraCT) {
+      let parentAsmt = null
+      if (parentId) {
+        parentAsmt = await Assessment.findById(parentId)
+      } else if (targetParentName) {
+        parentAsmt = await Assessment.findOne({ courseOffering: offeringId, type: 'cts', name: targetParentName })
+      }
+
+      if (parentAsmt) {
+        parentId = parentAsmt._id
+        targetParentName = parentAsmt.name
+        inheritedCO = parentAsmt.co || inheritedCO
+      }
+
+      const offeringDoc = await CourseOffering.findById(offeringId).populate('course')
+      const credits = offeringDoc?.course?.creditHours || 3
+      const standardCTCount = Math.max(1, Math.floor(credits))
+      name = `Extra CT (CT-${standardCTCount + 1})`
+    } else if (!name) {
+      if (type === 'cts' || type === 'assignments' || existing.length > 0) {
+        name = `${baseName}-${existing.length + 1}`
+      } else {
+        name = baseName
+      }
     }
 
     const assessment = await Assessment.create({
@@ -334,24 +405,40 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
       type,
       name,
       maxMarks,
-      co: co || '',
+      co: inheritedCO,
       numQuestions: numQuestions || 0,
       examDuration: examDuration || '',
       deadline: deadline || null,
+      isExtraCT: Boolean(isExtraCT),
+      parentCTName: targetParentName,
+      parentCTId: parentId,
       status: 'Draft'
     })
 
-    // If numQuestions > 0, initialize QuestionMetadata automatically
-    if (numQuestions > 0) {
+    // If parent assessment has metadata questions, copy metadata questions for extra CT
+    if (type === 'cts' && isExtraCT && parentId) {
+      const parentMeta = await QuestionMetadata.findOne({ assessment: parentId })
+      if (parentMeta && parentMeta.questions && parentMeta.questions.length > 0) {
+        await QuestionMetadata.create({
+          assessment: assessment._id,
+          courseOffering: offeringId,
+          questions: parentMeta.questions.map(q => ({
+            questionNumber: q.questionNumber,
+            maxMarks: q.maxMarks,
+            co: q.co,
+            bloom: q.bloom || ''
+          }))
+        })
+      }
+    } else if (numQuestions > 0) {
       const questions = []
       for (let i = 1; i <= numQuestions; i++) {
         questions.push({
           questionNumber: `Q${i}`,
           maxMarks: Math.floor(maxMarks / numQuestions),
-          co: co || 'NONE'
+          co: inheritedCO || 'NONE'
         })
       }
-      // adjust last question marks if division is not exact
       const allocatedTotal = questions.reduce((sum, q) => sum + q.maxMarks, 0)
       if (allocatedTotal !== maxMarks && questions.length > 0) {
         questions[questions.length - 1].maxMarks += (maxMarks - allocatedTotal)
@@ -364,7 +451,7 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
       })
     }
 
-    await logActivity(offeringId, req.user._id, 'Assessment Created', `Created assessment: ${name} (Max Marks: ${maxMarks})`)
+    await logActivity(offeringId, req.user._id, 'Assessment Created', `Created ${name} (${type})`)
     res.status(201).json({ message: 'Assessment created successfully.', assessment })
   } catch (error) {
     res.status(500).json({ message: 'Error creating assessment', error: error.message })
@@ -525,10 +612,28 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
         },
         { upsert: true, returnDocument: 'after' }
       )
+
+      // Sync aggregated COs and status back to Assessment model
+      const validCOs = Array.from(new Set(
+        questions
+          .map(q => q.co)
+          .filter(c => c && c !== 'NONE' && c !== '')
+      ))
+
+      if (validCOs.length > 0) {
+        assessment.co = validCOs.join(', ')
+        assessment.status = 'Published'
+      }
+      if (questions.length > 0) {
+        assessment.numQuestions = questions.length
+      }
+
+      await assessment.save()
+      recalculateAttainments(assessment.courseOffering)
     }
 
     await logActivity(assessment.courseOffering, req.user._id, 'Question Paper Updated', `Saved/Updated question paper and metadata for: ${assessment.name}`)
-    res.status(200).json({ message: 'Question paper and metadata saved successfully.' })
+    res.status(200).json({ message: 'Question paper and metadata saved successfully.', assessment })
   } catch (error) {
     res.status(500).json({ message: 'Error saving question paper data', error: error.message })
   }
@@ -697,9 +802,17 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
       }
     })
 
+    const formattedAssessments = assessments.map(a => {
+      const docObj = a.toObject ? a.toObject() : { ...a }
+      if (!docObj.createdAt && a._id && typeof a._id.getTimestamp === 'function') {
+        docObj.createdAt = a._id.getTimestamp()
+      }
+      return docObj
+    })
+
     res.status(200).json({
       students,
-      assessments,
+      assessments: formattedAssessments,
       metadata: metadataMap,
       marks: marksMap
     })
@@ -763,8 +876,8 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
     // Trigger attainment calculation
     await recalculateAttainments(offeringId)
 
-    // Trigger longitudinal PO database update for all students
-    syncAllStudentsLongitudinalPO(60).catch(err => console.error("PO sync error after marks save:", err));
+    // Trigger longitudinal PO database update for allocated course students only
+    syncCourseOfferingStudentsLongitudinalPO(offeringId, 60).catch(err => console.error("PO sync error after marks save:", err));
 
     await logActivity(offeringId, req.user._id, 'Marks Saved', `Entered/Updated student marks for assessment: ${assessment.name}`)
     res.status(200).json({ message: 'Marks saved and attainments calculated successfully.' })
