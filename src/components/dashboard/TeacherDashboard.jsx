@@ -33,7 +33,13 @@ import {
   User,
   GraduationCap,
   Layers,
-  History
+  History,
+  Clock,
+  CheckCircle,
+  XCircle,
+  X,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react'
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
@@ -138,6 +144,214 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [coMapping, setCoMapping] = useState({})
   const [dbCourseOutcomes, setDbCourseOutcomes] = useState([])
   const [dbProgramOutcomes, setDbProgramOutcomes] = useState([])
+  const [isEditingCoMapping, setIsEditingCoMapping] = useState(false)
+  const [editableCoMapping, setEditableCoMapping] = useState({})
+  const [proposedCOs, setProposedCOs] = useState([])
+  const [editedCOs, setEditedCOs] = useState([])
+  const [deletedCOs, setDeletedCOs] = useState([])
+  const [editingCoCode, setEditingCoCode] = useState(null)
+  const [editingCoDesc, setEditingCoDesc] = useState('')
+  const [newCoForm, setNewCoForm] = useState({ code: '', description: '' })
+  const [teacherRequests, setTeacherRequests] = useState([])
+  const [selectedTeacherRequestId, setSelectedTeacherRequestId] = useState(null)
+  const [submittingRequest, setSubmittingRequest] = useState(false)
+
+  // Compute available CO codes (CO1 to CO12) excluding already created or proposed COs
+  const availableCoCodes = useMemo(() => {
+    const allPossible = Array.from({ length: 12 }, (_, i) => `CO${i + 1}`)
+    const existingSet = new Set([
+      ...dbCourseOutcomes.map(c => c.code.replace(/\s+/g, '').toUpperCase()),
+      ...proposedCOs.map(c => c.code.replace(/\s+/g, '').toUpperCase())
+    ])
+    // Remove items marked for deletion from existing set so they could potentially be re-added if needed
+    deletedCOs.forEach(dCode => existingSet.delete(dCode))
+
+    return allPossible.filter(code => !existingSet.has(code))
+  }, [dbCourseOutcomes, proposedCOs, deletedCOs])
+
+  // Automatically select first available CO code when available list changes
+  useEffect(() => {
+    if (availableCoCodes.length > 0 && (!newCoForm.code || !availableCoCodes.includes(newCoForm.code))) {
+      setNewCoForm(prev => ({ ...prev, code: availableCoCodes[0] }))
+    }
+  }, [availableCoCodes])
+
+  const fetchTeacherRequests = async () => {
+    if (!offering?.course?._id) return
+    try {
+      const data = await apiService.getMyCOPORequests(offering.course._id)
+      const reqs = data.requests || []
+      setTeacherRequests(reqs)
+      if (reqs.length > 0) {
+        setSelectedTeacherRequestId(prev => {
+          if (prev && reqs.some(r => r._id === prev)) return prev
+          return reqs[0]._id
+        })
+      }
+    } catch (err) {
+      console.error('Failed to fetch teacher CO-PO requests:', err)
+    }
+  }
+
+  const handleToggleEditMapping = () => {
+    if (!isEditingCoMapping) {
+      const cloned = JSON.parse(JSON.stringify(coMapping || {}))
+      setEditableCoMapping(cloned)
+      setProposedCOs([])
+      setEditedCOs([])
+      setDeletedCOs([])
+      setEditingCoCode(null)
+    }
+    setIsEditingCoMapping(!isEditingCoMapping)
+  }
+
+  const handleCellClickInEditMode = (coKey, poKey) => {
+    if (deletedCOs.includes(coKey)) return // Cannot map deleted COs
+
+    const isDbCo = dbCourseOutcomes.some(c => c.code.replace(/\s+/g, '').toUpperCase() === coKey)
+    const isProposedNew = proposedCOs.some(p => p.code === coKey)
+    const hasExistingMapping = Object.values(coMapping[coKey] || {}).some(v => v === 1)
+    const isCoActive = isDbCo || isProposedNew || hasExistingMapping
+
+    if (!isCoActive) {
+      alert(`Course Outcome ${coKey} has not been created for this course yet. Please use "Propose New Course Outcome (CO)" below to create ${coKey} before mapping it to POs.`)
+      return
+    }
+
+    setEditableCoMapping(prev => {
+      const currentVal = prev[coKey]?.[poKey] === 1 ? 1 : 0
+      const newVal = currentVal === 1 ? 0 : 1
+      return {
+        ...prev,
+        [coKey]: {
+          ...(prev[coKey] || {}),
+          [poKey]: newVal
+        }
+      }
+    })
+  }
+
+  const handleAddProposedCO = (e) => {
+    e.preventDefault()
+    if (!newCoForm.description.trim()) {
+      alert('Please enter a description for the new Course Outcome (CO).')
+      return
+    }
+    const code = newCoForm.code || (availableCoCodes.length > 0 ? availableCoCodes[0] : `CO${dbCourseOutcomes.length + proposedCOs.length + 1}`)
+
+    setProposedCOs(prev => [...prev, { code, description: newCoForm.description.trim() }])
+    setNewCoForm({ code: availableCoCodes[1] || '', description: '' })
+  }
+
+  const handleRemoveProposedCO = (codeToRemove) => {
+    setProposedCOs(prev => prev.filter(c => c.code !== codeToRemove))
+    setEditableCoMapping(prev => {
+      const next = { ...prev }
+      delete next[codeToRemove]
+      return next
+    })
+  }
+
+  const handleMarkCoForDeletion = (coCode) => {
+    if (!deletedCOs.includes(coCode)) {
+      setDeletedCOs(prev => [...prev, coCode])
+      setEditedCOs(prev => prev.filter(c => c.code !== coCode))
+      setEditableCoMapping(prev => {
+        const next = { ...prev }
+        delete next[coCode]
+        return next
+      })
+    }
+  }
+
+  const handleUnmarkCoForDeletion = (coCode) => {
+    setDeletedCOs(prev => prev.filter(c => c !== coCode))
+  }
+
+  const handleSaveEditedCoDescription = (coCode) => {
+    if (!editingCoDesc.trim()) return
+    setEditedCOs(prev => {
+      const filtered = prev.filter(c => c.code !== coCode)
+      return [...filtered, { code: coCode, description: editingCoDesc.trim() }]
+    })
+    setEditingCoCode(null)
+    setEditingCoDesc('')
+  }
+
+  const handleSubmitRequestToAdmin = async () => {
+    if (!offering?.course?._id) return
+
+    const activeReq = teacherRequests.find(r => r.status === 'pending' || r.status === 'in_review')
+    if (activeReq) {
+      alert(`You already have a request currently in progress (${activeReq.status.replace('_', ' ')}). Please wait for admin approval before submitting a new one.`)
+      return
+    }
+
+    let hasMappingChanges = false
+    const changes = []
+    const coKeys = Array.from(new Set([...Object.keys(coMapping), ...Object.keys(editableCoMapping)]))
+    coKeys.forEach(co => {
+      if (deletedCOs.includes(co)) return
+      Array.from({ length: 12 }, (_, i) => `PO${i + 1}`).forEach(po => {
+        const oldV = coMapping[co]?.[po] === 1
+        const newV = editableCoMapping[co]?.[po] === 1
+        if (oldV !== newV) {
+          hasMappingChanges = true
+          changes.push(`${co}-${po}`)
+        }
+      })
+    })
+
+    const hasNewCOs = proposedCOs.length > 0
+    const hasEditedCOs = editedCOs.length > 0
+    const hasDeletedCOs = deletedCOs.length > 0
+
+    if (!hasMappingChanges && !hasNewCOs && !hasEditedCOs && !hasDeletedCOs) {
+      alert('No changes detected in mapping, CO descriptions, or new/deleted COs. Please make modifications before submitting.')
+      return
+    }
+
+    let requestType = 'edit_mapping'
+    if (hasNewCOs || hasEditedCOs || hasDeletedCOs) {
+      requestType = 'add_co_with_mapping'
+    }
+
+    const summaryParts = []
+    if (hasNewCOs) summaryParts.push(`Added ${proposedCOs.length} new CO(s)`)
+    if (hasEditedCOs) summaryParts.push(`Updated ${editedCOs.length} CO description(s)`)
+    if (hasDeletedCOs) summaryParts.push(`Deleted ${deletedCOs.length} CO(s)`)
+    if (hasMappingChanges) summaryParts.push(`Modified ${changes.length} CO-PO mapping cell(s)`)
+
+    const summaryText = summaryParts.join(' • ')
+
+    setSubmittingRequest(true)
+    try {
+      await apiService.submitCOPORequest({
+        courseId: offering.course._id,
+        courseOfferingId: offering._id,
+        courseCode: offering.course.courseCode,
+        courseName: offering.course.courseName,
+        requestType,
+        proposedMapping: editableCoMapping,
+        originalMapping: coMapping,
+        proposedCOs,
+        editedCOs,
+        deletedCOs,
+        changesSummary: summaryText,
+      })
+      alert('Your request has been submitted to the Admin & HOD for review!')
+      setIsEditingCoMapping(false)
+      setProposedCOs([])
+      setEditedCOs([])
+      setDeletedCOs([])
+      fetchTeacherRequests()
+      loadAllData()
+    } catch (err) {
+      alert(err.message || 'Failed to submit request to admin.')
+    } finally {
+      setSubmittingRequest(false)
+    }
+  }
  
   // Survey States for course reminders
   const [survey, setSurvey] = useState(null)
@@ -461,10 +675,56 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       }
     })
 
+    // 4. CO-PO Request Notifications for Teacher Reminders
+    if (teacherRequests && teacherRequests.length > 0) {
+      const activeReq = teacherRequests[0]
+      if (activeReq.status === 'pending') {
+        list.push({
+          type: 'copo_request_pending',
+          id: `copo_req_${activeReq._id}`,
+          priority: 2,
+          title: 'CO-PO Edit Request Pending Review',
+          text: `Your request to modify CO-PO mapping/add COs for ${offering.course?.courseCode} has been submitted to the Admin and is pending approval.`,
+          actionLabel: 'View Request Tracker',
+          actionTab: 'coMapping'
+        })
+      } else if (activeReq.status === 'in_review') {
+        list.push({
+          type: 'copo_request_review',
+          id: `copo_req_${activeReq._id}`,
+          priority: 1,
+          title: 'CO-PO Request Under Review with HOD',
+          text: `Your CO-PO modification request for ${offering.course?.courseCode} is currently under review by Department Dean / HOD.`,
+          actionLabel: 'Track Progress',
+          actionTab: 'coMapping'
+        })
+      } else if (activeReq.status === 'approved' && (new Date() - new Date(activeReq.reviewedAt)) < 7 * 24 * 3600 * 1000) {
+        list.push({
+          type: 'copo_request_approved',
+          id: `copo_req_${activeReq._id}`,
+          priority: 2,
+          title: 'CO-PO Request Approved! 🎉',
+          text: `Your requested CO-PO changes for ${offering.course?.courseCode} have been approved by Admin and updated in Course Database.`,
+          actionLabel: 'View Mappings',
+          actionTab: 'coMapping'
+        })
+      } else if (activeReq.status === 'rejected' && (new Date() - new Date(activeReq.reviewedAt)) < 7 * 24 * 3600 * 1000) {
+        list.push({
+          type: 'copo_request_rejected',
+          id: `copo_req_${activeReq._id}`,
+          priority: 1,
+          title: 'CO-PO Request Rejection Notice',
+          text: `Your CO-PO edit request for ${offering.course?.courseCode} was rejected. Admin Note: "${activeReq.adminNote || 'No explanation provided.'}"`,
+          actionLabel: 'View Details',
+          actionTab: 'coMapping'
+        })
+      }
+    }
+
     // Sort: lower priority number denotes higher importance
     list.sort((x, y) => x.priority - y.priority)
     return list
-  }, [marksSpreadsheetData, survey, surveyResponsesCount, offering])
+  }, [marksSpreadsheetData, survey, surveyResponsesCount, offering, teacherRequests])
 
   const handleReminderAction = (reminder) => {
     setActiveTab(reminder.actionTab)
@@ -590,10 +850,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           }
         }
       } catch (err) {
-        console.error('Failed to load spreadsheet marks for reminders:', err)
+        console.error('Failed to load marks spreadsheet for overview:', err)
+      }
+
+      // 9. Fetch CO-PO requests for teacher
+      try {
+        if (currentOffering?.course?._id) {
+          const reqRes = await apiService.getMyCOPORequests(currentOffering.course._id)
+          setTeacherRequests(reqRes.requests || [])
+        }
+      } catch (err) {
+        console.error('Failed to load teacher CO-PO requests:', err)
       }
  
-      // 9. Fetch recent activities from database
+      // 10. Fetch recent activities from database
       try {
         const actRes = await apiService.getRecentActivities(offering._id)
         if (actRes && actRes.activities) {
@@ -2757,16 +3027,75 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
             const coListSorted = Array.from({ length: 12 }, (_, i) => `CO${i + 1}`)
             const poListSorted = Array.from({ length: 12 }, (_, i) => `PO${i + 1}`)
 
+            // Combine DB COs + proposed COs for display
+            const allDisplayCOs = [...coListSorted]
+            proposedCOs.forEach(p => {
+              if (!allDisplayCOs.includes(p.code)) {
+                allDisplayCOs.push(p.code)
+              }
+            })
+
+            const activeRequest = teacherRequests.find(r => r.status === 'pending' || r.status === 'in_review')
+            const latestResolvedRequest = teacherRequests.find(r => r.status === 'approved' || r.status === 'rejected')
+
             return (
               <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-6">
-                <div className="text-center border-b pb-4">
-                  <h3 className="text-xl font-extrabold text-gray-800">Course Outcome (CO) - Program Outcome (PO) Mapping</h3>
-                  <p className="text-sm text-gray-500 mt-1 font-semibold">This mapping is allocated to this course by the Administrator and is read-only.</p>
+                {/* Header with Edit Toggle */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
+                  <div>
+                    <h3 className="text-xl font-extrabold text-gray-800">Course Outcome (CO) - Program Outcome (PO) Mapping</h3>
+                    <p className="text-xs text-gray-500 mt-1 font-semibold">
+                      {isEditingCoMapping
+                        ? '✏️ Editing Mode: Toggle mapping cells or add new COs below. Changes require Admin & HOD approval.'
+                        : 'This mapping is master-managed by the Department. You can propose edits or add new COs for Admin approval.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {!isEditingCoMapping ? (
+                      <button
+                        onClick={handleToggleEditMapping}
+                        disabled={!!activeRequest}
+                        className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-extrabold text-xs shadow-md hover:shadow-lg transition flex items-center gap-2 disabled:opacity-50"
+                        title={activeRequest ? 'You have an active request in review. Please wait for resolution.' : 'Edit Mapping / Add CO'}
+                      >
+                        <Edit size={16} />
+                        Propose Mappings / Add CO
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleToggleEditMapping}
+                          className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition"
+                        >
+                          Cancel Editing
+                        </button>
+
+                        <button
+                          onClick={handleSubmitRequestToAdmin}
+                          disabled={submittingRequest}
+                          className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {submittingRequest ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                          Submit Request to Admin
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="w-full overflow-hidden">
+                {/* CO-PO Matrix Table */}
+                <div className="w-full overflow-hidden space-y-3">
+                  {isEditingCoMapping && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs font-semibold text-amber-900 flex items-center justify-between">
+                      <span>💡 <strong>Click cells to toggle mapping.</strong> Yellow highlighted cells indicate your unsaved changes. Program Outcomes (POs) are institutionally fixed.</span>
+                      <span className="font-bold bg-amber-200 px-2 py-0.5 rounded-md">Editing Active</span>
+                    </div>
+                  )}
+
                   <table className="w-full border-collapse border border-gray-200 table-fixed">
                     <thead>
+                      {/* PO Names Row */}
                       <tr className="bg-gray-50 text-xs font-bold text-gray-600 border-b">
                         <th className="border px-1 py-3.5 w-[65px] sm:w-[75px] text-gray-700 bg-gray-100 font-black text-xs sm:text-sm text-center align-middle">CO \\ PO</th>
                         {poListSorted.map((poNum) => {
@@ -2789,21 +3118,69 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       </tr>
                     </thead>
                     <tbody>
-                      {coListSorted.map((coNum) => {
+                      {allDisplayCOs.map((coNum) => {
+                        const isDbCo = dbCourseOutcomes.some(c => c.code.replace(/\s+/g, '').toUpperCase() === coNum)
+                        const isProposedNew = proposedCOs.some(p => p.code === coNum)
+                        const hasExistingMapping = Object.values(coMapping[coNum] || {}).some(v => v === 1)
+                        const isCoActive = isDbCo || isProposedNew || hasExistingMapping
+                        const isMarkedDeleted = deletedCOs.includes(coNum)
+
+                        let coLabelClass = 'bg-blue-50/30 text-blue-700 font-bold'
+                        if (isProposedNew) {
+                          coLabelClass = 'bg-purple-100 text-purple-900 font-black'
+                        } else if (isMarkedDeleted) {
+                          coLabelClass = 'bg-red-100 text-red-700 font-black line-through'
+                        } else if (!isCoActive) {
+                          coLabelClass = 'bg-gray-100/60 text-gray-400 font-semibold'
+                        }
+
                         return (
-                          <tr key={coNum} className="hover:bg-green-50/20 transition-colors">
-                            <td className="border px-1 py-2.5 sm:py-3 font-bold text-blue-700 bg-blue-50/30 text-center text-xs sm:text-sm align-middle">{coNum}</td>
+                          <tr key={coNum} className={`transition-colors ${!isCoActive ? 'opacity-50 bg-gray-50/50' : 'hover:bg-green-50/20'}`}>
+                            <td className={`border px-1 py-2.5 sm:py-3 text-center text-xs sm:text-sm align-middle ${coLabelClass}`}>
+                              {coNum}
+                              {isProposedNew && <span className="block text-[9px] text-purple-700 font-extrabold">(New)</span>}
+                              {isMarkedDeleted && <span className="block text-[9px] text-red-700 font-extrabold">(Deleted)</span>}
+                              {!isCoActive && <span className="block text-[9px] text-gray-400 font-medium">(Unadded)</span>}
+                            </td>
                             {poListSorted.map((poNum) => {
-                              const isMapped = coMapping[coNum]?.[poNum] === 1
+                              const activeMappingSource = isEditingCoMapping ? editableCoMapping : coMapping
+                              const isMapped = activeMappingSource[coNum]?.[poNum] === 1
+
+                              // Check if cell was modified in edit mode
+                              const origVal = coMapping[coNum]?.[poNum] === 1
+                              const isModified = isEditingCoMapping && (origVal !== isMapped)
+
+                              let cellBg = isMapped ? 'bg-green-500 text-white font-black shadow-xs' : 'bg-yellow-50/50 text-transparent'
+                              if (isEditingCoMapping) {
+                                if (!isCoActive || isMarkedDeleted) {
+                                  cellBg = 'bg-gray-100/40 text-gray-300 cursor-not-allowed select-none'
+                                } else if (isModified) {
+                                  cellBg = isMapped
+                                    ? 'bg-amber-500 text-white font-black ring-2 ring-amber-400 shadow-md animate-pulse cursor-pointer'
+                                    : 'bg-amber-100 text-amber-900 font-bold ring-2 ring-amber-300 cursor-pointer'
+                                } else if (isMapped) {
+                                  cellBg = 'bg-green-500 hover:bg-green-600 text-white font-black cursor-pointer'
+                                } else {
+                                  cellBg = 'bg-gray-50 hover:bg-gray-100 text-transparent cursor-pointer'
+                                }
+                              }
+
+                              const cellTitle = !isCoActive
+                                ? `Course Outcome ${coNum} is not created yet. Propose ${coNum} below to enable mapping.`
+                                : isMarkedDeleted
+                                ? `Course Outcome ${coNum} is marked for deletion.`
+                                : isEditingCoMapping
+                                ? `Click to ${isMapped ? 'unmap' : 'map'} ${coNum} to ${poNum}`
+                                : ''
+
                               return (
                                 <td
                                   key={poNum}
-                                  className={`border px-1 py-2.5 sm:py-3 text-center align-middle cursor-default transition-all duration-150 select-none text-xs sm:text-base ${isMapped
-                                    ? 'bg-green-500 text-white font-black shadow-xs'
-                                    : 'bg-yellow-50/50 text-transparent'
-                                    }`}
+                                  onClick={() => isEditingCoMapping && isCoActive && !isMarkedDeleted && handleCellClickInEditMode(coNum, poNum)}
+                                  className={`border px-1 py-2.5 sm:py-3 text-center align-middle transition-all duration-150 select-none text-xs sm:text-base ${cellBg}`}
+                                  title={cellTitle}
                                 >
-                                  {isMapped ? '✓' : ''}
+                                  {isMapped ? (isModified ? '+ ✓' : '✓') : (isModified ? '- ✗' : '')}
                                 </td>
                               )
                             })}
@@ -2816,8 +3193,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <td className="border px-1 py-3 font-black text-gray-700 bg-gray-200 text-center text-xs sm:text-sm align-middle">Total</td>
                         {poListSorted.map((poNum) => {
                           let total = 0
-                          coListSorted.forEach((coNum) => {
-                            if (coMapping[coNum]?.[poNum] === 1) {
+                          const currentMap = isEditingCoMapping ? editableCoMapping : coMapping
+                          allDisplayCOs.forEach((coNum) => {
+                            if (currentMap[coNum]?.[poNum] === 1) {
                               total++
                             }
                           })
@@ -2835,24 +3213,335 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   </table>
                 </div>
 
+                {/* Active Request Status Stepper (Rendered below CO-PO Matrix Table) */}
+                {teacherRequests.length > 0 && (() => {
+                  const currentReq = teacherRequests.find(r => r._id === selectedTeacherRequestId) || teacherRequests[0]
+                  return (
+                    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-200 pb-3">
+                        <div className="flex items-center gap-2">
+                          <Clock size={16} className="text-blue-600" />
+                          <h4 className="text-xs font-black uppercase tracking-wider text-gray-800">
+                            Request Status Tracker
+                          </h4>
+                          {teacherRequests.length > 1 && (
+                            <span className="text-[10px] font-extrabold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">
+                              {teacherRequests.length} Requests Total
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 flex-wrap">
+                          {teacherRequests.length > 1 && (
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs font-bold text-gray-600">Select Request:</label>
+                              <select
+                                value={currentReq._id}
+                                onChange={(e) => setSelectedTeacherRequestId(e.target.value)}
+                                className="border border-blue-300 bg-white text-blue-900 text-xs font-black px-3 py-1.5 rounded-xl shadow-2xs outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                {teacherRequests.map((r, idx) => (
+                                  <option key={r._id} value={r._id}>
+                                    Request #{teacherRequests.length - idx}: {r.requestType === 'edit_mapping' ? 'Mapping Edit' : r.requestType === 'add_co' ? 'New CO' : 'New CO & Edit'} [{r.status.toUpperCase()}] ({new Date(r.submittedAt).toLocaleDateString()})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                          <span className="text-[11px] font-extrabold text-gray-500">
+                            Course: {offering.course?.courseCode}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div key={currentReq._id} className="space-y-3">
+                        {/* Stepper Progress Bar */}
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs font-extrabold pt-1">
+                          <div className={`p-2.5 rounded-xl border flex items-center justify-center gap-1.5 ${
+                            currentReq.status === 'pending' || currentReq.status === 'in_review' || currentReq.status === 'approved'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : 'bg-gray-100 text-gray-500 border-gray-200'
+                          }`}>
+                            <CheckCircle2 size={14} />
+                            1. Submitted
+                          </div>
+
+                          <div className={`p-2.5 rounded-xl border flex items-center justify-center gap-1.5 ${
+                            currentReq.status === 'in_review'
+                              ? 'bg-blue-100 text-blue-900 border-blue-400 animate-pulse'
+                              : currentReq.status === 'approved' || currentReq.status === 'rejected'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : 'bg-gray-100 text-gray-500 border-gray-200'
+                          }`}>
+                            <MessageSquare size={14} />
+                            2. In Review (Dean/HOD)
+                          </div>
+
+                          <div className={`p-2.5 rounded-xl border flex items-center justify-center gap-1.5 ${
+                            currentReq.status === 'approved'
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
+                              : currentReq.status === 'rejected'
+                              ? 'bg-red-600 text-white border-red-700 shadow-sm'
+                              : 'bg-gray-100 text-gray-500 border-gray-200'
+                          }`}>
+                            {currentReq.status === 'approved' ? <CheckCircle2 size={14} /> : currentReq.status === 'rejected' ? <AlertTriangle size={14} /> : null}
+                            3. {currentReq.status === 'approved' ? 'Approved & DB Updated' : currentReq.status === 'rejected' ? 'Rejected' : 'Final Decision'}
+                          </div>
+                        </div>
+
+                        {/* Request Details Info */}
+                        <div className="bg-white p-4 rounded-xl border border-gray-200 text-xs space-y-2 font-medium shadow-2xs">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-gray-600 border-b pb-2">
+                            <span>Request Type: <strong>{currentReq.requestType === 'edit_mapping' ? 'CO-PO Mapping Edit' : currentReq.requestType === 'add_co' ? 'New CO Proposal' : 'New CO & Mapping Edit'}</strong></span>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                              <span className="font-semibold text-gray-500">📅 Submitted: {currentReq.submittedAt ? new Date(currentReq.submittedAt).toLocaleString() : 'N/A'}</span>
+                              {currentReq.reviewedAt && (
+                                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                  ✓ {currentReq.status === 'approved' ? 'Approved Date' : currentReq.status === 'rejected' ? 'Rejected Date' : 'Decision Date'}: {new Date(currentReq.reviewedAt).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {currentReq.changesSummary && (
+                            <p className="text-gray-800 font-semibold">Summary of Changes: {currentReq.changesSummary}</p>
+                          )}
+                          {currentReq.adminNote && (
+                            <div className="mt-2 p-3 bg-blue-50/80 border border-blue-200 rounded-xl text-blue-950 font-bold space-y-1">
+                              <div className="flex items-center gap-1.5 text-blue-900">
+                                <MessageSquare size={14} className="text-blue-600" />
+                                <span>Admin Response & Feedback:</span>
+                              </div>
+                              <p className="text-xs text-blue-950 font-medium pl-5">"{currentReq.adminNote}"</p>
+                              {currentReq.reviewedBy && (
+                                <span className="block text-[10px] text-blue-700 font-bold pl-5 mt-1">
+                                  — Decision recorded by {currentReq.reviewedBy} on {new Date(currentReq.reviewedAt).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Proposed New CO Form (Visible in Edit Mode) */}
+                {isEditingCoMapping && (
+                  <div className="p-5 bg-purple-50/60 border border-purple-200 rounded-2xl space-y-4">
+                    <div className="flex items-center justify-between border-b border-purple-200 pb-3">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-purple-900 flex items-center gap-2">
+                        <Plus size={16} />
+                        Propose New Course Outcome (CO)
+                      </h4>
+                      <span className="text-[11px] font-semibold text-purple-700">
+                        Add extra COs to this course proposal
+                      </span>
+                    </div>
+
+                    <form onSubmit={handleAddProposedCO} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1">CO Code (Select Unused)</label>
+                        {availableCoCodes.length > 0 ? (
+                          <select
+                            value={newCoForm.code}
+                            onChange={(e) => setNewCoForm({ ...newCoForm, code: e.target.value })}
+                            className="w-full border border-purple-300 px-3 py-2 rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-purple-500 bg-white text-purple-900"
+                          >
+                            {availableCoCodes.map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="p-2 bg-purple-100 border border-purple-300 rounded-xl text-xs font-bold text-purple-700 text-center">
+                            All 12 COs Created
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1">CO Description / Learning Objective</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Students will construct design patterns using Java & OOP principles..."
+                          value={newCoForm.description}
+                          onChange={(e) => setNewCoForm({ ...newCoForm, description: e.target.value })}
+                          disabled={availableCoCodes.length === 0}
+                          className="w-full border border-purple-300 px-3 py-2 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-purple-500 bg-white disabled:opacity-50"
+                        />
+                      </div>
+
+                      <div className="flex items-end">
+                        <button
+                          type="submit"
+                          disabled={availableCoCodes.length === 0}
+                          className="w-full py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-xl font-extrabold text-xs shadow-sm transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Plus size={14} />
+                          Add CO to Proposal
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Proposed COs List */}
+                    {proposedCOs.length > 0 && (
+                      <div className="space-y-2 pt-2 border-t border-purple-200">
+                        <p className="text-[11px] font-bold text-purple-900 uppercase">Proposed New COs in this Request:</p>
+                        <div className="space-y-2">
+                          {proposedCOs.map((pCo) => (
+                            <div key={pCo.code} className="flex items-center justify-between bg-white p-3 rounded-xl border border-purple-200 shadow-2xs">
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md text-xs">{pCo.code}</span>
+                                <span className="text-xs font-semibold text-gray-800">{pCo.description}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveProposedCO(pCo.code)}
+                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                title="Remove CO"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Outcomes Details Section from Database */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 border-t pt-6 mt-8">
                   {/* CO Details */}
                   <div className="space-y-4">
-                    <h4 className="text-lg font-extrabold text-gray-800 flex items-center gap-2 border-b pb-2">
-                      <span className="p-1 px-2.5 text-[10px] bg-blue-100 text-blue-700 rounded-md font-black">CO</span>
-                      Course Outcomes (CO) Details
+                    <h4 className="text-lg font-extrabold text-gray-800 flex items-center justify-between border-b pb-2">
+                      <span className="flex items-center gap-2">
+                        <span className="p-1 px-2.5 text-[10px] bg-blue-100 text-blue-700 rounded-md font-black">CO</span>
+                        Course Outcomes (CO) Details
+                      </span>
+                      {isEditingCoMapping && (
+                        <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+                          Editing & Deletion Mode
+                        </span>
+                      )}
                     </h4>
-                    {dbCourseOutcomes.length === 0 ? (
+                    {dbCourseOutcomes.length === 0 && proposedCOs.length === 0 ? (
                       <p className="text-sm text-gray-400 font-semibold italic">No Course Outcomes loaded from the database for this course.</p>
                     ) : (
-                      <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2">
-                        {dbCourseOutcomes.map((co) => (
-                          <div key={co._id || co.code} className="p-3.5 bg-gray-50/30 hover:bg-blue-50/20 border border-gray-150 rounded-xl transition-all duration-200">
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className="font-black text-blue-700 text-sm bg-blue-50/50 px-2 py-0.5 rounded-md">{co.code}</span>
+                      <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                        {dbCourseOutcomes.map((co) => {
+                          const isMarkedDeleted = deletedCOs.includes(co.code)
+                          const editedObj = editedCOs.find(e => e.code === co.code)
+                          const isEditingThis = editingCoCode === co.code
+
+                          return (
+                            <div
+                              key={co._id || co.code}
+                              className={`p-3.5 rounded-xl border transition-all duration-200 ${
+                                isMarkedDeleted
+                                  ? 'bg-red-50/70 border-red-300 opacity-80'
+                                  : editedObj
+                                  ? 'bg-amber-50/60 border-amber-300'
+                                  : 'bg-gray-50/30 hover:bg-blue-50/20 border-gray-150'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-black text-sm px-2 py-0.5 rounded-md ${
+                                    isMarkedDeleted ? 'bg-red-100 text-red-700 line-through' : 'bg-blue-50/50 text-blue-700'
+                                  }`}>
+                                    {co.code}
+                                  </span>
+                                  {isMarkedDeleted && (
+                                    <span className="text-[10px] font-extrabold text-red-700 bg-red-100 px-2 py-0.5 rounded-full border border-red-200">
+                                      Marked for Deletion
+                                    </span>
+                                  )}
+                                  {editedObj && !isMarkedDeleted && (
+                                    <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
+                                      Edited Description
+                                    </span>
+                                  )}
+                                </div>
+
+                                {isEditingCoMapping && (
+                                  <div className="flex items-center gap-1.5">
+                                    {isMarkedDeleted ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUnmarkCoForDeletion(co.code)}
+                                        className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-white px-2.5 py-1 rounded-lg border border-blue-200 shadow-2xs"
+                                      >
+                                        Undo Deletion
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingCoCode(co.code)
+                                            setEditingCoDesc(editedObj ? editedObj.description : co.description)
+                                          }}
+                                          className="p-1.5 text-blue-700 hover:bg-blue-100 rounded-lg transition border border-blue-200 bg-white"
+                                          title="Edit Description"
+                                        >
+                                          <Edit size={14} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleMarkCoForDeletion(co.code)}
+                                          className="p-1.5 text-red-700 hover:bg-red-100 rounded-lg transition border border-red-200 bg-white"
+                                          title="Delete CO from Course"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {isEditingThis ? (
+                                <div className="space-y-2 mt-2">
+                                  <textarea
+                                    rows={2}
+                                    value={editingCoDesc}
+                                    onChange={(e) => setEditingCoDesc(e.target.value)}
+                                    className="w-full p-2.5 text-xs border border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium"
+                                  />
+                                  <div className="flex items-center gap-2 justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingCoCode(null)}
+                                      className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveEditedCoDescription(co.code)}
+                                      className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-extrabold shadow-xs"
+                                    >
+                                      Save Description
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className={`text-xs font-medium leading-relaxed ${isMarkedDeleted ? 'text-red-600 line-through' : editedObj ? 'text-amber-900 font-semibold' : 'text-gray-600'}`}>
+                                  {editedObj ? editedObj.description : co.description}
+                                </p>
+                              )}
                             </div>
-                            <p className="text-xs text-gray-600 font-medium leading-relaxed">{co.description}</p>
+                          )
+                        })}
+
+                        {proposedCOs.map((pCo) => (
+                          <div key={pCo.code} className="p-3.5 bg-purple-50/40 border border-purple-200 rounded-xl transition-all duration-200">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="font-black text-purple-700 text-sm bg-purple-100 px-2 py-0.5 rounded-md">{pCo.code} (Proposed New)</span>
+                            </div>
+                            <p className="text-xs text-gray-700 font-semibold leading-relaxed">{pCo.description}</p>
                           </div>
                         ))}
                       </div>
@@ -2867,23 +3556,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     </h4>
                     {(() => {
                       const mappedPoKeys = new Set()
-                      Object.keys(coMapping).forEach((coCode) => {
-                        // Filter to only look at COs actually defined for the course (in dbCourseOutcomes)
-                        if (dbCourseOutcomes.length > 0) {
-                          const hasCoInDb = dbCourseOutcomes.some(
-                            (c) => c.code.replace(/\s+/g, '').toUpperCase() === coCode
-                          )
-                          if (!hasCoInDb) return
-                        }
-
-                        Object.keys(coMapping[coCode] || {}).forEach((poCode) => {
-                          if (coMapping[coCode][poCode] === 1) {
+                      const currentMap = isEditingCoMapping ? editableCoMapping : coMapping
+                      Object.keys(currentMap).forEach((coCode) => {
+                        Object.keys(currentMap[coCode] || {}).forEach((poCode) => {
+                          if (currentMap[coCode][poCode] === 1) {
                             mappedPoKeys.add(poCode)
                           }
                         })
                       })
 
-                      // Order mapped PO keys numerically
                       const sortedPoKeys = Array.from(mappedPoKeys).sort((a, b) => {
                         const numA = parseInt(a.replace(/^\D+/g, ''), 10) || 0
                         const numB = parseInt(b.replace(/^\D+/g, ''), 10) || 0

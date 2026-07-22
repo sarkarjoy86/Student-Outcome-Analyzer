@@ -400,19 +400,18 @@ router.put(
   async (req, res) => {
     try {
       const { coPoMapping } = req.body;
-      const updatedCourse = await Course.findByIdAndUpdate(
-        req.params.courseId,
-        { coPoMapping: coPoMapping || {} },
-        { returnDocument: 'after' },
-      );
-
-      if (!updatedCourse) {
+      const course = await Course.findById(req.params.courseId);
+      if (!course) {
         return res.status(404).json({ message: "Course not found." });
       }
 
+      course.coPoMapping = coPoMapping || {};
+      course.markModified("coPoMapping");
+      await course.save();
+
       res.status(200).json({
         message: "CO-PO mapping updated successfully.",
-        course: updatedCourse,
+        course,
       });
     } catch (error) {
       res.status(500).json({

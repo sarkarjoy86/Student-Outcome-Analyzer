@@ -26,6 +26,14 @@ import {
   CheckSquare,
   ChevronUp,
   ChevronDown,
+  Bell,
+  Clock,
+  FileText,
+  Filter,
+  History,
+  MessageSquare,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 
 export default function AdminDashboard() {
@@ -77,7 +85,11 @@ export default function AdminDashboard() {
   const [sessionError, setSessionError] = useState("");
   const [sessionSuccess, setSessionSuccess] = useState("");
   const [editingSessionId, setEditingSessionId] = useState(null);
-  const [editingSessionStatus, setEditingSessionStatus] = useState("");
+  const [editingSessionForm, setEditingSessionForm] = useState({
+    semesterName: "Spring",
+    academicYear: new Date().getFullYear(),
+    status: "active",
+  });
 
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
@@ -136,6 +148,73 @@ export default function AdminDashboard() {
   });
   const [editingOfferingId, setEditingOfferingId] = useState(null);
 
+  // CO-PO Request Panel States
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [copoRequests, setCopoRequests] = useState([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestFilterStatus, setRequestFilterStatus] = useState("all");
+  const [adminNotes, setAdminNotes] = useState({});
+  const [expandedRequestId, setExpandedRequestId] = useState(null);
+  const [processingRequestId, setProcessingRequestId] = useState(null);
+
+  const fetchPendingCount = async () => {
+    try {
+      const data = await apiService.getCOPORequestCount();
+      setPendingRequestCount(data.pending || 0);
+    } catch (err) {
+      console.error("Failed to fetch CO-PO request count:", err);
+    }
+  };
+
+  const fetchCOPORequests = async () => {
+    setRequestsLoading(true);
+    try {
+      const filters = {};
+      if (requestFilterStatus !== "all") {
+        filters.status = requestFilterStatus;
+      }
+      const data = await apiService.getAllCOPORequests(filters);
+      setCopoRequests(data.requests || []);
+      fetchPendingCount();
+    } catch (err) {
+      console.error("Failed to fetch CO-PO requests:", err);
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
+  const handleUpdateRequestStatus = async (requestId, status) => {
+    const note = adminNotes[requestId] || "";
+    if (status === "rejected" && !note.trim()) {
+      alert("Please provide an explanation/admin note before rejecting a request.");
+      return;
+    }
+    setProcessingRequestId(requestId);
+    try {
+      const res = await apiService.updateCOPORequestStatus(requestId, status, note);
+      alert(res.message || "Request status updated.");
+      fetchCOPORequests();
+      if (status === "approved") {
+        fetchCourses();
+        if (selectedCourse) {
+          loadCourseDetails(selectedCourse);
+        }
+      }
+    } catch (err) {
+      alert(err.message || "Failed to update request status.");
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingCount();
+    const interval = setInterval(() => {
+      fetchPendingCount();
+    }, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     if (activeTab === "sessions") {
       fetchSessions();
@@ -153,7 +232,10 @@ export default function AdminDashboard() {
     if (activeTab === "courseOfferings") {
       fetchOfferings();
     }
-  }, [activeTab]);
+    if (activeTab === "requests") {
+      fetchCOPORequests();
+    }
+  }, [activeTab, requestFilterStatus]);
 
   useEffect(() => {
     if (selectedCourse) {
@@ -326,16 +408,24 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleUpdateSessionStatus = async (sessionId) => {
+  const handleUpdateSession = async (sessionId) => {
+    if (!editingSessionForm.semesterName || !editingSessionForm.academicYear) {
+      alert("Please fill all academic session fields.");
+      return;
+    }
     try {
       setSessionError("");
       setSessionSuccess("");
-      await apiService.updateSession(sessionId, { status: editingSessionStatus });
+      await apiService.updateSession(sessionId, {
+        semesterName: editingSessionForm.semesterName.trim(),
+        academicYear: Number(editingSessionForm.academicYear),
+        status: editingSessionForm.status,
+      });
       setEditingSessionId(null);
-      setSessionSuccess("Session status updated successfully!");
+      setSessionSuccess("Academic session updated successfully!");
       fetchSessions();
     } catch (err) {
-      setSessionError(err.message || "Failed to update session status.");
+      setSessionError(err.message || "Failed to update academic session.");
     }
   };
 
@@ -939,6 +1029,21 @@ export default function AdminDashboard() {
             <ClipboardList size={16} />
             Course Offering
           </button>
+          <button
+            onClick={() => setActiveTab("requests")}
+            className={`relative flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "requests" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+          >
+            <Bell size={16} />
+            Requests
+            {pendingRequestCount > 0 && (
+              <span className="relative flex h-5 w-5 items-center justify-center ml-1">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-5 w-5 bg-red-600 text-white font-extrabold text-[10px] items-center justify-center shadow-xs">
+                  {pendingRequestCount}
+                </span>
+              </span>
+            )}
+          </button>
         </div>
 
         {activeTab === "users" && (
@@ -1244,7 +1349,6 @@ export default function AdminDashboard() {
                       required
                     >
                       <option value="Spring">Spring</option>
-                      <option value="Summer">Summer</option>
                       <option value="Fall">Fall</option>
                     </select>
                   </div>
@@ -1323,75 +1427,118 @@ export default function AdminDashboard() {
                             </td>
                           </tr>
                         ) : (
-                          sessions.map((session) => (
-                            <tr
-                              key={session._id}
-                              className="hover:bg-gray-50/50 text-gray-700"
-                            >
-                              <td className="py-3.5 px-4 font-semibold text-indigo-900">
-                                {session.semesterName}
-                              </td>
-                              <td className="py-3.5 px-4 font-medium">
-                                {session.academicYear}
-                              </td>
-                              <td className="py-3.5 px-4 text-center">
-                                {editingSessionId === session._id ? (
-                                  <select
-                                    value={editingSessionStatus}
-                                    onChange={(e) => setEditingSessionStatus(e.target.value)}
-                                    className="border border-gray-300 px-2 py-1 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white text-xs font-semibold"
-                                  >
-                                    <option value="active">Active</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="inactive">Inactive</option>
-                                  </select>
-                                ) : session.status === "active" ? (
-                                  <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
-                                    <CheckCircle size={12} /> Active
-                                  </span>
-                                ) : session.status === "completed" ? (
-                                  <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
-                                    <CheckCircle size={12} /> Completed
-                                  </span>
-                                ) : (
-                                  <span className="bg-red-100 text-red-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
-                                    <XCircle size={12} /> Inactive
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3.5 px-4 text-right">
-                                {editingSessionId === session._id ? (
-                                  <div className="flex justify-end gap-2">
-                                    <button
-                                      onClick={() => handleUpdateSessionStatus(session._id)}
-                                      className="text-green-600 hover:text-green-800 p-1 hover:bg-green-50 rounded-lg transition-colors"
-                                      title="Save status"
+                          sessions.map((session) => {
+                            const isEditing = editingSessionId === session._id;
+                            return (
+                              <tr
+                                key={session._id}
+                                className="hover:bg-gray-50/50 text-gray-700"
+                              >
+                                <td className="py-3.5 px-4 font-semibold text-indigo-900">
+                                  {isEditing ? (
+                                    <select
+                                      value={editingSessionForm.semesterName}
+                                      onChange={(e) =>
+                                        setEditingSessionForm({
+                                          ...editingSessionForm,
+                                          semesterName: e.target.value,
+                                        })
+                                      }
+                                      className="border border-gray-300 px-3 py-1.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-semibold text-indigo-900"
                                     >
-                                      <Save size={16} />
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingSessionId(null)}
-                                      className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors"
-                                      title="Cancel"
+                                      <option value="Spring">Spring</option>
+                                      <option value="Fall">Fall</option>
+                                    </select>
+                                  ) : (
+                                    session.semesterName
+                                  )}
+                                </td>
+                                <td className="py-3.5 px-4 font-medium">
+                                  {isEditing ? (
+                                    <input
+                                      type="number"
+                                      value={editingSessionForm.academicYear}
+                                      onChange={(e) =>
+                                        setEditingSessionForm({
+                                          ...editingSessionForm,
+                                          academicYear: e.target.value,
+                                        })
+                                      }
+                                      className="w-28 border border-gray-300 px-3 py-1.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-medium"
+                                      required
+                                    />
+                                  ) : (
+                                    session.academicYear
+                                  )}
+                                </td>
+                                <td className="py-3.5 px-4 text-center">
+                                  {isEditing ? (
+                                    <select
+                                      value={editingSessionForm.status}
+                                      onChange={(e) =>
+                                        setEditingSessionForm({
+                                          ...editingSessionForm,
+                                          status: e.target.value,
+                                        })
+                                      }
+                                      className="border border-gray-300 px-2 py-1 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white text-xs font-semibold"
                                     >
-                                      <X size={16} />
+                                      <option value="active">Active</option>
+                                      <option value="completed">Completed</option>
+                                      <option value="inactive">Inactive</option>
+                                    </select>
+                                  ) : session.status === "active" ? (
+                                    <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                      <CheckCircle size={12} /> Active
+                                    </span>
+                                  ) : session.status === "completed" ? (
+                                    <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                      <CheckCircle size={12} /> Completed
+                                    </span>
+                                  ) : (
+                                    <span className="bg-red-100 text-red-700 text-xs px-3 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                      <XCircle size={12} /> Inactive
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-3.5 px-4 text-right">
+                                  {isEditing ? (
+                                    <div className="flex justify-end gap-2">
+                                      <button
+                                        onClick={() => handleUpdateSession(session._id)}
+                                        className="text-green-600 hover:text-green-800 p-1 hover:bg-green-50 rounded-lg transition-colors"
+                                        title="Save session changes"
+                                      >
+                                        <Save size={16} />
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingSessionId(null)}
+                                        className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                                        title="Cancel"
+                                      >
+                                        <X size={16} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        setEditingSessionId(session._id);
+                                        setEditingSessionForm({
+                                          semesterName: session.semesterName,
+                                          academicYear: session.academicYear,
+                                          status: session.status,
+                                        });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded-lg transition-colors"
+                                      title="Edit session"
+                                    >
+                                      <Edit2 size={16} />
                                     </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      setEditingSessionId(session._id);
-                                      setEditingSessionStatus(session.status);
-                                    }}
-                                    className="text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded-lg transition-colors"
-                                    title="Edit status"
-                                  >
-                                    <Edit2 size={16} />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -1677,7 +1824,10 @@ export default function AdminDashboard() {
 
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <button
-                                  onClick={() => setSelectedCourse(course)}
+                                  onClick={() => {
+                                    setSelectedCourse(course);
+                                    loadCourseDetails(course);
+                                  }}
                                   className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition flex items-center gap-1 border ${
                                     isSelected
                                       ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
@@ -1689,7 +1839,10 @@ export default function AdminDashboard() {
                                 </button>
 
                                 <button
-                                  onClick={() => setSelectedCourse(course)}
+                                  onClick={() => {
+                                    setSelectedCourse(course);
+                                    loadCourseDetails(course);
+                                  }}
                                   className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition flex items-center gap-1 border ${
                                     isSelected
                                       ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
@@ -1938,7 +2091,19 @@ export default function AdminDashboard() {
                                   {co.code}
                                 </td>
                                 {displayPOs.map((po) => {
-                                  const isMapped = Boolean(courseMapping[co.code]?.[po.code]);
+                                  const normalizedCo = co.code ? co.code.replace(/\s+/g, '').toUpperCase() : '';
+                                  const mappingKey = Object.keys(courseMapping || {}).find(
+                                    k => k.replace(/\s+/g, '').toUpperCase() === normalizedCo
+                                  ) || co.code;
+
+                                  const poKey = po.code ? po.code.replace(/\s+/g, '').toUpperCase() : '';
+                                  const poMappingKey = Object.keys(courseMapping[mappingKey] || {}).find(
+                                    pk => pk.replace(/\s+/g, '').toUpperCase() === poKey
+                                  ) || po.code;
+
+                                  const val = courseMapping[mappingKey]?.[poMappingKey];
+                                  const isMapped = val === 1 || val === "1" || val === true;
+
                                   return (
                                     <td
                                       key={`${co._id}-${po._id}`}
@@ -1948,9 +2113,20 @@ export default function AdminDashboard() {
                                         type="button"
                                         onClick={() => {
                                           const next = { ...courseMapping };
-                                          const row = { ...(next[co.code] || {}) };
-                                          row[po.code] = isMapped ? 0 : 1;
-                                          next[co.code] = row;
+                                          const targetCoKey = mappingKey || co.code.trim();
+                                          const row = { ...(next[targetCoKey] || {}) };
+                                          const targetPoCode = po.code.trim();
+                                          const nextVal = isMapped ? 0 : 1;
+
+                                          // Update ALL matching PO key variants in row so no stale key stays 1
+                                          Object.keys(row).forEach(k => {
+                                            if (k.replace(/\s+/g, '').toUpperCase() === targetPoCode.replace(/\s+/g, '').toUpperCase()) {
+                                              row[k] = nextVal;
+                                            }
+                                          });
+                                          row[targetPoCode] = nextVal;
+
+                                          next[targetCoKey] = row;
                                           setCourseMapping(next);
                                         }}
                                         className={`w-full py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-0.5 ${
@@ -2794,6 +2970,412 @@ export default function AdminDashboard() {
                       </div>
                     ))
                   )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "requests" && (
+          <div className="space-y-8">
+            {/* Quick Stats Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Pending Requests</p>
+                  <p className="text-2xl font-black text-amber-600 mt-1">
+                    {copoRequests.filter(r => r.status === 'pending').length}
+                  </p>
+                </div>
+                <div className="p-3 bg-amber-100 text-amber-700 rounded-xl">
+                  <Clock size={22} />
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">In Review</p>
+                  <p className="text-2xl font-black text-blue-600 mt-1">
+                    {copoRequests.filter(r => r.status === 'in_review').length}
+                  </p>
+                </div>
+                <div className="p-3 bg-blue-100 text-blue-700 rounded-xl">
+                  <MessageSquare size={22} />
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Approved</p>
+                  <p className="text-2xl font-black text-emerald-600 mt-1">
+                    {copoRequests.filter(r => r.status === 'approved').length}
+                  </p>
+                </div>
+                <div className="p-3 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <CheckCircle size={22} />
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Rejected</p>
+                  <p className="text-2xl font-black text-red-600 mt-1">
+                    {copoRequests.filter(r => r.status === 'rejected').length}
+                  </p>
+                </div>
+                <div className="p-3 bg-red-100 text-red-700 rounded-xl">
+                  <XCircle size={22} />
+                </div>
+              </div>
+            </div>
+
+            {/* Filter and Header Card */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-150 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-100/80 text-blue-800 rounded-xl">
+                    <Bell size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      Teacher Requests Panel
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">Review and approve faculty requests for CO-PO matrix & Course Outcome modifications</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5 bg-gray-100 p-1 rounded-xl border border-gray-200">
+                    {['all', 'pending', 'in_review', 'approved', 'rejected'].map((st) => (
+                      <button
+                        key={st}
+                        onClick={() => setRequestFilterStatus(st)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all ${
+                          requestFilterStatus === st
+                            ? 'bg-white text-blue-700 shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        {st.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={fetchCOPORequests}
+                    className="p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-xl border border-gray-200 transition"
+                    title="Refresh Requests"
+                  >
+                    <RefreshCw size={16} className={requestsLoading ? "animate-spin" : ""} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Requests Directory */}
+              {requestsLoading ? (
+                <div className="flex justify-center py-12">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+                </div>
+              ) : copoRequests.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <FileText size={40} className="mx-auto mb-3 text-gray-300" />
+                  <p className="font-semibold text-sm">No teacher requests found for the selected filter.</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {copoRequests.map((reqItem) => {
+                    const isExpanded = expandedRequestId === reqItem._id;
+                    return (
+                      <div
+                        key={reqItem._id}
+                        className="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden transition-all duration-200 hover:border-blue-300"
+                      >
+                        {/* Request Header Bar */}
+                        <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-50/50 border-b border-gray-150">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-black text-gray-900 text-base">
+                                {reqItem.courseCode}
+                              </span>
+                              <span className="text-xs font-semibold text-gray-700">
+                                — {reqItem.courseName}
+                              </span>
+                              <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                Instructor: {reqItem.teacherName} ({reqItem.teacherEmail})
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 font-medium">
+                              <span>📅 Submitted: {reqItem.submittedAt ? new Date(reqItem.submittedAt).toLocaleString() : 'N/A'}</span>
+                              {reqItem.reviewedAt && (
+                                <>
+                                  <span>•</span>
+                                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                    ✓ {reqItem.status === 'approved' ? 'Approved Date' : reqItem.status === 'rejected' ? 'Rejected Date' : 'Decision Date'}: {new Date(reqItem.reviewedAt).toLocaleString()} ({reqItem.reviewedBy || 'Admin'})
+                                  </span>
+                                </>
+                              )}
+                              <span>•</span>
+                              <span className="font-bold text-gray-700">
+                                Type: {reqItem.requestType === 'edit_mapping' ? 'CO-PO Mapping Edit' : reqItem.requestType === 'add_co' ? 'New CO Creation' : 'New CO & Mapping Edit'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            {/* Status Badge */}
+                            {reqItem.status === 'pending' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-800 border border-amber-300 animate-pulse">
+                                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                Pending Review
+                              </span>
+                            )}
+                            {reqItem.status === 'in_review' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-300">
+                                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                In Review (Dean/HOD)
+                              </span>
+                            )}
+                            {reqItem.status === 'approved' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                <CheckCircle size={12} />
+                                Approved
+                              </span>
+                            )}
+                            {reqItem.status === 'rejected' && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-300">
+                                <XCircle size={12} />
+                                Rejected
+                              </span>
+                            )}
+
+                            <button
+                              onClick={() => setExpandedRequestId(isExpanded ? null : reqItem._id)}
+                              className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-lg text-xs font-bold hover:bg-gray-100 flex items-center gap-1 transition"
+                            >
+                              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                              {isExpanded ? 'Hide Details' : 'View Changes Diff'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Changes Summary Banner */}
+                        {reqItem.changesSummary && (
+                          <div className="px-5 py-2.5 bg-amber-50/60 border-b border-amber-100 text-xs font-semibold text-amber-900 flex items-center gap-2">
+                            <AlertTriangle size={14} className="text-amber-600 shrink-0" />
+                            <span>Summary of requested changes: {reqItem.changesSummary}</span>
+                          </div>
+                        )}
+
+                        {/* Expanded Details & Diff Matrix */}
+                        {isExpanded && (
+                          <div className="p-6 space-y-6 bg-white">
+                            {/* Proposed New COs Section if any */}
+                            {reqItem.proposedCOs && reqItem.proposedCOs.length > 0 && (
+                              <div className="p-4 bg-purple-50/50 border border-purple-200 rounded-xl space-y-3">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
+                                  <Plus size={14} />
+                                  Proposed New Course Outcomes (COs)
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {reqItem.proposedCOs.map((co, idx) => (
+                                    <div key={idx} className="bg-white p-3 rounded-lg border border-purple-200 text-xs shadow-2xs">
+                                      <span className="font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md mr-2">
+                                        {co.code}
+                                      </span>
+                                      <span className="font-semibold text-gray-800">{co.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Edited CO Descriptions Section if any */}
+                            {reqItem.editedCOs && reqItem.editedCOs.length > 0 && (
+                              <div className="p-4 bg-amber-50/50 border border-amber-200 rounded-xl space-y-3">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                                  <Edit2 size={14} />
+                                  Updated Course Outcome Descriptions
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {reqItem.editedCOs.map((co, idx) => (
+                                    <div key={idx} className="bg-white p-3 rounded-lg border border-amber-200 text-xs shadow-2xs">
+                                      <span className="font-black text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md mr-2">
+                                        {co.code}
+                                      </span>
+                                      <span className="font-semibold text-gray-800">{co.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Deleted COs Section if any */}
+                            {reqItem.deletedCOs && reqItem.deletedCOs.length > 0 && (
+                              <div className="p-4 bg-red-50/50 border border-red-200 rounded-xl space-y-3">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-red-900 flex items-center gap-1.5">
+                                  <Trash2 size={14} />
+                                  Course Outcomes Requested for Deletion
+                                </h4>
+                                <div className="flex flex-wrap gap-2">
+                                  {reqItem.deletedCOs.map((delCode, idx) => (
+                                    <span key={idx} className="bg-white text-red-700 font-black px-3 py-1 rounded-lg border border-red-200 text-xs shadow-2xs flex items-center gap-1">
+                                      <X size={12} />
+                                      {delCode}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* CO-PO Visual Matrix Diff */}
+                            {reqItem.proposedMapping && (
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-xs font-black uppercase tracking-wider text-gray-700 flex items-center gap-1.5">
+                                    <GitMerge size={14} className="text-blue-600" />
+                                    Visual Diff: Current vs Proposed CO-PO Mapping
+                                  </h4>
+                                  <div className="flex items-center gap-4 text-[11px] font-bold">
+                                    <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                      <span className="w-2.5 h-2.5 bg-emerald-500 rounded-xs"></span> + Added Mapping
+                                    </span>
+                                    <span className="flex items-center gap-1 text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                                      <span className="w-2.5 h-2.5 bg-red-500 rounded-xs"></span> - Removed Mapping
+                                    </span>
+                                    <span className="flex items-center gap-1 text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                      <span className="w-2.5 h-2.5 bg-green-500 rounded-xs"></span> Unchanged Mapped
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                                  <table className="w-full text-xs text-center border-collapse">
+                                    <thead>
+                                      <tr className="bg-gray-100 text-gray-700 font-extrabold border-b">
+                                        <th className="p-2 border-r bg-gray-200 w-16">CO \ PO</th>
+                                        {Array.from({ length: 12 }, (_, i) => (
+                                          <th key={i} className="p-2 border-r w-12">{`PO${i + 1}`}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {Array.from({ length: 12 }, (_, cIdx) => {
+                                        const coKey = `CO${cIdx + 1}`;
+                                        return (
+                                          <tr key={coKey} className="border-b hover:bg-gray-50">
+                                            <td className="p-2 font-black text-blue-700 border-r bg-blue-50/50">{coKey}</td>
+                                            {Array.from({ length: 12 }, (_, pIdx) => {
+                                              const poKey = `PO${pIdx + 1}`;
+                                              const origVal = reqItem.originalMapping?.[coKey]?.[poKey] === 1;
+                                              const propVal = reqItem.proposedMapping?.[coKey]?.[poKey] === 1;
+
+                                              let cellClass = "bg-white text-gray-300";
+                                              let content = "";
+
+                                              if (origVal && propVal) {
+                                                cellClass = "bg-emerald-100 text-emerald-800 font-extrabold";
+                                                content = "✓";
+                                              } else if (!origVal && propVal) {
+                                                cellClass = "bg-emerald-500 text-white font-black animate-pulse shadow-inner";
+                                                content = "+ ✓";
+                                              } else if (origVal && !propVal) {
+                                                cellClass = "bg-red-500 text-white font-black shadow-inner";
+                                                content = "- ✗";
+                                              }
+
+                                              return (
+                                                <td key={poKey} className={`p-2 border-r transition-all ${cellClass}`}>
+                                                  {content}
+                                                </td>
+                                              );
+                                            })}
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Admin Action & Notes Controls */}
+                            <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl space-y-4">
+                              <h4 className="text-xs font-black uppercase tracking-wider text-gray-800">
+                                Admin Action & HOD/Dean Approval Decision
+                              </h4>
+
+                              <div className="space-y-2">
+                                <label className="block text-xs font-bold text-gray-700">
+                                  Admin Note / Rejection Reason / Remarks (Visible to Teacher):
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  placeholder="e.g., Discussed with HOD. Mappings approved as per course syllabus guidelines."
+                                  value={adminNotes[reqItem._id] !== undefined ? adminNotes[reqItem._id] : (reqItem.adminNote || "")}
+                                  onChange={(e) => setAdminNotes({ ...adminNotes, [reqItem._id]: e.target.value })}
+                                  className="w-full p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium"
+                                  disabled={processingRequestId === reqItem._id}
+                                />
+                              </div>
+
+                              {reqItem.reviewedAt && (
+                                <div className="text-xs text-gray-500 font-semibold italic flex items-center gap-2">
+                                  <Clock size={12} />
+                                  Reviewed by {reqItem.reviewedBy || 'Admin'} on {new Date(reqItem.reviewedAt).toLocaleString()}
+                                </div>
+                              )}
+
+                              <div className="flex items-center gap-3 pt-2 flex-wrap">
+                                {reqItem.status === 'pending' && (
+                                  <button
+                                    onClick={() => handleUpdateRequestStatus(reqItem._id, 'in_review')}
+                                    disabled={processingRequestId === reqItem._id}
+                                    className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-xl font-bold text-xs border border-blue-300 transition flex items-center gap-1.5"
+                                  >
+                                    <MessageSquare size={14} />
+                                    Mark Pending as 'In Review'
+                                  </button>
+                                )}
+
+                                {(reqItem.status === 'pending' || reqItem.status === 'in_review') && (
+                                  <>
+                                    <button
+                                      onClick={() => handleUpdateRequestStatus(reqItem._id, 'approved')}
+                                      disabled={processingRequestId === reqItem._id}
+                                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-1.5"
+                                    >
+                                      <CheckCircle size={14} />
+                                      Approve & Apply to Course DB
+                                    </button>
+
+                                    <button
+                                      onClick={() => handleUpdateRequestStatus(reqItem._id, 'rejected')}
+                                      disabled={processingRequestId === reqItem._id}
+                                      className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-1.5"
+                                    >
+                                      <XCircle size={14} />
+                                      Reject Request
+                                    </button>
+                                  </>
+                                )}
+
+                                {(reqItem.status === 'approved' || reqItem.status === 'rejected') && (
+                                  <button
+                                    onClick={() => handleUpdateRequestStatus(reqItem._id, 'in_review')}
+                                    disabled={processingRequestId === reqItem._id}
+                                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl font-bold text-xs transition flex items-center gap-1.5"
+                                  >
+                                    <RefreshCw size={14} />
+                                    Re-open Request for Review
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

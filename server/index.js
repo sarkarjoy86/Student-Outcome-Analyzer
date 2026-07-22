@@ -9,6 +9,7 @@ import teacherRoutes from "./routes/teacherRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import surveyRoutes from "./routes/surveyRoutes.js";
 import poRecommendationRoutes from "./routes/poRecommendationRoutes.js";
+import copoRequestRoutes from "./routes/copoRequestRoutes.js";
 
 dotenv.config();
 
@@ -51,6 +52,7 @@ app.use("/api", teacherRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", surveyRoutes);
 app.use("/api", poRecommendationRoutes);
+app.use("/api", copoRequestRoutes);
 
 
 app.use((_req, res) => {

@@ -638,4 +638,57 @@ export const apiService = {
     });
     return handleResponse(res);
   },
+
+  // =============================================
+  // CO-PO Request/Approval Workflow
+  // =============================================
+
+  async submitCOPORequest(payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async getMyCOPORequests(courseId) {
+    let url = `${API_BASE}/api/copo-requests/my`;
+    if (courseId) url += `?courseId=${encodeURIComponent(courseId)}`;
+    const res = await fetchWithDefaults(url);
+    return handleResponse(res);
+  },
+
+  async getAllCOPORequests(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.append("status", filters.status);
+    if (filters.courseId) params.append("courseId", filters.courseId);
+    const qs = params.toString();
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests${qs ? `?${qs}` : ""}`);
+    return handleResponse(res);
+  },
+
+  async getCOPORequestCount() {
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests/count`);
+    return handleResponse(res);
+  },
+
+  async updateCOPORequestStatus(requestId, status, adminNote = "") {
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests/${requestId}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status, adminNote }),
+    });
+    return handleResponse(res);
+  },
+
+  async getCOPORequestHistory(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.append("status", filters.status);
+    if (filters.courseId) params.append("courseId", filters.courseId);
+    if (filters.startDate) params.append("startDate", filters.startDate);
+    if (filters.endDate) params.append("endDate", filters.endDate);
+    if (filters.limit) params.append("limit", filters.limit);
+    const qs = params.toString();
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests/history${qs ? `?${qs}` : ""}`);
+    return handleResponse(res);
+  },
 };
