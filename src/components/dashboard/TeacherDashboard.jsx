@@ -902,8 +902,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       }
 
     } catch (err) {
-      console.error(err)
-      alert('Error loading dashboard data: ' + err.message)
+      console.error('Error loading dashboard data:', err);
     } finally {
       setLoading(false)
     }

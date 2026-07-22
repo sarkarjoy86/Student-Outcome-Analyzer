@@ -268,7 +268,7 @@ export default function AdminDashboard() {
         setSelectedCourse(data.courses[0]);
       }
     } catch (err) {
-      alert(err.message || "Failed to load courses.");
+      console.error("Failed to load courses:", err);
     } finally {
       setCoursesLoading(false);
     }
@@ -283,7 +283,7 @@ export default function AdminDashboard() {
       setCourseOutcomes(outcomesRes.outcomes || []);
       setCourseMapping(mappingRes.coPoMapping || {});
     } catch (err) {
-      console.error(err);
+      console.error("Failed to load course details:", err);
     }
   };
 
@@ -292,7 +292,7 @@ export default function AdminDashboard() {
       const data = await apiService.getProgramOutcomes();
       setProgramOutcomes(data.programOutcomes || []);
     } catch (err) {
-      alert(err.message || "Failed to load program outcomes.");
+      console.error("Failed to load program outcomes:", err);
     }
   };
 
@@ -317,7 +317,7 @@ export default function AdminDashboard() {
         setBatchStudents([]);
       }
     } catch (err) {
-      alert(err.message || "Failed to load batches.");
+      console.error("Failed to load batches:", err);
     } finally {
       setBatchesLoading(false);
     }
@@ -342,7 +342,7 @@ export default function AdminDashboard() {
         setBatchStudents([]);
       }
     } catch (err) {
-      alert(err.message || "Failed to load sections.");
+      console.error("Failed to load sections:", err);
     } finally {
       setSectionsLoading(false);
     }
@@ -353,7 +353,7 @@ export default function AdminDashboard() {
       const data = await apiService.getSectionStudents(batchId, sectionId);
       setBatchStudents(data.students || []);
     } catch (err) {
-      alert(err.message || "Failed to load section students.");
+      console.error("Failed to load section students:", err);
     }
   };
 
@@ -376,7 +376,7 @@ export default function AdminDashboard() {
       }
       setSessions(sessionsData.sessions || []);
     } catch (err) {
-      alert(err.message || "Failed to load course offerings.");
+      console.error("Failed to load course offerings:", err);
     } finally {
       setOfferingsLoading(false);
     }
