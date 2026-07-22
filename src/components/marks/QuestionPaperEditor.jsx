@@ -511,7 +511,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     input.click()
   }
 
-  const API_BASE = import.meta.env.VITE_API_URL || ''
+  const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1") ? "https://student-outcome-analyzer-api.onrender.com" : "");
 
   const insertImageSettings = {
     saveUrl: `${API_BASE}/api/upload/image`,

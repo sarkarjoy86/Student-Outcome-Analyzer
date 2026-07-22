@@ -6,8 +6,19 @@ const ADMIN_PASSWORD = "Admin@123";
 const ADMIN_SESSION_KEY = "obe-admin-session";
 const AUTH_TOKEN_KEY = "obe-auth-token";
 
-// API base URL: use Render backend in production, local proxy in dev
-const API_BASE = import.meta.env.VITE_API_URL || "";
+const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
+
+function getApiBaseUrl() {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1")) {
+    return DEFAULT_PROD_API_URL;
+  }
+  return "";
+}
+
+const API_BASE = getApiBaseUrl();
 
 function parseErrorMessage(error, fallback) {
   if (error?.responseMessage) return error.responseMessage;

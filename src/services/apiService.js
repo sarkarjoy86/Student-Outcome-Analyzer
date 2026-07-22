@@ -1,5 +1,16 @@
-// API Service for all OBE-related backend endpoints
-const API_BASE = import.meta.env.VITE_API_URL || "";
+const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
+
+export function getApiBaseUrl() {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1")) {
+    return DEFAULT_PROD_API_URL;
+  }
+  return "";
+}
+
+const API_BASE = getApiBaseUrl();
 const ADMIN_SESSION_KEY = "obe-admin-session";
 const ADMIN_EMAIL = "admin@gmail.com";
 const ADMIN_PASSWORD = "Admin@123";
