@@ -677,48 +677,53 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
     // 4. CO-PO Request Notifications for Teacher Reminders
     if (teacherRequests && teacherRequests.length > 0) {
-      const activeReq = teacherRequests[0]
-      if (activeReq.status === 'pending') {
-        list.push({
-          type: 'copo_request_pending',
-          id: `copo_req_${activeReq._id}`,
-          priority: 2,
-          title: 'CO-PO Edit Request Pending Review',
-          text: `Your request to modify CO-PO mapping/add COs for ${offering.course?.courseCode} has been submitted to the Admin and is pending approval.`,
-          actionLabel: 'View Request Tracker',
-          actionTab: 'coMapping'
-        })
-      } else if (activeReq.status === 'in_review') {
-        list.push({
-          type: 'copo_request_review',
-          id: `copo_req_${activeReq._id}`,
-          priority: 1,
-          title: 'CO-PO Request Under Review with HOD',
-          text: `Your CO-PO modification request for ${offering.course?.courseCode} is currently under review by Department Dean / HOD.`,
-          actionLabel: 'Track Progress',
-          actionTab: 'coMapping'
-        })
-      } else if (activeReq.status === 'approved' && (new Date() - new Date(activeReq.reviewedAt)) < 7 * 24 * 3600 * 1000) {
-        list.push({
-          type: 'copo_request_approved',
-          id: `copo_req_${activeReq._id}`,
-          priority: 2,
-          title: 'CO-PO Request Approved! 🎉',
-          text: `Your requested CO-PO changes for ${offering.course?.courseCode} have been approved by Admin and updated in Course Database.`,
-          actionLabel: 'View Mappings',
-          actionTab: 'coMapping'
-        })
-      } else if (activeReq.status === 'rejected' && (new Date() - new Date(activeReq.reviewedAt)) < 7 * 24 * 3600 * 1000) {
-        list.push({
-          type: 'copo_request_rejected',
-          id: `copo_req_${activeReq._id}`,
-          priority: 1,
-          title: 'CO-PO Request Rejection Notice',
-          text: `Your CO-PO edit request for ${offering.course?.courseCode} was rejected. Admin Note: "${activeReq.adminNote || 'No explanation provided.'}"`,
-          actionLabel: 'View Details',
-          actionTab: 'coMapping'
-        })
-      }
+      teacherRequests.forEach(req => {
+        const courseCode = offering.course?.courseCode || 'course'
+        const reviewTime = req.reviewedAt ? new Date(req.reviewedAt).getTime() : 0
+        const isRecentDecision = !reviewTime || (Date.now() - reviewTime < 14 * 24 * 3600 * 1000)
+
+        if (req.status === 'pending') {
+          list.push({
+            type: 'copo_request_pending',
+            id: `copo_req_${req._id}`,
+            priority: 2,
+            title: 'CO-PO Edit Request Pending Review',
+            text: `Your request to modify CO-PO mapping/add COs for ${courseCode} has been submitted to the Admin and is pending approval.`,
+            actionLabel: 'View Request Tracker',
+            actionTab: 'coMapping'
+          })
+        } else if (req.status === 'in_review') {
+          list.push({
+            type: 'copo_request_review',
+            id: `copo_req_${req._id}`,
+            priority: 1,
+            title: 'CO-PO Request In Review 💬',
+            text: `Your CO-PO modification request for ${courseCode} is currently under review by Department Dean / HOD.`,
+            actionLabel: 'Track Progress',
+            actionTab: 'coMapping'
+          })
+        } else if (req.status === 'approved' && isRecentDecision) {
+          list.push({
+            type: 'copo_request_approved',
+            id: `copo_req_${req._id}`,
+            priority: 2,
+            title: 'CO-PO Request Approved! 🎉',
+            text: `Your requested CO-PO changes for ${courseCode} have been approved by Admin and updated in Course Database.`,
+            actionLabel: 'View Mappings',
+            actionTab: 'coMapping'
+          })
+        } else if (req.status === 'rejected' && isRecentDecision) {
+          list.push({
+            type: 'copo_request_rejected',
+            id: `copo_req_${req._id}`,
+            priority: 1,
+            title: 'CO-PO Request Rejected ❌',
+            text: `Your CO-PO edit request for ${courseCode} was rejected by Admin. ${req.adminNote ? `Admin Note: "${req.adminNote}"` : ''}`,
+            actionLabel: 'View Details',
+            actionTab: 'coMapping'
+          })
+        }
+      })
     }
 
     // Sort: lower priority number denotes higher importance
