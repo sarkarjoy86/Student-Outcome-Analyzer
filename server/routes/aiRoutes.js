@@ -38,9 +38,13 @@ STRICT ACADEMIC RULES:
 
     let aiContent = ''
 
-    const modelsToTry = ['gemini-flash-latest', 'gemini-1.5-flash']
+    const modelsToTry = [
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite'
+    ]
+
     let lastErrorMsg = ''
-    let isRateLimited = false
 
     for (const model of modelsToTry) {
       try {
@@ -71,11 +75,7 @@ STRICT ACADEMIC RULES:
           aiContent = data.candidates[0].content.parts[0].text.trim()
           if (aiContent) break // Success! Exit fallback loop
         } else {
-          const errMsg = data?.error?.message || data?.message || ''
-          if (response.status === 429 || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
-            isRateLimited = true
-          }
-          lastErrorMsg = errMsg || `HTTP status ${response.status}`
+          lastErrorMsg = data?.error?.message || data?.message || `HTTP ${response.status}`
           console.warn(`Gemini model ${model} status ${response.status}:`, lastErrorMsg)
         }
       } catch (fetchErr) {
@@ -84,15 +84,9 @@ STRICT ACADEMIC RULES:
     }
 
     if (!aiContent) {
-      if (isRateLimited) {
-        return res.status(429).json({
-          success: false,
-          message: 'Gemini AI rate limit reached (15 requests/min). Please wait 15-20 seconds before generating again.'
-        })
-      }
       return res.status(502).json({
         success: false,
-        message: `AI Service Error: ${lastErrorMsg || 'Unable to generate response.'}`
+        message: `AI Service Error: ${lastErrorMsg || 'Unable to generate response from Gemini API.'}`
       })
     }
 
