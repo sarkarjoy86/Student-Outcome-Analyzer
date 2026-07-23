@@ -357,6 +357,48 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [survey, setSurvey] = useState(null)
   const [surveyResponsesCount, setSurveyResponsesCount] = useState(0)
 
+  // Dismissed Reminders State (Persisted in localStorage)
+  const [dismissedReminderIds, setDismissedReminderIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`dismissed_reminders_${offering?._id || 'global'}`)
+      return saved ? JSON.parse(saved) : []
+    } catch (e) {
+      return []
+    }
+  })
+  const [animatingDismissIds, setAnimatingDismissIds] = useState([])
+
+  const isReminderMandatory = useCallback((reminder) => {
+    if (!reminder) return false
+    const title = (reminder.title || '').toLowerCase()
+    const type = reminder.type || ''
+
+    // Non-deletable mandatory action items:
+    // Pending Marks, Presentation Scheduled, Assignment Deadline, Course Survey is Open, Overdue items, Setup Assessments
+    if (type === 'marks' || title.includes('pending marks')) return true
+    if (title.includes('presentation scheduled')) return true
+    if (title.includes('assignment deadline')) return true
+    if (type === 'deadline_upcoming' || type === 'deadline_overdue' || title.includes('overdue')) return true
+    if (title.includes('course survey is open') || (type === 'survey' && title.includes('open'))) return true
+    if (type === 'assessment_missing') return true
+
+    return false
+  }, [])
+
+  const handleDismissReminder = (reminderId) => {
+    setAnimatingDismissIds(prev => [...prev, reminderId])
+    setTimeout(() => {
+      setDismissedReminderIds(prev => {
+        const updated = [...prev, reminderId]
+        try {
+          localStorage.setItem(`dismissed_reminders_${offering?._id || 'global'}`, JSON.stringify(updated))
+        } catch (e) {}
+        return updated
+      })
+      setAnimatingDismissIds(prev => prev.filter(id => id !== reminderId))
+    }, 300)
+  }
+
   // Attainment States
   const [attainmentData, setAttainmentData] = useState({
     coAttainments: [],
@@ -518,7 +560,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     return 'Draft'
   }, [marksSpreadsheetData])
 
-  const reminders = useMemo(() => {
+  const allRemindersList = useMemo(() => {
     const list = []
 
     // 1. Check Assessment Marks Completion
@@ -730,6 +772,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     list.sort((x, y) => x.priority - y.priority)
     return list
   }, [marksSpreadsheetData, survey, surveyResponsesCount, offering, teacherRequests])
+
+  const reminders = useMemo(() => {
+    return allRemindersList.filter(r => !dismissedReminderIds.includes(r.id))
+  }, [allRemindersList, dismissedReminderIds])
 
   const handleReminderAction = (reminder) => {
     setActiveTab(reminder.actionTab)
@@ -1334,15 +1380,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <BookOpen size={20} />
                       </div>
                       <div>
-                        <h3 className="text-lg font-black text-slate-900 tracking-tight">Course Details</h3>
+                        <h3 className="text-lg font-bold text-slate-800 tracking-tight">Course Details</h3>
                         <p className="text-xs text-gray-500 font-medium">Academic course specifications & instructor overview</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 bg-emerald-100/80 text-emerald-950 border border-emerald-300/80 text-xs font-black rounded-lg shadow-xs">
+                      <span className="px-3 py-1 bg-emerald-100/80 text-emerald-950 border border-emerald-300/80 text-xs font-medium rounded-lg shadow-xs">
                         {offering.course?.courseCode}
                       </span>
-                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold rounded-lg flex items-center gap-1.5">
+                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium rounded-lg flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
                         Active Session
                       </span>
@@ -1366,61 +1412,61 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   {/* Details Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <Layers size={14} className="text-indigo-600 shrink-0" />
                         <span>Level & Term</span>
                       </div>
-                      <p className="text-indigo-950 font-black text-xs bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 inline-block">
+                      <p className="text-indigo-950 font-medium text-xs bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 inline-block">
                         Level {offering.course?.level || '1'}, Term {offering.course?.term || 'I'}
                       </p>
                     </div>
 
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <GraduationCap size={14} className="text-emerald-600 shrink-0" />
                         <span>Department</span>
                       </div>
-                      <p className="text-emerald-950 font-black text-xs bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-block">
+                      <p className="text-emerald-950 font-medium text-xs bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-block">
                         Department of {offering.course?.department || 'CSE'}
                       </p>
                     </div>
 
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <User size={14} className="text-blue-600 shrink-0" />
                         <span>Assigned Instructor</span>
                       </div>
-                      <p className="text-slate-900 font-extrabold text-xs truncate">
+                      <p className="text-slate-900 font-bold text-xs truncate">
                         {offering.teacher?.fullName || 'Not Assigned'}
                       </p>
                     </div>
 
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <Calendar size={14} className="text-teal-600 shrink-0" />
                         <span>Academic Session</span>
                       </div>
-                      <p className="text-slate-900 font-extrabold text-xs">
+                      <p className="text-slate-900 font-medium text-xs">
                         {offering.semester?.semesterName} ({offering.academicYear})
                       </p>
                     </div>
 
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <Users size={14} className="text-purple-600 shrink-0" />
                         <span>Batch / Section</span>
                       </div>
-                      <p className="text-purple-950 font-black text-xs bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 inline-block">
+                      <p className="text-purple-950 font-medium text-xs bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 inline-block">
                         {offering.batch?.batchName || 'Batch'} {offering.section ? `- Sec ${offering.section}` : ''}
                       </p>
                     </div>
 
                     <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-1 hover:bg-slate-50 transition-all">
-                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold">
+                      <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium">
                         <CheckSquare size={14} className="text-amber-600 shrink-0" />
                         <span>Course Outcomes</span>
                       </div>
-                      <p className="text-amber-950 font-black text-xs bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 inline-block">
+                      <p className="text-amber-950 font-medium text-xs bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 inline-block">
                         {offering.course?.numCOs || 4} Mapped COs
                       </p>
                     </div>
@@ -1437,16 +1483,16 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <Bell size={18} />
                       </div>
                       <div>
-                        <h3 className="text-base font-black text-slate-900 tracking-tight">Course Reminders</h3>
+                        <h3 className="text-base font-bold text-slate-800 tracking-tight">Course Reminders</h3>
                         <p className="text-[11px] text-gray-500 font-medium">Pending tasks & action items</p>
                       </div>
                     </div>
                     {reminders.length > 0 ? (
-                      <span className="bg-rose-100/90 text-rose-900 border border-rose-300 text-xs px-2.5 py-0.5 rounded-full font-black shadow-xs">
+                      <span className="bg-rose-100/90 text-rose-900 border border-rose-300 text-xs px-2.5 py-0.5 rounded-full font-medium shadow-xs">
                         {reminders.length} Pending
                       </span>
                     ) : (
-                      <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                      <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-2.5 py-0.5 rounded-full font-medium">
                         Completed
                       </span>
                     )}
@@ -1461,6 +1507,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       </div>
                     ) : (
                       reminders.map((reminder) => {
+                        const isMandatory = isReminderMandatory(reminder)
+                        const isAnimating = animatingDismissIds.includes(reminder.id)
+
                         let borderStyle = 'border-l-4 border-l-blue-500 bg-blue-50/30 border-gray-150'
                         let iconBg = 'bg-blue-50 border-blue-200 text-blue-700'
                         if (reminder.priority === 1) {
@@ -1472,12 +1521,40 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         }
 
                         return (
-                          <div key={reminder.id} className={`p-3 rounded-xl border flex items-start gap-2.5 hover:shadow-xs transition-all ${borderStyle}`}>
+                          <div
+                            key={reminder.id}
+                            className={`p-3 rounded-xl border flex items-start gap-2.5 hover:shadow-xs transition-all duration-300 transform ${
+                              isAnimating
+                                ? 'opacity-0 -translate-x-full scale-90 max-h-0 py-0 margin-0 overflow-hidden'
+                                : 'opacity-100 translate-x-0 scale-100'
+                            } ${borderStyle}`}
+                          >
                             <div className={`p-1.5 rounded-lg border shrink-0 ${iconBg}`}>
                               <AlertCircle size={15} />
                             </div>
                             <div className="flex-1 min-w-0 space-y-1">
-                              <p className="text-xs font-extrabold text-slate-900 truncate">{reminder.title}</p>
+                              <div className="flex items-start justify-between gap-1">
+                                <p className="text-xs font-extrabold text-slate-900 truncate pr-1">{reminder.title}</p>
+                                {!isMandatory ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleDismissReminder(reminder.id)
+                                    }}
+                                    className="p-1 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
+                                    title="Dismiss notification"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                ) : (
+                                  <span
+                                    title="Action Required: This reminder cannot be deleted until completed"
+                                    className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 shrink-0"
+                                  >
+                                    Required
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-[11px] text-slate-600 font-medium leading-snug">{reminder.text}</p>
                               <button
                                 onClick={() => handleReminderAction(reminder)}
@@ -1504,11 +1581,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <ClipboardList size={20} />
                       </div>
                       <div>
-                        <h3 className="text-lg font-black text-slate-900 tracking-tight">Assessment Summary</h3>
+                        <h3 className="text-lg font-bold text-slate-800 tracking-tight">Assessment Summary</h3>
                         <p className="text-xs text-gray-500 font-medium">Evaluation modules, mark distributions, & execution status</p>
                       </div>
                     </div>
-                    <span className="px-3 py-1 bg-slate-100 text-slate-800 border border-slate-200 text-xs font-black rounded-lg shadow-xs">
+                    <span className="px-3 py-1 bg-slate-100 text-slate-800 border border-slate-200 text-xs font-medium rounded-lg shadow-xs">
                       {assessments.length} Configured Modules
                     </span>
                   </div>
@@ -1519,7 +1596,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
                       <table className="w-full text-xs text-left border-collapse">
                         <thead>
-                          <tr className="bg-slate-50/90 text-slate-700 font-black uppercase text-[11px] border-b border-gray-200 tracking-wider">
+                          <tr className="bg-slate-50/90 text-slate-700 font-semibold uppercase text-[11px] border-b border-gray-200 tracking-wider">
                             <th className="py-3 px-3.5">Assessment Name</th>
                             <th className="py-3 px-3">Creation Date</th>
                             <th className="py-3 px-3 text-center">Max Marks</th>
@@ -1605,7 +1682,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                     if (status === 'Evaluated') badgeStyle = 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                                     else if (status === 'Assigned') badgeStyle = 'bg-blue-50 text-blue-800 border border-blue-200'
                                     return (
-                                      <span className={`text-[11px] px-2.5 py-0.5 rounded-lg font-black tracking-tight shadow-2xs ${badgeStyle}`}>
+                                      <span className={`text-[11px] px-2.5 py-0.5 rounded-lg font-medium tracking-tight shadow-2xs ${badgeStyle}`}>
                                         {status}
                                       </span>
                                     )
@@ -1623,7 +1700,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   <div className="mt-4 pt-3.5 border-t border-gray-150 text-xs font-semibold">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full text-gray-500">
                       <div className="flex items-start gap-2.5 bg-amber-50/40 p-2.5 rounded-xl border border-amber-200/60">
-                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-amber-100 text-amber-900 border border-amber-300">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-medium bg-amber-100 text-amber-900 border border-amber-300">
                           Draft
                         </span>
                         <span className="leading-snug font-medium text-slate-700 text-[11px]">
@@ -1632,7 +1709,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       </div>
 
                       <div className="flex items-start gap-2.5 bg-blue-50/40 p-2.5 rounded-xl border border-blue-200/60">
-                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-blue-100 text-blue-900 border border-blue-300">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-medium bg-blue-100 text-blue-900 border border-blue-300">
                           Assigned
                         </span>
                         <span className="leading-snug font-medium text-slate-700 text-[11px]">
@@ -1641,7 +1718,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       </div>
 
                       <div className="flex items-start gap-2.5 bg-emerald-50/40 p-2.5 rounded-xl border border-emerald-200/60">
-                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
+                        <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md font-medium bg-emerald-100 text-emerald-900 border border-emerald-300">
                           Evaluated
                         </span>
                         <span className="leading-snug font-medium text-slate-700 text-[11px]">
@@ -1684,7 +1761,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             <div className="p-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200/80">
                               <History size={16} />
                             </div>
-                            <h3 className="text-base font-black text-slate-900 tracking-tight">Recent Activities</h3>
+                            <h3 className="text-base font-bold text-slate-800 tracking-tight">Recent Activities</h3>
                           </div>
                           <select
                             value={activityFilter}

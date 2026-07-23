@@ -10,6 +10,7 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import surveyRoutes from "./routes/surveyRoutes.js";
 import poRecommendationRoutes from "./routes/poRecommendationRoutes.js";
 import copoRequestRoutes from "./routes/copoRequestRoutes.js";
+import aiRoutes from "./routes/aiRoutes.js";
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ app.use("/api", uploadRoutes);
 app.use("/api", surveyRoutes);
 app.use("/api", poRecommendationRoutes);
 app.use("/api", copoRequestRoutes);
+app.use("/api/ai", aiRoutes);
 
 
 app.use((_req, res) => {
