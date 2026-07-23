@@ -39,11 +39,10 @@ STRICT ACADEMIC RULES:
     let aiContent = ''
 
     const modelsToTry = [
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-8b',
-      'gemini-2.0-flash-lite-preview-02-05',
       'gemini-2.0-flash',
-      'gemini-1.5-pro'
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b'
     ]
 
     let lastErrorMsg = ''
