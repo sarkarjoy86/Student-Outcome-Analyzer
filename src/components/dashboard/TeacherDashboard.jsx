@@ -357,16 +357,28 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [survey, setSurvey] = useState(null)
   const [surveyResponsesCount, setSurveyResponsesCount] = useState(0)
 
-  // Dismissed Reminders State (Persisted in localStorage)
-  const [dismissedReminderIds, setDismissedReminderIds] = useState(() => {
+  // Helper to load all dismissed reminder IDs from localStorage
+  const loadDismissedReminderIds = useCallback(() => {
     try {
-      const saved = localStorage.getItem(`dismissed_reminders_${offering?._id || 'global'}`)
-      return saved ? JSON.parse(saved) : []
+      const globalSaved = localStorage.getItem('obe_dismissed_reminder_ids')
+      const globalList = globalSaved ? JSON.parse(globalSaved) : []
+      const courseKey = offering?._id ? `dismissed_reminders_${offering._id}` : null
+      const courseSaved = courseKey ? localStorage.getItem(courseKey) : null
+      const courseList = courseSaved ? JSON.parse(courseSaved) : []
+      return Array.from(new Set([...globalList, ...courseList]))
     } catch (e) {
       return []
     }
-  })
+  }, [offering?._id])
+
+  // Dismissed Reminders State (Persisted permanently in localStorage)
+  const [dismissedReminderIds, setDismissedReminderIds] = useState(() => loadDismissedReminderIds())
   const [animatingDismissIds, setAnimatingDismissIds] = useState([])
+
+  // Re-sync dismissed reminders whenever course offering changes or loads
+  useEffect(() => {
+    setDismissedReminderIds(loadDismissedReminderIds())
+  }, [offering?._id, loadDismissedReminderIds])
 
   const isReminderMandatory = useCallback((reminder) => {
     if (!reminder) return false
@@ -389,9 +401,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     setAnimatingDismissIds(prev => [...prev, reminderId])
     setTimeout(() => {
       setDismissedReminderIds(prev => {
-        const updated = [...prev, reminderId]
+        const updated = Array.from(new Set([...prev, reminderId]))
         try {
-          localStorage.setItem(`dismissed_reminders_${offering?._id || 'global'}`, JSON.stringify(updated))
+          localStorage.setItem('obe_dismissed_reminder_ids', JSON.stringify(updated))
+          if (offering?._id) {
+            localStorage.setItem(`dismissed_reminders_${offering._id}`, JSON.stringify(updated))
+          }
         } catch (e) {}
         return updated
       })
