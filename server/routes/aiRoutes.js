@@ -38,46 +38,64 @@ STRICT ACADEMIC RULES:
 
     let aiContent = ''
 
-    // Use Gemini Native API endpoint with gemini-flash-latest
-    try {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`
-      const response = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: systemPrompt }]
-          },
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: userMessage }]
+    const modelsToTry = [
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b',
+      'gemini-2.0-flash-lite-preview-02-05',
+      'gemini-2.0-flash',
+      'gemini-1.5-pro'
+    ]
+
+    let lastErrorMsg = ''
+
+    for (const model of modelsToTry) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
+        const response = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: systemPrompt }]
+            },
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: userMessage }]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048
             }
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048
-          }
+          })
         })
-      })
 
-      const data = await response.json()
+        const data = await response.json()
 
-      if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-        aiContent = data.candidates[0].content.parts[0].text.trim()
-      } else {
-        console.warn('Native Gemini call failed:', response.status, JSON.stringify(data))
-        const errMsg = data?.error?.message || data?.message || `HTTP status ${response.status}`
-        return res.status(502).json({
+        if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          aiContent = data.candidates[0].content.parts[0].text.trim()
+          if (aiContent) break // Success! Exit fallback loop
+        } else {
+          lastErrorMsg = data?.error?.message || data?.message || `HTTP status ${response.status}`
+          console.warn(`Gemini model ${model} rate-limited or failed:`, response.status, lastErrorMsg)
+        }
+      } catch (fetchErr) {
+        lastErrorMsg = fetchErr.message
+        console.error(`Gemini fetch error on model ${model}:`, fetchErr.message)
+      }
+    }
+
+    if (!aiContent) {
+      if (lastErrorMsg.toLowerCase().includes('quota') || lastErrorMsg.toLowerCase().includes('limit')) {
+        return res.status(429).json({
           success: false,
-          message: `AI Service Error: ${errMsg}`
+          message: 'Gemini Free Tier rate limit reached. Please wait 15-20 seconds before generating again.'
         })
       }
-    } catch (fetchErr) {
-      console.error('Gemini fetch error:', fetchErr.message)
-      return res.status(500).json({
+      return res.status(502).json({
         success: false,
-        message: `Network error reaching AI service: ${fetchErr.message}`
+        message: `AI Service Error: ${lastErrorMsg || 'Unable to generate response.'}`
       })
     }
 
