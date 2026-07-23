@@ -96,6 +96,10 @@ const copoRequestSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    dismissedByTeacher: {
+      type: Boolean,
+      default: false,
+    },
   },
   { versionKey: false, timestamps: false }
 );

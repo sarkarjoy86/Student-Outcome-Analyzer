@@ -691,6 +691,13 @@ export const apiService = {
     return handleResponse(res);
   },
 
+  async dismissCOPORequest(requestId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests/${requestId}/dismiss`, {
+      method: "PUT",
+    });
+    return handleResponse(res);
+  },
+
   async getCOPORequestHistory(filters = {}) {
     const params = new URLSearchParams();
     if (filters.status) params.append("status", filters.status);

@@ -397,8 +397,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     return false
   }, [])
 
-  const handleDismissReminder = (reminderId) => {
+  const handleDismissReminder = async (reminderId) => {
     setAnimatingDismissIds(prev => [...prev, reminderId])
+
+    // If it's a CO-PO request notification, dismiss it dynamically in MongoDB database!
+    if (reminderId.startsWith('copo_req_')) {
+      const dbId = reminderId.replace('copo_req_', '')
+      try {
+        await apiService.dismissCOPORequest(dbId)
+        fetchTeacherRequests()
+      } catch (err) {
+        console.error('Failed to dismiss request in database:', err)
+      }
+    }
+
     setTimeout(() => {
       setDismissedReminderIds(prev => {
         const updated = Array.from(new Set([...prev, reminderId]))

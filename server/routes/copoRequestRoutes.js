@@ -96,7 +96,7 @@ router.post("/copo-requests", requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/copo-requests/my — Get all requests by the logged-in teacher
+// GET /api/copo-requests/my — Get all active requests by the logged-in teacher (excluding dismissed)
 router.get("/copo-requests/my", requireAuth, async (req, res) => {
   try {
     const user = req.user;
@@ -105,7 +105,7 @@ router.get("/copo-requests/my", requireAuth, async (req, res) => {
     }
 
     const { courseId, status } = req.query;
-    const filter = { teacher: user._id };
+    const filter = { teacher: user._id, dismissedByTeacher: { $ne: true } };
     if (courseId) filter.course = courseId;
     if (status) filter.status = status;
 
@@ -117,6 +117,26 @@ router.get("/copo-requests/my", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("Error fetching teacher requests:", error);
     res.status(500).json({ message: "Failed to fetch requests.", error: error.message });
+  }
+});
+
+// PUT /api/copo-requests/:id/dismiss — Dismiss request notification dynamically in MongoDB (Teacher)
+router.put("/copo-requests/:id/dismiss", requireAuth, async (req, res) => {
+  try {
+    const user = req.user;
+    const { id } = req.params;
+    const request = await COPORequest.findOneAndUpdate(
+      { _id: id, teacher: user._id },
+      { dismissedByTeacher: true },
+      { new: true }
+    );
+    if (!request) {
+      return res.status(404).json({ message: "Request not found or access denied." });
+    }
+    res.status(200).json({ success: true, message: "Notification dismissed successfully in database." });
+  } catch (error) {
+    console.error("Error dismissing request:", error);
+    res.status(500).json({ message: "Failed to dismiss request.", error: error.message });
   }
 });
 
