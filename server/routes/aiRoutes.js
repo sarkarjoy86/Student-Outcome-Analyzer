@@ -38,14 +38,9 @@ STRICT ACADEMIC RULES:
 
     let aiContent = ''
 
-    const modelsToTry = [
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-8b'
-    ]
-
+    const modelsToTry = ['gemini-1.5-flash', 'gemini-2.0-flash-exp']
     let lastErrorMsg = ''
+    let isRateLimited = false
 
     for (const model of modelsToTry) {
       try {
@@ -76,32 +71,28 @@ STRICT ACADEMIC RULES:
           aiContent = data.candidates[0].content.parts[0].text.trim()
           if (aiContent) break // Success! Exit fallback loop
         } else {
-          lastErrorMsg = data?.error?.message || data?.message || `HTTP status ${response.status}`
-          console.warn(`Gemini model ${model} rate-limited or failed:`, response.status, lastErrorMsg)
+          const errMsg = data?.error?.message || data?.message || ''
+          if (response.status === 429 || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
+            isRateLimited = true
+          }
+          lastErrorMsg = errMsg || `HTTP status ${response.status}`
+          console.warn(`Gemini model ${model} status ${response.status}:`, lastErrorMsg)
         }
       } catch (fetchErr) {
         lastErrorMsg = fetchErr.message
-        console.error(`Gemini fetch error on model ${model}:`, fetchErr.message)
       }
     }
 
     if (!aiContent) {
-      if (lastErrorMsg.toLowerCase().includes('quota') || lastErrorMsg.toLowerCase().includes('limit')) {
+      if (isRateLimited) {
         return res.status(429).json({
           success: false,
-          message: 'Gemini Free Tier rate limit reached. Please wait 15-20 seconds before generating again.'
+          message: 'Gemini AI rate limit reached (15 requests/min). Please wait 15-20 seconds before generating again.'
         })
       }
       return res.status(502).json({
         success: false,
         message: `AI Service Error: ${lastErrorMsg || 'Unable to generate response.'}`
-      })
-    }
-
-    if (!aiContent) {
-      return res.status(502).json({
-        success: false,
-        message: 'AI service returned an empty response.'
       })
     }
 
