@@ -38,41 +38,42 @@ STRICT ACADEMIC RULES:
 
     let aiContent = ''
 
-    const modelsToTry = ['gemini-1.5-flash']
+    const endpointsToTry = [
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+        }
+      }
+    ]
 
     let lastErrorMsg = ''
 
-    for (const model of modelsToTry) {
+    for (const ep of endpointsToTry) {
       try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
-        const response = await fetch(geminiUrl, {
+        const response = await fetch(ep.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: systemPrompt }]
-            },
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text: userMessage }]
-              }
-            ],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048
-            }
-          })
+          body: JSON.stringify(ep.body)
         })
 
         const data = await response.json()
 
         if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
           aiContent = data.candidates[0].content.parts[0].text.trim()
-          if (aiContent) break // Success! Exit fallback loop
+          if (aiContent) break // Success! Exit loop
         } else {
           lastErrorMsg = data?.error?.message || data?.message || `HTTP ${response.status}`
-          console.warn(`Gemini model ${model} status ${response.status}:`, lastErrorMsg)
+          console.warn(`Gemini endpoint failed (${response.status}):`, lastErrorMsg)
         }
       } catch (fetchErr) {
         lastErrorMsg = fetchErr.message
