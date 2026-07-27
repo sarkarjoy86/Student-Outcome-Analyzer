@@ -2642,7 +2642,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Official University Header</h3>
-                <p className="text-xs text-gray-500 font-medium">Authentic exam header (Auto-centered & customizable)</p>
+                <p className="text-xs text-gray-500 font-medium">Authentic exam header (Customizable)</p>
               </div>
               <button
                 type="button"
