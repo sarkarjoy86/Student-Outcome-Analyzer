@@ -829,7 +829,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   }, [propOffering])
 
   const loadAllData = async () => {
-    setLoading(true)
+    if (!students || students.length === 0) {
+      setLoading(true)
+    }
     try {
       // 0. Fetch latest offering details
       const offeringRes = await apiService.getCourseOffering(propOffering._id)
@@ -1005,19 +1007,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
-  // Load spreadsheet marks data, surveys, and activities when tab shifts
-  useEffect(() => {
-    if (
-      activeTab === 'marksEntry' ||
-      activeTab === 'reports' ||
-      activeTab === 'students' ||
-      activeTab === 'poRecommendation'
-    ) {
-      loadMarksSpreadsheet()
-    } else if (activeTab === 'overview') {
-      loadAllData()
-    }
-  }, [activeTab])
+
 
   const loadMarksSpreadsheet = async () => {
     try {

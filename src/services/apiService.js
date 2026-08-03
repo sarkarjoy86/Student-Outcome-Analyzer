@@ -37,6 +37,40 @@ function getHeaders() {
   return headers;
 }
 
+// Session-level API Cache (lasts until logout, mutations, or tab/browser close)
+const sessionCache = new Map();
+
+function getSessionCachedItem(key) {
+  if (sessionCache.has(key)) return sessionCache.get(key);
+  try {
+    const stored = sessionStorage.getItem(`obe_cache_${key}`);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      sessionCache.set(key, parsed);
+      return parsed;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function setSessionCachedItem(key, value) {
+  sessionCache.set(key, value);
+  try {
+    sessionStorage.setItem(`obe_cache_${key}`, JSON.stringify(value));
+  } catch (e) {}
+}
+
+export function clearApiCache() {
+  sessionCache.clear();
+  try {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith("obe_cache_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch (e) {}
+}
+
 function getDefaultOptions() {
   return {
     headers: getHeaders(),
@@ -45,8 +79,22 @@ function getDefaultOptions() {
 }
 
 async function fetchWithDefaults(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  // Return cached GET response if available and not explicitly skipped
+  if (method === "GET" && !options.skipCache) {
+    const cachedData = getSessionCachedItem(url);
+    if (cachedData) {
+      return {
+        ok: true,
+        _isCached: true,
+        json: async () => JSON.parse(JSON.stringify(cachedData)),
+      };
+    }
+  }
+
   const defaultOptions = getDefaultOptions();
-  return fetch(url, {
+  const res = await fetch(url, {
     ...defaultOptions,
     ...options,
     headers: {
@@ -54,6 +102,15 @@ async function fetchWithDefaults(url, options = {}) {
       ...(options.headers || {}),
     },
   });
+
+  if (method !== "GET") {
+    // Invalidate cache on write operations (POST, PUT, DELETE, PATCH)
+    clearApiCache();
+  } else {
+    res._cachedUrl = url;
+  }
+
+  return res;
 }
 
 async function handleResponse(response) {
@@ -63,10 +120,14 @@ async function handleResponse(response) {
     error.response = data;
     throw error;
   }
+  if (response._cachedUrl && !response._isCached) {
+    setSessionCachedItem(response._cachedUrl, data);
+  }
   return data;
 }
 
 export const apiService = {
+  clearCache: clearApiCache,
   // Academic Sessions
   async getSessions() {
     const res = await fetchWithDefaults(`${API_BASE}/api/sessions`);

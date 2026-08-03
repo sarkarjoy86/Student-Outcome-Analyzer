@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { apiService } from "../services/apiService";
 
 const AuthContext = createContext(null);
 const ADMIN_EMAIL = "admin@gmail.com";
@@ -293,6 +294,7 @@ export function AuthProvider({ children }) {
       setStoredToken(null);
       setUser(null);
       setUsers([]);
+      apiService.clearCache();
       setSuccess("Logged out successfully.");
     } catch (error) {
       setError(parseErrorMessage(error, "Logout failed."));
