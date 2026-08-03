@@ -162,6 +162,77 @@ export function AuthProvider({ children }) {
     refreshAuth();
   }, []);
 
+  // Heartbeat & Idle Auto-Logout logic
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+    let idleTimer = null;
+
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        logout();
+        setError("You have been automatically logged out due to inactivity.");
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    resetIdleTimer();
+
+    const activityEvents = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    const handleUserActivity = () => {
+      resetIdleTimer();
+    };
+
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, handleUserActivity, { passive: true });
+    });
+
+    // Heartbeat every 10s if tab is visible
+    const heartbeatInterval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        if (user.role !== "admin" && getStoredToken()) {
+          apiRequest("/api/auth/heartbeat", { method: "POST" }).catch(() => {});
+        }
+      }
+    }, 10000);
+
+    // Initial heartbeat on mount
+    if (user.role !== "admin" && getStoredToken()) {
+      apiRequest("/api/auth/heartbeat", { method: "POST" }).catch(() => {});
+    }
+
+    // Send beacon logout when closing tab/window
+    const handleUnload = () => {
+      if (user.role !== "admin" && getStoredToken()) {
+        const token = getStoredToken();
+        if (token) {
+          try {
+            fetch(`${API_BASE}/api/auth/logout`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              keepalive: true,
+            }).catch(() => {});
+          } catch (e) {}
+        }
+      }
+    };
+
+    window.addEventListener("beforeunload", handleUnload);
+
+    return () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      clearInterval(heartbeatInterval);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, handleUserActivity);
+      });
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, [user]);
+
   const login = async (payload) => {
     setActionLoading(true);
     try {

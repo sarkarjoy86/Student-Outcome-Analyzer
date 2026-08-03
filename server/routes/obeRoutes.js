@@ -13,12 +13,87 @@ import Assessment from "../models/Assessment.js";
 import User from "../models/User.js";
 import StudentMarks from "../models/StudentMarks.js";
 import QuestionMetadata from "../models/QuestionMetadata.js";
+import QuestionPaper from "../models/QuestionPaper.js";
 import COAttainment from "../models/COAttainment.js";
 import POAttainment from "../models/POAttainment.js";
 import { syncAllStudentsLongitudinalPO } from "./poRecommendationRoutes.js";
 import { logActivity } from "../utils/activityLogger.js";
 
 const router = express.Router();
+
+async function ensureSisterMidFinalInheritance(targetOfferingId) {
+  try {
+    const targetOffering = await CourseOffering.findById(targetOfferingId);
+    if (!targetOffering) return;
+
+    const existingMid = await Assessment.findOne({ courseOffering: targetOfferingId, type: 'midTerm' });
+    const existingFinal = await Assessment.findOne({ courseOffering: targetOfferingId, type: 'final' });
+
+    if (existingMid && existingFinal) return;
+
+    const filter = {
+      course: targetOffering.course,
+      batch: targetOffering.batch,
+      _id: { $ne: targetOffering._id }
+    };
+    if (targetOffering.semester) filter.semester = targetOffering.semester;
+
+    const sisterOfferings = await CourseOffering.find(filter);
+    if (sisterOfferings.length === 0) return;
+
+    const typesToSync = [];
+    if (!existingMid) typesToSync.push('midTerm');
+    if (!existingFinal) typesToSync.push('final');
+
+    for (const type of typesToSync) {
+      for (const sister of sisterOfferings) {
+        const sisterAsmt = await Assessment.findOne({ courseOffering: sister._id, type });
+        if (sisterAsmt) {
+          const newAsmt = await Assessment.create({
+            courseOffering: targetOfferingId,
+            type: sisterAsmt.type,
+            name: sisterAsmt.name,
+            maxMarks: sisterAsmt.maxMarks,
+            co: sisterAsmt.co || '',
+            numQuestions: sisterAsmt.numQuestions || 0,
+            examDuration: sisterAsmt.examDuration || '',
+            deadline: sisterAsmt.deadline || null,
+            status: sisterAsmt.status || 'Draft',
+            createdAt: sisterAsmt.createdAt || new Date()
+          });
+
+          const sisterMeta = await QuestionMetadata.findOne({ assessment: sisterAsmt._id });
+          if (sisterMeta && sisterMeta.questions && sisterMeta.questions.length > 0) {
+            await QuestionMetadata.create({
+              assessment: newAsmt._id,
+              courseOffering: targetOfferingId,
+              questions: sisterMeta.questions.map(q => ({
+                questionNumber: q.questionNumber,
+                maxMarks: q.maxMarks,
+                co: q.co,
+                bloom: q.bloom || ''
+              }))
+            });
+          }
+
+          const sisterPaper = await QuestionPaper.findOne({ assessment: sisterAsmt._id });
+          if (sisterPaper) {
+            await QuestionPaper.create({
+              assessment: newAsmt._id,
+              courseOffering: targetOfferingId,
+              content: sisterPaper.content || '',
+              createdBy: sisterPaper.createdBy || null
+            });
+          }
+
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error ensuring sister MID/FINAL inheritance:', err);
+  }
+}
 
 // ==========================================
 // ACADEMIC SESSION ROUTES
@@ -933,21 +1008,13 @@ router.post("/course-offerings", requireAuth, async (req, res) => {
       const existing = await CourseOffering.findOne({
         course: selectedCourse,
         batch: selectedBatch,
-        teacher: selectedTeacher,
         semester: selectedSemester,
         section: selectedSection,
-        academicYear: parseInt(selectedAcademicYear, 10),
       });
 
       if (existing) {
-        const populated = await CourseOffering.findById(existing._id)
-          .populate("course")
-          .populate("batch")
-          .populate("semester")
-          .populate("teacher", "fullName email");
-        return res.status(200).json({
-          message: "Course offering already exists.",
-          offering: populated,
+        return res.status(400).json({
+          message: "A course offering for this course, batch, section, and session already exists.",
         });
       }
 
@@ -960,6 +1027,8 @@ router.post("/course-offerings", requireAuth, async (req, res) => {
         academicYear: parseInt(selectedAcademicYear, 10),
         coPoMapping: courseDoc.coPoMapping || {},
       });
+
+      await ensureSisterMidFinalInheritance(newOffering._id);
 
       const populated = await CourseOffering.findById(newOffering._id)
         .populate("course")
@@ -1094,6 +1163,20 @@ router.put("/course-offerings/:id", requireAuth, async (req, res) => {
 
       offering.batch = selectedBatch;
       offering.teacher = selectedTeacher;
+    }
+
+    const duplicateCheck = await CourseOffering.findOne({
+      _id: { $ne: req.params.id },
+      course: selectedCourse,
+      batch: offering.batch,
+      semester: selectedSemester,
+      section: selectedSection,
+    });
+
+    if (duplicateCheck) {
+      return res.status(400).json({
+        message: "Another course offering for this course, batch, section, and session already exists.",
+      });
     }
 
     offering.course = selectedCourse;
@@ -1405,6 +1488,8 @@ router.get(
   requireAuth,
   async (req, res) => {
     try {
+      await ensureSisterMidFinalInheritance(req.params.id);
+
       const dbAssessments = await Assessment.find({
         courseOffering: req.params.id,
       });

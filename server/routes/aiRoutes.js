@@ -95,4 +95,86 @@ STRICT ACADEMIC RULES:
   }
 })
 
+/**
+ * POST /api/ai/swot-generate
+ * Generates course-oriented SWOT Analysis JSON using Gemini API
+ */
+router.post('/swot-generate', async (req, res) => {
+  try {
+    const { promptText } = req.body
+    if (!promptText) {
+      return res.status(400).json({ success: false, message: 'No prompt text provided.' })
+    }
+
+    const apiKey = (process.env.GEMINI_API_KEY || '').trim()
+    if (!apiKey) {
+      return res.status(533).json({
+        success: false,
+        message: 'GEMINI_API_KEY is missing in server .env file.'
+      })
+    }
+
+    const endpointsToTry = [
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          generationConfig: { temperature: 0.85 }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          generationConfig: { temperature: 0.85 }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          generationConfig: { temperature: 0.85 }
+        }
+      }
+    ]
+
+    let aiContent = ''
+    let lastErrorMsg = ''
+
+    for (const ep of endpointsToTry) {
+      try {
+        const response = await fetch(ep.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(ep.body)
+        })
+
+        const data = await response.json()
+
+        if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          aiContent = data.candidates[0].content.parts[0].text.trim()
+          if (aiContent) break
+        } else {
+          lastErrorMsg = data?.error?.message || data?.message || `HTTP ${response.status}`
+          console.warn(`Gemini endpoint failed (${response.status}):`, lastErrorMsg)
+        }
+      } catch (fetchErr) {
+        lastErrorMsg = fetchErr.message
+      }
+    }
+
+    if (!aiContent) {
+      return res.status(502).json({
+        success: false,
+        message: `Gemini API Error: ${lastErrorMsg}`
+      })
+    }
+
+    return res.json({ success: true, content: aiContent })
+  } catch (error) {
+    console.error('SWOT AI handler error:', error)
+    return res.status(500).json({ success: false, message: `Server error: ${error.message}` })
+  }
+})
+
 export default router

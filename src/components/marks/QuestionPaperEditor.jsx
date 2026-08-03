@@ -510,6 +510,16 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const aiPreviewRef = useRef(null)
 
   const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
+  const [deadline, setDeadline] = useState(() => {
+    if (assessment.deadline) {
+      const d = new Date(assessment.deadline)
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      }
+      return assessment.deadline
+    }
+    return ''
+  })
   const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
   const [level, setLevel] = useState(assessment.level || offering?.course?.level || '1')
   const [term, setTerm] = useState(assessment.term || offering?.course?.term || 'I')
@@ -1242,6 +1252,14 @@ Equation description: "${aiEquationPrompt}"`
 
       const currentAssessment = res.assessment || assessment
       setExamDuration(currentAssessment.examDuration || '')
+      if (currentAssessment.deadline) {
+        const d = new Date(currentAssessment.deadline)
+        if (!isNaN(d.getTime())) {
+          setDeadline(d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))
+        } else {
+          setDeadline(currentAssessment.deadline)
+        }
+      }
       setLevel(currentAssessment.level || offering.course?.level || '1')
       setTerm(currentAssessment.term || offering.course?.term || 'I')
 
@@ -1251,13 +1269,15 @@ Equation description: "${aiEquationPrompt}"`
       const qList = res.questions || []
       const finalQs = []
 
-      // Auto-set default numQuestions for Mid (3) and Final (5) when first opening
+      // Auto-set default numQuestions for Mid (3), Final (5), and others (1) when first opening
       let targetNum = currentAssessment.numQuestions || 0
       if (targetNum === 0 && qList.length === 0) {
         if (currentAssessment.type === 'midTerm') {
           targetNum = 3
         } else if (currentAssessment.type === 'final') {
           targetNum = 5
+        } else {
+          targetNum = 1
         }
       }
       setNumQuestions(targetNum)
@@ -1265,7 +1285,9 @@ Equation description: "${aiEquationPrompt}"`
       for (let i = 1; i <= targetNum; i++) {
         const qNum = `Q${i}`
         const existing = qList.find(q => q.questionNumber === qNum)
-        const defaultCO = isExtra ? (currentAssessment.co || 'NONE') : 'NONE'
+        const defaultCO = isExtra
+          ? (currentAssessment.co || 'NONE')
+          : (currentAssessment.co && currentAssessment.co !== 'NONE' ? currentAssessment.co : 'NONE')
         if (existing) {
           finalQs.push({
             questionNumber: qNum,
@@ -1392,9 +1414,10 @@ Equation description: "${aiEquationPrompt}"`
       ))
       const aggregatedCO = validCOs.join(', ')
 
-      // 1. Update Assessment fields (examDuration, numQuestions, level, term, co, status)
+      // 1. Update Assessment fields (examDuration, deadline, numQuestions, level, term, co, status)
       await apiService.updateAssessment(assessment._id, {
         examDuration,
+        deadline,
         numQuestions,
         level,
         term,
@@ -1436,10 +1459,23 @@ Equation description: "${aiEquationPrompt}"`
     const academicYear = offering.academicYear || ''
     const semesterFull = academicYear ? `${semesterName} ${academicYear}` : (semesterName || 'Spring 2026')
     const aType = assessment.type || ''
+    const aName = assessment.name || ''
 
-    const isMidTerm = aType === 'midTerm' || (assessment.name && assessment.name.toLowerCase().includes('mid'))
-    const isTermFinal = aType === 'final' || (assessment.name && assessment.name.toLowerCase().includes('final'))
+    const isMidTerm = aType === 'midTerm' || (aName && aName.toLowerCase().includes('mid'))
+    const isTermFinal = aType === 'final' || (aName && aName.toLowerCase().includes('final'))
     const isOfficialExam = isMidTerm || isTermFinal
+    const isAssignment = aType === 'assignment' || (aName && aName.toLowerCase().includes('assignment'))
+    const isPresentation = aType === 'presentation' || (aName && aName.toLowerCase().includes('presentation'))
+
+    const rawDeadline = headerCustom.deadline || deadline || (assessment.deadline ? (
+      !isNaN(new Date(assessment.deadline).getTime())
+        ? new Date(assessment.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+        : assessment.deadline
+    ) : '')
+    const deadlineVal = rawDeadline || 'Not Set'
+
+    const timeOrDeadlineLabel = (isAssignment || isPresentation) ? 'Deadline' : 'Exam Duration'
+    const timeOrDeadlineValue = (isAssignment || isPresentation) ? deadlineVal : duration
 
     // Build Level/Term format (e.g. Level-4 Term-II)
     const levelStr = level ? `Level-${level}` : 'Level-4'
@@ -1449,6 +1485,72 @@ Equation description: "${aiEquationPrompt}"`
     const confText = headerCustom.confidentialText || 'EXAMINATION CONFIDENTIAL'
     const bengaliName = headerCustom.bengaliUniName || 'বাংলাদেশ আর্মি ইন্টারন্যাশনাল ইউনিভার্সিটি অব সায়েন্স এন্ড টেকনোলজি, কুমিল্লা'
     const englishName = headerCustom.englishUniName || 'BANGLADESH ARMY INTERNATIONAL UNIVERSITY OF SCIENCE AND TECHNOLOGY (BAIUST), CUMILLA'
+
+    // Gather allocated CO codes for this Question Sheet (QS)
+    const allocatedCOCodes = new Set()
+    if (questions && questions.length > 0) {
+      questions.forEach(q => {
+        if (q && q.co && q.co !== 'NONE' && q.co.trim() !== '') {
+          const matches = q.co.match(/CO\s*-?\s*\d+/gi)
+          if (matches && matches.length > 0) {
+            matches.forEach(code => {
+              const norm = code.toUpperCase().replace(/[\s-_]/g, '')
+              allocatedCOCodes.add(norm)
+            })
+          } else {
+            q.co.split(/[,;\s]+/).forEach(part => {
+              const trimmed = part.trim()
+              if (trimmed && trimmed !== 'NONE') {
+                const norm = trimmed.toUpperCase().replace(/[\s-_]/g, '')
+                allocatedCOCodes.add(norm)
+              }
+            })
+          }
+        }
+      })
+    }
+    if (allocatedCOCodes.size === 0 && assessment && assessment.co && assessment.co.trim() !== '' && assessment.co !== 'NONE') {
+      const matches = assessment.co.match(/CO\s*-?\s*\d+/gi)
+      if (matches && matches.length > 0) {
+        matches.forEach(code => {
+          const norm = code.toUpperCase().replace(/[\s-_]/g, '')
+          allocatedCOCodes.add(norm)
+        })
+      } else {
+        assessment.co.split(/[,;\s]+/).forEach(part => {
+          const trimmed = part.trim()
+          if (trimmed && trimmed !== 'NONE') {
+            const norm = trimmed.toUpperCase().replace(/[\s-_]/g, '')
+            allocatedCOCodes.add(norm)
+          }
+        })
+      }
+    }
+
+    const baseCOs = (headerCustom.customCOs && headerCustom.customCOs.length > 0)
+      ? headerCustom.customCOs
+      : (coDetails.filter(c => c && c.description && c.description.trim()).length > 0
+          ? coDetails.filter(c => c && c.description && c.description.trim())
+          : availableCOs.map(code => ({ code, description: `Course Outcome description for ${courseTitle || code}.` })))
+
+    let activeCOs = []
+    if (allocatedCOCodes.size > 0) {
+      const filtered = baseCOs.filter(c => {
+        if (!c || !c.code) return false
+        const norm = c.code.toUpperCase().replace(/[\s-_]/g, '')
+        return allocatedCOCodes.has(norm)
+      })
+      if (filtered.length > 0) {
+        activeCOs = filtered
+      } else {
+        activeCOs = Array.from(allocatedCOCodes).map(normCode => {
+          const orig = availableCOs.find(ac => ac.toUpperCase().replace(/[\s-_]/g, '') === normCode) || normCode
+          return { code: orig, description: `Course Outcome description for ${courseTitle || orig}.` }
+        })
+      }
+    }
+
+    const coNotesHtml = activeCOs.map(c => `<div><strong>${c.code}:</strong> ${c.description}</div>`).join('')
 
     // Render Authentic BAIUST Official Header for Mid Term & Term Final Exams
     if (isOfficialExam) {
@@ -1466,25 +1568,18 @@ Equation description: "${aiEquationPrompt}"`
         ]
       }
 
-      // COs for Notes section
-      const activeCOs = (headerCustom.customCOs && headerCustom.customCOs.length > 0)
-        ? headerCustom.customCOs
-        : (coDetails.filter(c => c && c.description && c.description.trim()).length > 0
-            ? coDetails.filter(c => c && c.description && c.description.trim())
-            : availableCOs.map(code => ({ code, description: `Course Outcome description for ${courseTitle || code}.` })))
-
-      const coNotesHtml = activeCOs.map(c => `<div><strong>${c.code}:</strong> ${c.description}</div>`).join('')
-
       const letterPrefixes = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
       let notesHtml = ''
       notesArray.forEach((noteText, idx) => {
         const prefix = letterPrefixes[idx] || `${idx + 1}`
         notesHtml += `<div>${prefix}. ${noteText}</div>`
       })
-      const coPrefix = letterPrefixes[notesArray.length] || 'c'
-      const coHeadingLabel = isTermFinal ? 'The Course Outcomes (COs) are:' : 'Course Learning Outcomes are-'
-      notesHtml += `<div>${coPrefix}. ${coHeadingLabel}</div>`
-      notesHtml += `<div style="margin-left: 18px !important; margin-top: 2px !important;">${coNotesHtml}</div>`
+      if (activeCOs.length > 0) {
+        const coPrefix = letterPrefixes[notesArray.length] || 'c'
+        const coHeadingLabel = isTermFinal ? 'The Course Outcomes (COs) are:' : 'Course Learning Outcomes are-'
+        notesHtml += `<div>${coPrefix}. ${coHeadingLabel}</div>`
+        notesHtml += `<div style="margin-left: 18px !important; margin-top: 2px !important;">${coNotesHtml}</div>`
+      }
 
       return `
         <div class="qp-official-header" style="font-family: 'Times New Roman', Times, serif !important; color: #000 !important; margin-bottom: 12px !important;">
@@ -1519,7 +1614,7 @@ Equation description: "${aiEquationPrompt}"`
             <div style="font-weight: bold !important;">Course Code: ${courseCode}</div>
             <div style="font-weight: bold !important;">Course Title: ${courseTitle}</div>
             <div>Credit Hour: ${creditHours}</div>
-            <div>Exam Duration: ${duration}</div>
+            <div>${timeOrDeadlineLabel}: ${timeOrDeadlineValue}</div>
             <div>Full Marks: ${fullMarks}</div>
           </div>
 
@@ -1537,7 +1632,7 @@ Equation description: "${aiEquationPrompt}"`
       `
     }
 
-    // Default Class Test (CT) Format (Preserved)
+    // Default Class Test (CT) & Assignment Format
     const section = offering.section || ''
     const assessmentName = assessment.name || ''
     const creditsVal = parseFloat(offering.course?.creditHours || offering.course?.numCredits) || 3
@@ -1559,7 +1654,7 @@ Equation description: "${aiEquationPrompt}"`
 
     return `
       <div class="qp-header-wrapper" style="text-align: center !important; font-family: 'Times New Roman', Times, serif !important; margin-bottom: 15px !important; line-height: 1.3 !important; color: #000 !important;">
-        <!-- University Logo & English Name Header for CT (Smaller Font) -->
+        <!-- University Logo & English Name Header for CT / Assignment -->
         <table style="width: 100% !important; border: none !important; border-collapse: collapse !important; margin-bottom: 8px !important; table-layout: fixed !important;">
           <tr>
             <td style="width: 55px !important; vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 !important;">
@@ -1578,8 +1673,16 @@ Equation description: "${aiEquationPrompt}"`
         ${levelTermLine ? `<p style="margin: 2px 0 0 0 !important; font-size: 15px !important; font-weight: bold !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">${levelTermLine}</p>` : ''}
         <p style="margin: 2px 0 0 0 !important; font-size: 14px !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">Course code: ${courseCode}</p>
         <p style="margin: 2px 0 0 0 !important; font-size: 14px !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">Course title: ${courseTitle}</p>
-        <p style="margin: 2px 0 0 0 !important; font-size: 14px !important; font-weight: bold !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">Credit Hour: ${creditHours}, Exam Duration: ${duration}, Full Marks: ${fullMarks}</p>
+        <p style="margin: 2px 0 0 0 !important; font-size: 14px !important; font-weight: bold !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">Credit Hour: ${creditHours}, ${timeOrDeadlineLabel}: ${timeOrDeadlineValue}, Full Marks: ${fullMarks}</p>
         ${ctLine ? `<p style="margin: 2px 0 0 0 !important; font-size: 14px !important; font-weight: bold !important; text-align: center !important; line-height: 1.3 !important; padding: 0 !important;">${ctLine}</p>` : ''}
+        ${activeCOs.length > 0 ? `
+          <div style="text-align: left !important; font-size: 13px !important; margin-top: 10px !important; line-height: 1.35 !important;">
+            <div style="font-weight: bold !important; margin-bottom: 2px !important;">Course Outcome(s):</div>
+            <div style="margin-left: 14px !important;">
+              ${coNotesHtml}
+            </div>
+          </div>
+        ` : ''}
         <hr style="border: none !important; border-top: 1.5px solid #000 !important; margin-top: 10px !important; margin-bottom: 15px !important;" />
       </div>
     `
@@ -1587,32 +1690,7 @@ Equation description: "${aiEquationPrompt}"`
 
   // Generate CO description lines for print/export (only for CTs, as Mid/Final includes them in Notes)
   const getCoDescriptionsHtml = () => {
-    const aType = assessment.type || ''
-    const isMidTerm = aType === 'midTerm' || (assessment.name && assessment.name.toLowerCase().includes('mid'))
-    const isTermFinal = aType === 'final' || (assessment.name && assessment.name.toLowerCase().includes('final'))
-    if (isMidTerm || isTermFinal) return '' // Included in official Notes header
-
-    if (questions.length === 0) return ''
-
-    const usedCOs = new Set()
-    questions.forEach(q => {
-      if (q.co && q.co !== 'NONE') usedCOs.add(q.co)
-    })
-
-    let html = ''
-    const sortedCOs = Array.from(usedCOs).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    )
-
-    sortedCOs.forEach(coKey => {
-      const coObj = coDetails.find(c => c.code === coKey)
-      const coDesc = coObj?.description || ''
-      if (coDesc) {
-        html += `<p style="margin: 15px 0 8px 0; font-size: 14px; font-weight: bold; font-style: normal;">${coKey}: ${coDesc}</p>`
-      }
-    })
-
-    return html
+    return '' // CO details are now directly embedded in getHeaderHtml()
   }
 
   // Inject [CO→Bloom] tags and marks into each question's HTML for print/export
@@ -2941,12 +3019,14 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 </div>
               </div>
               <div>
-                <label className="block font-bold text-gray-600 mb-1">Exam Duration</label>
+                <label className="block font-bold text-gray-600 mb-1">
+                  {(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? 'Submission Deadline' : 'Exam Duration'}
+                </label>
                 <input
                   type="text"
-                  value={examDuration}
-                  onChange={(e) => setExamDuration(e.target.value)}
-                  placeholder="e.g. 30 Minutes"
+                  value={(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? deadline : examDuration}
+                  onChange={(e) => (assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? setDeadline(e.target.value) : setExamDuration(e.target.value)}
+                  placeholder={(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? 'e.g. 10 August 2026' : 'e.g. 30 Minutes'}
                   className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
                 />
               </div>

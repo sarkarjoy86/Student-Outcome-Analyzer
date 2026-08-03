@@ -140,6 +140,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [selectedAssessmentId, setSelectedAssessmentId] = useState('')
   const [tempMarks, setTempMarks] = useState({}) // studentId -> questionNumber -> mark
 
+  // Combined Batch Report States
+  const [reportScope, setReportScope] = useState('section') // 'section' or 'combined'
+  const [combinedBatchSpreadsheetData, setCombinedBatchSpreadsheetData] = useState(null)
+  const [loadingCombinedBatch, setLoadingCombinedBatch] = useState(false)
+
   // CO-PO Mapping States
   const [coMapping, setCoMapping] = useState({})
   const [dbCourseOutcomes, setDbCourseOutcomes] = useState([])
@@ -446,6 +451,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showPreviewPaper, setShowPreviewPaper] = useState(null) // holds paper doc
   const [isTableFullscreen, setIsTableFullscreen] = useState(false)
+  const [marksEntryMode, setMarksEntryMode] = useState('perQuestion') // 'perQuestion' or 'total'
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1056,23 +1062,53 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     )
   }
 
-  const handleSpreadsheetMarkChange = (studentId, key, val, maxVal) => {
+  const handleSpreadsheetMarkChange = (studentId, key, val, maxVal, questionsList = []) => {
     if (val !== '' && (isNaN(val) || parseFloat(val) < 0 || parseFloat(val) > maxVal)) {
       return // invalid
     }
-    setTempMarks(prev => ({
-      ...prev,
-      [studentId]: {
-        ...prev[studentId],
-        [key]: val
+    setTempMarks(prev => {
+      const studentPrev = prev[studentId] || {}
+      if (key === '_ctTotal') {
+        const newObj = { ...studentPrev, _ctTotal: val }
+        if (questionsList && questionsList.length > 0) {
+          if (val === '') {
+            questionsList.forEach(q => { newObj[q.questionNumber] = '' })
+          } else {
+            const enteredTotal = parseFloat(val) || 0
+            const totalMaxMarks = questionsList.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+            let accum = 0
+            questionsList.forEach(q => {
+              const qMax = parseFloat(q.maxMarks) || 0
+              const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questionsList.length
+              const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+              newObj[q.questionNumber] = distributed
+              accum += distributed
+            })
+            const diff = enteredTotal - accum
+            if (Math.abs(diff) > 0.01 && questionsList.length > 0) {
+              const lastQ = questionsList[questionsList.length - 1].questionNumber
+              newObj[lastQ] = Math.round(((newObj[lastQ] || 0) + diff) * 2) / 2
+            }
+          }
+        }
+        return { ...prev, [studentId]: newObj }
+      } else {
+        const newObj = { ...studentPrev, [key]: val }
+        delete newObj._ctTotal
+        return { ...prev, [studentId]: newObj }
       }
-    }))
+    })
   }
 
   const saveSpreadsheetMarks = async () => {
     setSaving(true)
     try {
       const questions = marksSpreadsheetData.metadata[selectedAssessmentId] || []
+      const selectedAsmt = (marksSpreadsheetData.assessments || []).find(a => a._id === selectedAssessmentId)
+      const isCTWithUniformCO = selectedAsmt && selectedAsmt.type === 'cts' && questions.length > 0 &&
+        new Set(questions.map(q => (q.co || 'NONE').toUpperCase().replace(/[\s-_]/g, ''))).size === 1
+      const isTotalMode = marksEntryMode === 'total' && isCTWithUniformCO
+
       const payload = marksSpreadsheetData.students.map(s => {
         const sId = s._id
         const studentTemp = tempMarks[sId] || {}
@@ -1082,15 +1118,40 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         let isEmpty = true
 
         if (questions && questions.length > 0) {
-          questions.forEach(q => {
-            const val = studentTemp[q.questionNumber]
-            if (val !== undefined && val !== null && val !== '') {
-              const markVal = parseFloat(val) || 0
-              questionMarks[q.questionNumber] = markVal
-              totalMark += markVal
+          if (isTotalMode) {
+            // Total mode: distribute the entered total proportionally across questions
+            const totalVal = studentTemp['_ctTotal']
+            if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
+              const enteredTotal = parseFloat(totalVal) || 0
+              const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+              questions.forEach(q => {
+                const qMax = parseFloat(q.maxMarks) || 0
+                const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                const distributed = Math.round((enteredTotal * proportion) * 2) / 2 // round to nearest 0.5
+                questionMarks[q.questionNumber] = distributed
+                totalMark += distributed
+              })
+              // Adjust rounding difference on last question
+              const diff = enteredTotal - totalMark
+              if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                const lastQ = questions[questions.length - 1].questionNumber
+                questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
+                totalMark = enteredTotal
+              }
               isEmpty = false
             }
-          })
+          } else {
+            // Per-question mode
+            questions.forEach(q => {
+              const val = studentTemp[q.questionNumber]
+              if (val !== undefined && val !== null && val !== '') {
+                const markVal = parseFloat(val) || 0
+                questionMarks[q.questionNumber] = markVal
+                totalMark += markVal
+                isEmpty = false
+              }
+            })
+          }
         } else {
           const val = studentTemp['marks']
           if (val !== undefined && val !== null && val !== '') {
@@ -1183,6 +1244,28 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const openCreateModal = () => {
     const existingTypes = {}
     assessments.forEach(a => { existingTypes[a.type] = true })
+
+    // Check if total marks cap is already reached
+    const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+    const courseMax = credits === 2 ? 200 : 300
+    const currentTotal = assessments
+      .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))))
+      .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+
+    if (currentTotal >= courseMax) {
+      // Only allow Extra CT creation when cap is reached
+      const stdCTs = assessments.filter(a => a.type === 'cts' && !a.isExtraCT)
+      const standardCTCount = Math.max(1, Math.floor(credits))
+      if (stdCTs.length >= standardCTCount && stdCTs.length > 0) {
+        // Allow Extra CT
+        handleAssessmentTypeChange('cts')
+        setShowCreateDialog(true)
+        return
+      }
+      alert(`Total allocated marks (${currentTotal}/${courseMax}) have reached the maximum for this ${credits}-credit course. No more assessments can be created except Extra CTs.`)
+      return
+    }
+
     let typeToUse = newAssessment.type || 'cts'
     if (['midTerm', 'final', 'attendance', 'performance', 'presentation'].includes(typeToUse) && existingTypes[typeToUse]) {
       typeToUse = 'cts'
@@ -2176,7 +2259,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                 </th>
                               )}
                               <th colSpan="5" className="px-3.5 py-3 border border-emerald-950 bg-emerald-950 text-center font-bold">
-                                Overall Results ({courseTotalMax} Marks)
+                                Overall Results
                               </th>
                             </tr>
                             <tr className="bg-green-50/90 text-green-950 border-b-2 border-green-800 font-bold text-xs">
@@ -2507,20 +2590,44 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             catName = 'Final Term Examination'
                           }
 
-                          if (prospective > limit) {
-                            return (
-                              <div className="p-3 bg-amber-50 border-2 border-amber-300 rounded-xl space-y-1 text-xs text-amber-900 shadow-sm">
-                                <div className="flex items-center gap-2 font-black text-amber-950">
-                                  <AlertTriangle size={18} className="text-amber-600 shrink-0" />
-                                  <span>Category Mark Limit Warning ({prospective} / {limit} Marks)</span>
+                          // Overall course total check
+                          const courseMax = credits === 2 ? 200 : 300
+                          const currentTotal = assessments
+                            .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))))
+                            .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+                          const addedForTotal = newAssessment.isExtraCT ? 0 : (parseFloat(newAssessment.maxMarks) || 0)
+                          const prospectiveTotal = currentTotal + addedForTotal
+                          const isOverCourseMax = prospectiveTotal > courseMax && !newAssessment.isExtraCT
+
+                          return (
+                            <>
+                              {prospective > limit && (
+                                <div className="p-3 bg-amber-50 border-2 border-amber-300 rounded-xl space-y-1 text-xs text-amber-900 shadow-sm">
+                                  <div className="flex items-center gap-2 font-black text-amber-950">
+                                    <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                                    <span>Category Mark Limit Warning ({prospective} / {limit} Marks)</span>
+                                  </div>
+                                  <p className="text-[11px] font-semibold text-amber-900 leading-relaxed">
+                                    Adding this assessment will set total marks for <strong>{catName}</strong> to <strong>{prospective} Marks</strong>, which exceeds the standard limit of <strong>{limit} Marks</strong> for a {credits}-credit course (Total: {courseMax} Marks).
+                                  </p>
                                 </div>
-                                <p className="text-[11px] font-semibold text-amber-900 leading-relaxed">
-                                  Adding this assessment will set total marks for <strong>{catName}</strong> to <strong>{prospective} Marks</strong>, which exceeds the standard limit of <strong>{limit} Marks</strong> for a {credits}-credit course (Total: {credits === 2 ? '200' : '300'} Marks).
-                                </p>
-                              </div>
-                            )
-                          }
-                          return null
+                              )}
+                              {isOverCourseMax && (
+                                <div className="p-3 bg-red-50 border-2 border-red-400 rounded-xl space-y-1 text-xs text-red-900 shadow-sm">
+                                  <div className="flex items-center gap-2 font-black text-red-950">
+                                    <AlertTriangle size={18} className="text-red-600 shrink-0" />
+                                    <span>Course Total Marks Exceeded ({prospectiveTotal} / {courseMax} Marks)</span>
+                                  </div>
+                                  <p className="text-[11px] font-semibold text-red-900 leading-relaxed">
+                                    Total allocated marks across all assessments would be <strong>{prospectiveTotal} Marks</strong>, exceeding the maximum of <strong>{courseMax} Marks</strong> for a {credits}-credit course. Reduce the marks for this assessment or existing assessments. Only Extra CTs (which replace, not add) are allowed.
+                                  </p>
+                                  <p className="text-[10px] font-bold text-red-800 mt-1">
+                                    Currently allocated: {currentTotal} / {courseMax} Marks — Available: {Math.max(0, courseMax - currentTotal)} Marks
+                                  </p>
+                                </div>
+                              )}
+                            </>
+                          )
                         })()}
 
                         {/* Extra CT Notice & Target CT Selection */}
@@ -2661,22 +2768,38 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           </div>
                         )}
 
-                        <div className="flex gap-3 pt-2">
-                          <button
-                            type="submit"
-                            disabled={saving}
-                            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold transition-all disabled:opacity-50"
-                          >
-                            {saving ? 'Creating...' : 'Create'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setShowCreateDialog(false)}
-                            className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold border transition-all"
-                          >
-                            Cancel
-                          </button>
-                        </div>
+                        {/* Compute course total for submit button disable logic */}
+                        {(() => {
+                          const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
+                          const courseMax = credits === 2 ? 200 : 300
+                          const currentTotal = assessments
+                            .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))))
+                            .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+                          const addedForTotal = newAssessment.isExtraCT ? 0 : (parseFloat(newAssessment.maxMarks) || 0)
+                          const prospectiveTotal = currentTotal + addedForTotal
+                          const isOverCourseMax = prospectiveTotal > courseMax && !newAssessment.isExtraCT
+                          const isDisabled = saving || isTypeDisabled || isOverCourseMax
+
+                          return (
+                            <div className="flex gap-3 pt-2">
+                              <button
+                                type="submit"
+                                disabled={isDisabled}
+                                className={`flex-1 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 ${isOverCourseMax ? 'bg-red-400 cursor-not-allowed text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+                                title={isOverCourseMax ? `Total marks (${prospectiveTotal}) exceed course max (${courseMax})` : ''}
+                              >
+                                {saving ? 'Creating...' : isOverCourseMax ? `Exceeds ${courseMax} Marks Limit` : 'Create'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowCreateDialog(false)}
+                                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold border transition-all"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          )
+                        })()}
                       </form>
                     </div>
                   </div>
@@ -2975,10 +3098,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               return numA - numB
             })
             const hasQuestions = questions && questions.length > 0
+
             const fullyEnteredCount = selectedAssessment ? studentList.filter(s => {
               const sMarks = tempMarks[s._id] || {}
               if (hasQuestions) {
-                return questions.every(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+                const qEntered = questions.every(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+                const totalEntered = sMarks['_ctTotal'] !== undefined && sMarks['_ctTotal'] !== ''
+                const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+                return qEntered || totalEntered || hasAnyQ
               } else {
                 return sMarks['marks'] !== undefined && sMarks['marks'] !== ''
               }
@@ -3024,15 +3151,57 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     {(() => {
                       if (!selectedAssessment) return null
 
+                      // Detect if this CT has all questions mapped to the same CO
+                      const isCT = selectedAssessment.type === 'cts'
+                      const uniqueCOs = hasQuestions ? new Set(questions.map(q => (q.co || 'NONE').toUpperCase().replace(/[\s-_]/g, ''))) : new Set()
+                      const allSameCO = isCT && hasQuestions && uniqueCOs.size === 1 && !uniqueCOs.has('NONE')
+                      const hasDifferentCOs = isCT && hasQuestions && uniqueCOs.size > 1
+                      const showModeToggle = isCT && hasQuestions
+                      const effectiveMode = showModeToggle ? (allSameCO ? marksEntryMode : 'perQuestion') : 'perQuestion'
+                      const isTotalMode = effectiveMode === 'total'
+                      const sharedCO = allSameCO ? questions[0]?.co : null
+
                       return (
                         <div className="space-y-4">
+                          {/* Entry Mode Toggle for CTs */}
+                          {showModeToggle && (
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 bg-gradient-to-r from-emerald-50 to-green-50 border border-green-200 rounded-xl">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-extrabold text-green-900">Entry Mode:</span>
+                                <select
+                                  value={effectiveMode}
+                                  onChange={(e) => setMarksEntryMode(e.target.value)}
+                                  disabled={hasDifferentCOs}
+                                  className={`border px-3 py-1.5 rounded-lg text-xs font-bold outline-none transition-all ${
+                                    hasDifferentCOs
+                                      ? 'border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed'
+                                      : 'border-green-400 bg-white text-green-900 focus:ring-2 focus:ring-green-500 cursor-pointer'
+                                  }`}
+                                >
+                                  <option value="perQuestion">Per Question (Q1, Q2...)</option>
+                                  <option value="total" disabled={hasDifferentCOs}>Total Marks (Single Entry)</option>
+                                </select>
+                              </div>
+                              {hasDifferentCOs && (
+                                <div className="text-[11px] font-semibold leading-relaxed text-amber-700">
+                                  ⚠️ Questions have different COs ({Array.from(uniqueCOs).join(', ')}) — per-question entry is required for accurate CO attainment.
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div className="overflow-x-auto border border-gray-200 rounded-xl max-h-[500px]">
                             <table className="w-full border-collapse text-sm text-left">
                               <thead className="bg-green-50/80 sticky top-0 z-10 border-b">
                                 <tr>
                                   <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[120px]">Student ID</th>
                                   <th className="px-4 py-3 border-r font-bold text-gray-700 min-w-[200px]">Student Name</th>
-                                  {hasQuestions ? (
+                                  {isTotalMode ? (
+                                    <th className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[90px]">
+                                      <div>Total Marks</div>
+                                      <div className="text-[10px] text-gray-500 font-semibold">Max: {selectedAssessment.maxMarks} • {sharedCO}</div>
+                                    </th>
+                                  ) : hasQuestions ? (
                                     questions.map(q => (
                                       <th key={q.questionNumber} className="px-4 py-3 border-r font-bold text-gray-700 text-center min-w-[90px]">
                                         <div>{q.questionNumber}</div>
@@ -3045,7 +3214,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                       <div className="text-[10px] text-gray-500 font-semibold">Max: {selectedAssessment.maxMarks}</div>
                                     </th>
                                   )}
-                                  <th className="px-4 py-3 font-bold text-gray-700 text-center min-w-[90px]">Total Marks</th>
+                                  <th className="px-4 py-3 font-bold text-gray-700 text-center min-w-[90px]">{isTotalMode ? 'Entered' : 'Total Marks'}</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y font-semibold text-gray-700">
@@ -3055,7 +3224,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                                   // Calculate total
                                   let sum = 0
-                                  if (hasQuestions) {
+                                  if (isTotalMode) {
+                                    sum = parseFloat(sMarks['_ctTotal']) || 0
+                                  } else if (hasQuestions) {
                                     questions.forEach(q => {
                                       sum += parseFloat(sMarks[q.questionNumber]) || 0
                                     })
@@ -3065,9 +3236,36 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                                   return (
                                     <tr key={sId} className="hover:bg-green-50/10">
-                                      <td className="px-4 py-2 border-r font-mono text-gray-800 bg-white">{s.id}</td>
+                                      <td className="px-4 py-2 border-r font-bold text-gray-900 bg-white">{s.id}</td>
                                       <td className="px-4 py-2 border-r bg-white">{s.name}</td>
-                                      {hasQuestions ? (
+                                      {isTotalMode ? (
+                                        <td className="px-2 py-1.5 border-r text-center">
+                                          {(() => {
+                                            let displayTotal = sMarks['_ctTotal']
+                                            if (displayTotal === undefined || displayTotal === '') {
+                                              const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+                                              if (hasAnyQ) {
+                                                displayTotal = questions.reduce((acc, q) => acc + (parseFloat(sMarks[q.questionNumber]) || 0), 0)
+                                              } else {
+                                                displayTotal = ''
+                                              }
+                                            }
+                                            return (
+                                              <input
+                                                type="number"
+                                                step="0.5"
+                                                min="0"
+                                                max={selectedAssessment.maxMarks}
+                                                value={displayTotal}
+                                                onChange={(e) => handleSpreadsheetMarkChange(sId, '_ctTotal', e.target.value, parseFloat(selectedAssessment.maxMarks), questions)}
+                                                onWheel={(e) => e.target.blur()}
+                                                className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
+                                                placeholder="0"
+                                              />
+                                            )
+                                          })()}
+                                        </td>
+                                      ) : hasQuestions ? (
                                         questions.map(q => {
                                           const val = sMarks[q.questionNumber] ?? ''
                                           return (
@@ -3887,14 +4085,43 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           {activeTab === 'reports' && (
             <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
               {(() => {
-                // Reconstruct assets structure for reports
-                const cts = assessments.filter(a => a.type === 'cts')
-                const midTerm = assessments.filter(a => a.type === 'midTerm')
-                const final = assessments.filter(a => a.type === 'final')
-                const assignments = assessments.filter(a => a.type === 'assignments')
-                const attendance = assessments.find(a => a.type === 'attendance')
-                const performance = assessments.find(a => a.type === 'performance')
-                const presentation = assessments.find(a => a.type === 'presentation')
+                if (reportScope === 'combined' && !combinedBatchSpreadsheetData && !loadingCombinedBatch) {
+                  setLoadingCombinedBatch(true)
+                  apiService.getCombinedBatchSpreadsheet(offering._id)
+                    .then(res => {
+                      setCombinedBatchSpreadsheetData(res)
+                      setLoadingCombinedBatch(false)
+                    })
+                    .catch(err => {
+                      console.error('Failed to load combined batch spreadsheet:', err)
+                      setLoadingCombinedBatch(false)
+                    })
+                }
+
+                if (reportScope === 'combined' && (loadingCombinedBatch || !combinedBatchSpreadsheetData)) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+                      <p className="mt-4 text-emerald-800 font-bold text-lg">Generating Combined Batch Report...</p>
+                      <p className="text-sm text-gray-500 font-semibold">Aggregating students and assessment marks across all sections</p>
+                    </div>
+                  )
+                }
+
+                const activeSpreadsheetData = reportScope === 'combined' && combinedBatchSpreadsheetData
+                  ? combinedBatchSpreadsheetData
+                  : marksSpreadsheetData
+
+                const activeStudents = (activeSpreadsheetData.students || []).map(s => ({ id: s.id, name: s.name, _id: s._id, section: s.section }))
+                const activeAssessmentsList = activeSpreadsheetData.assessments || assessments
+
+                const cts = activeAssessmentsList.filter(a => a.type === 'cts')
+                const midTerm = activeAssessmentsList.filter(a => a.type === 'midTerm')
+                const final = activeAssessmentsList.filter(a => a.type === 'final')
+                const assignments = activeAssessmentsList.filter(a => a.type === 'assignments')
+                const attendance = activeAssessmentsList.find(a => a.type === 'attendance')
+                const performance = activeAssessmentsList.find(a => a.type === 'performance')
+                const presentation = activeAssessmentsList.find(a => a.type === 'presentation')
 
                 const structuredAssessments = {
                   cts,
@@ -3906,7 +4133,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   presentation
                 }
 
-                if (!marksSpreadsheetData.marks) {
+                if (!activeSpreadsheetData.marks) {
                   return (
                     <div className="flex flex-col items-center justify-center py-12">
                       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
@@ -3915,10 +4142,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   )
                 }
 
+                const sectionsList = activeSpreadsheetData.sections || [offering.section]
+                const sectionDisplayName = reportScope === 'combined'
+                  ? (sectionsList.length > 1 ? `All Sections (${sectionsList.join(', ')})` : `Section ${offering.section}`)
+                  : offering.section
+
                 return (
                   <ComprehensiveReports
-                    students={students.map(s => ({ id: s.id, name: s.name, _id: s._id }))}
-                    marks={marksSpreadsheetData.marks || {}}
+                    students={activeStudents}
+                    marks={activeSpreadsheetData.marks || {}}
                     assessments={structuredAssessments}
                     coMapping={coMapping}
                     courseInfo={{
@@ -3928,15 +4160,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       teacherEmail: offering.teacher?.email,
                       batchName: offering.batch?.name || offering.batch?.batchName || 'N/A',
                       semesterName: offering.semester?.semesterName,
-                      sectionName: offering.section,
+                      sectionName: sectionDisplayName,
+                      rawSectionName: offering.section,
                       academicYear: offering.academicYear || offering.semester?.academicYear,
                     }}
                     targetPassMarks={attainmentData.kpiConfig?.targetPassMarks}
                     kpiCO={attainmentData.kpiConfig?.kpiCO}
                     kpiPO={attainmentData.kpiConfig?.kpiPO}
-                    metadataMap={marksSpreadsheetData.metadata || {}}
+                    metadataMap={activeSpreadsheetData.metadata || {}}
                     dbCourseOutcomes={dbCourseOutcomes}
                     dbProgramOutcomes={dbProgramOutcomes}
+                    reportScope={reportScope}
+                    onReportScopeChange={setReportScope}
                   />
                 )
               })()}

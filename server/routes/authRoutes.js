@@ -156,6 +156,7 @@ router.post("/login", async (req, res) => {
 
     user.isLoggedIn = true;
     user.lastLoginAt = new Date();
+    user.lastActiveAt = new Date();
     await user.save();
 
     const token = signAuthToken({ userId: user._id.toString() });
@@ -179,11 +180,23 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.post("/heartbeat", requireAuth, async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      isLoggedIn: true,
+      lastActiveAt: new Date(),
+    });
+    return res.status(200).json({ ok: true });
+  } catch {
+    return res.status(500).json({ message: "Heartbeat failed." });
+  }
+});
+
 router.post("/logout", requireAuth, async (req, res) => {
   const dbReady = await ensureDatabase(res);
   if (!dbReady) return;
   try {
-    await User.findByIdAndUpdate(req.user._id, { isLoggedIn: false });
+    await User.findByIdAndUpdate(req.user._id, { isLoggedIn: false, lastActiveAt: null });
     clearAuthCookie(res);
     return res.status(200).json({ message: "Logged out successfully." });
   } catch {
@@ -264,19 +277,33 @@ router.get("/admin/users", async (req, res) => {
   if (!requireAdminRequest(req, res)) return;
   try {
     const users = await User.find({})
-      .select("_id fullName email role isLoggedIn lastLoginAt createdAt")
+      .select("_id fullName email role isLoggedIn lastLoginAt lastActiveAt createdAt")
       .sort({ createdAt: -1 });
-    console.log("Fetched users count:", users.length);
-    return res.status(200).json({
-      users: users.map((item) => ({
+
+    const ONLINE_THRESHOLD_MS = 30 * 1000;
+    const now = Date.now();
+
+    const formattedUsers = users.map((item) => {
+      const isRecentlyActive = item.lastActiveAt && (now - new Date(item.lastActiveAt).getTime() < ONLINE_THRESHOLD_MS);
+      const isActuallyOnline = Boolean(item.isLoggedIn && isRecentlyActive);
+
+      if (item.isLoggedIn && !isRecentlyActive) {
+        User.findByIdAndUpdate(item._id, { isLoggedIn: false }).catch(() => {});
+      }
+
+      return {
         id: item._id,
         fullName: item.fullName,
         email: item.email,
         role: item.role || "user",
-        isLoggedIn: item.isLoggedIn || false,
+        isLoggedIn: isActuallyOnline,
         lastLoginAt: item.lastLoginAt || null,
         createdAt: item.createdAt,
-      })),
+      };
+    });
+
+    return res.status(200).json({
+      users: formattedUsers,
     });
   } catch {
     return res.status(500).json({ message: "Server error. Please try again." });

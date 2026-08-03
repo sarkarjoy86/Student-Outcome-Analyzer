@@ -231,12 +231,97 @@ async function recalculateAttainments(offeringId) {
 
       await POAttainment.findOneAndUpdate(
         { courseOffering: offeringId, po: poKey },
-        { passMarksPercentage, kpiPercentage, attained, updatedAt: new Date() },
-        { upsert: true, returnDocument: 'after' }
+        { coAttainments: poMap[poKey] },
+        { upsert: true }
       )
     }
   } catch (err) {
-    console.error('Error recalculating attainments:', err.message)
+    console.error('Error in recalculateAttainments:', err)
+  }
+}
+
+// Helper to sync MID & FINAL assessments across sister offerings of the same course & batch
+async function syncSisterMidFinal(sourceOfferingId, type, action, payload = {}) {
+  try {
+    if (!['midTerm', 'final'].includes(type)) return;
+
+    const sourceOffering = await CourseOffering.findById(sourceOfferingId);
+    if (!sourceOffering) return;
+
+    const filter = {
+      course: sourceOffering.course,
+      batch: sourceOffering.batch,
+      _id: { $ne: sourceOffering._id }
+    };
+    if (sourceOffering.semester) {
+      filter.semester = sourceOffering.semester;
+    }
+
+    const sisterOfferings = await CourseOffering.find(filter);
+    if (sisterOfferings.length === 0) return;
+
+    for (const sister of sisterOfferings) {
+      if (action === 'CREATE' || action === 'UPDATE') {
+        let sisterAsmt = await Assessment.findOne({ courseOffering: sister._id, type });
+        if (!sisterAsmt) {
+          sisterAsmt = await Assessment.create({
+            courseOffering: sister._id,
+            type,
+            name: payload.name || (type === 'midTerm' ? 'Mid Term' : 'Final'),
+            maxMarks: payload.maxMarks || 50,
+            co: payload.co || '',
+            numQuestions: payload.numQuestions || 0,
+            examDuration: payload.examDuration || '',
+            deadline: payload.deadline || null,
+            status: payload.status || 'Draft'
+          });
+        } else {
+          if (payload.maxMarks !== undefined) sisterAsmt.maxMarks = payload.maxMarks;
+          if (payload.numQuestions !== undefined) sisterAsmt.numQuestions = payload.numQuestions;
+          if (payload.examDuration !== undefined) sisterAsmt.examDuration = payload.examDuration;
+          if (payload.status !== undefined) sisterAsmt.status = payload.status;
+          if (payload.co !== undefined) sisterAsmt.co = payload.co;
+          if (payload.name !== undefined) sisterAsmt.name = payload.name;
+          if (payload.deadline !== undefined) sisterAsmt.deadline = payload.deadline;
+          await sisterAsmt.save();
+        }
+
+        if (payload.questions && Array.isArray(payload.questions)) {
+          await QuestionMetadata.findOneAndUpdate(
+            { assessment: sisterAsmt._id },
+            {
+              courseOffering: sister._id,
+              questions: payload.questions
+            },
+            { upsert: true, returnDocument: 'after' }
+          );
+        }
+
+        if (payload.content !== undefined) {
+          await QuestionPaper.findOneAndUpdate(
+            { assessment: sisterAsmt._id },
+            {
+              courseOffering: sister._id,
+              content: payload.content || '',
+              createdBy: payload.createdBy || null
+            },
+            { upsert: true, returnDocument: 'after' }
+          );
+        }
+
+        recalculateAttainments(sister._id);
+      } else if (action === 'DELETE') {
+        const sisterAsmt = await Assessment.findOne({ courseOffering: sister._id, type });
+        if (sisterAsmt) {
+          await Assessment.findByIdAndDelete(sisterAsmt._id);
+          await QuestionPaper.deleteOne({ assessment: sisterAsmt._id });
+          await QuestionMetadata.deleteOne({ assessment: sisterAsmt._id });
+          recalculateAttainments(sister._id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error syncing sister MID/FINAL assessments:', err);
   }
 }
 
@@ -451,6 +536,20 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
       })
     }
 
+    if (['midTerm', 'final'].includes(type)) {
+      const meta = await QuestionMetadata.findOne({ assessment: assessment._id })
+      await syncSisterMidFinal(offeringId, type, 'CREATE', {
+        name: assessment.name,
+        maxMarks: assessment.maxMarks,
+        co: assessment.co,
+        numQuestions: assessment.numQuestions,
+        examDuration: assessment.examDuration,
+        deadline: assessment.deadline,
+        status: assessment.status,
+        questions: meta ? meta.questions : []
+      })
+    }
+
     await logActivity(offeringId, req.user._id, 'Assessment Created', `Created ${name} (${type})`)
     res.status(201).json({ message: 'Assessment created successfully.', assessment })
   } catch (error) {
@@ -510,6 +609,20 @@ router.put('/teacher/assessments/:id', requireAuth, async (req, res) => {
 
     await assessment.save()
 
+    if (['midTerm', 'final'].includes(assessment.type)) {
+      const meta = await QuestionMetadata.findOne({ assessment: assessment._id })
+      await syncSisterMidFinal(assessment.courseOffering, assessment.type, 'UPDATE', {
+        name: assessment.name,
+        maxMarks: assessment.maxMarks,
+        co: assessment.co,
+        numQuestions: assessment.numQuestions,
+        examDuration: assessment.examDuration,
+        deadline: assessment.deadline,
+        status: assessment.status,
+        questions: meta ? meta.questions : []
+      })
+    }
+
     // Recalculate attainments in background
     recalculateAttainments(assessment.courseOffering)
 
@@ -529,6 +642,10 @@ router.delete('/teacher/assessments/:id', requireAuth, async (req, res) => {
     }
 
     const offeringId = assessment.courseOffering
+
+    if (['midTerm', 'final'].includes(assessment.type)) {
+      await syncSisterMidFinal(offeringId, assessment.type, 'DELETE')
+    }
 
     await Assessment.findByIdAndDelete(req.params.id)
     await QuestionPaper.deleteOne({ assessment: req.params.id })
@@ -630,6 +747,21 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
 
       await assessment.save()
       recalculateAttainments(assessment.courseOffering)
+    }
+
+    if (['midTerm', 'final'].includes(assessment.type)) {
+      await syncSisterMidFinal(assessment.courseOffering, assessment.type, 'UPDATE', {
+        name: assessment.name,
+        maxMarks: assessment.maxMarks,
+        co: assessment.co,
+        numQuestions: assessment.numQuestions,
+        examDuration: assessment.examDuration,
+        deadline: assessment.deadline,
+        status: assessment.status,
+        content: content || '',
+        questions: Array.isArray(questions) ? questions : [],
+        createdBy: req.user._id
+      })
     }
 
     await logActivity(assessment.courseOffering, req.user._id, 'Question Paper Updated', `Saved/Updated question paper and metadata for: ${assessment.name}`)
@@ -818,6 +950,153 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
     })
   } catch (error) {
     res.status(500).json({ message: 'Error fetching marks spreadsheet data', error: error.message })
+  }
+})
+
+// 10b. Get combined batch marks spreadsheet data for all sections of the same course & batch
+router.get('/teacher/course-offerings/:id/combined-batch-spreadsheet', requireAuth, async (req, res) => {
+  try {
+    const primaryOfferingId = req.params.id
+    const primaryOffering = await CourseOffering.findById(primaryOfferingId)
+      .populate('course')
+      .populate('batch')
+      .populate('semester')
+      .populate('teacher', 'fullName email')
+
+    if (!primaryOffering) {
+      return res.status(404).json({ message: 'Course offering not found' })
+    }
+
+    const filter = {
+      course: primaryOffering.course._id || primaryOffering.course,
+      batch: primaryOffering.batch._id || primaryOffering.batch
+    }
+    if (primaryOffering.semester) {
+      filter.semester = primaryOffering.semester._id || primaryOffering.semester
+    }
+
+    const sisterOfferings = await CourseOffering.find(filter)
+      .populate('teacher', 'fullName email')
+      .sort({ section: 1 })
+
+    const sisterOfferingIds = sisterOfferings.map(s => s._id)
+    const sectionNames = sisterOfferings.map(s => s.section).filter(Boolean)
+
+    const primaryAssessments = await Assessment.find({ courseOffering: primaryOfferingId })
+    const primaryMetadataList = await QuestionMetadata.find({ courseOffering: primaryOfferingId })
+    
+    const metadataMap = {}
+    primaryMetadataList.forEach(m => {
+      metadataMap[m.assessment.toString()] = m.questions
+    })
+
+    const allOfferingsAssessments = await Assessment.find({ courseOffering: { $in: sisterOfferingIds } })
+    
+    const asmtIdMap = {}
+    allOfferingsAssessments.forEach(a => {
+      const aId = a._id.toString()
+      if (a.courseOffering.toString() === primaryOfferingId.toString()) {
+        asmtIdMap[aId] = aId
+      } else {
+        const match = primaryAssessments.find(p => p.type === a.type && (p.name === a.name || p.type === 'midTerm' || p.type === 'final'))
+        if (match) {
+          asmtIdMap[aId] = match._id.toString()
+        } else {
+          const typeMatch = primaryAssessments.find(p => p.type === a.type)
+          if (typeMatch) {
+            asmtIdMap[aId] = typeMatch._id.toString()
+          } else {
+            asmtIdMap[aId] = aId
+          }
+        }
+      }
+    })
+
+    const allStudentsMap = new Map()
+
+    for (const sister of sisterOfferings) {
+      const sectionDoc = sister.batch && sister.section
+        ? await Section.findOne({ batchId: sister.batch._id || sister.batch, sectionName: sister.section })
+        : null
+      const sectionId = sectionDoc ? sectionDoc._id : null
+
+      const enrollments = await Enrollment.find({ courseOffering: sister._id }).populate('student')
+      let sisterStudents = enrollments
+        .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+        .map((e) => ({
+          _id: e.student._id,
+          id: e.student.studentId,
+          name: e.student.name,
+          section: sister.section || 'A'
+        }))
+
+      if (sisterStudents.length === 0 && sister.batch) {
+        const query = { batchId: sister.batch._id || sister.batch }
+        if (sectionId) query.sectionId = sectionId
+        const dbStudents = await Student.find(query)
+        sisterStudents = dbStudents.map(s => ({
+          _id: s._id,
+          id: s.studentId,
+          name: s.name,
+          section: sister.section || 'A'
+        }))
+      }
+
+      sisterStudents.forEach(st => {
+        const sKey = st._id.toString()
+        if (!allStudentsMap.has(sKey)) {
+          allStudentsMap.set(sKey, st)
+        }
+      })
+    }
+
+    const studentsList = Array.from(allStudentsMap.values()).sort((a, b) => {
+      const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
+      const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
+      return numA - numB
+    })
+
+    const allMarks = await StudentMarks.find({ courseOffering: { $in: sisterOfferingIds } })
+    const marksMap = {}
+
+    allMarks.forEach(m => {
+      const sId = m.student.toString()
+      const origAId = m.assessment.toString()
+      const targetAId = asmtIdMap[origAId] || origAId
+
+      if (!marksMap[sId]) marksMap[sId] = {}
+
+      const qMarksObj = {}
+      if (m.questionMarks) {
+        m.questionMarks.forEach(qm => {
+          qMarksObj[qm.questionNumber] = qm.mark
+        })
+      }
+
+      marksMap[sId][targetAId] = {
+        questionMarks: qMarksObj,
+        totalMark: m.totalMark || 0
+      }
+    })
+
+    const formattedAssessments = primaryAssessments.map(a => {
+      const docObj = a.toObject ? a.toObject() : { ...a }
+      if (!docObj.createdAt && a._id && typeof a._id.getTimestamp === 'function') {
+        docObj.createdAt = a._id.getTimestamp()
+      }
+      return docObj
+    })
+
+    res.status(200).json({
+      students: studentsList,
+      assessments: formattedAssessments,
+      metadata: metadataMap,
+      marks: marksMap,
+      sections: sectionNames,
+      offeringCount: sisterOfferings.length
+    })
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching combined batch spreadsheet data', error: error.message })
   }
 })
 

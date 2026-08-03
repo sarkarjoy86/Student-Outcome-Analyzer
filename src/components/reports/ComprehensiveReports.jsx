@@ -38,6 +38,7 @@ import {
   ChevronRight,
   Sparkles,
 } from 'lucide-react'
+import SWOTAnalysisReport from './SWOTAnalysisReport'
 import * as XLSX from 'xlsx'
 import { calculateAllAttainments, getCOMarkAllocations } from '../../utils/comprehensiveCalculations'
 import { downloadChartAsJPG } from '../../utils/chartDownload'
@@ -125,6 +126,8 @@ const ComprehensiveReports = ({
   initialViewMode = 'overview',
   dbCourseOutcomes = [],
   dbProgramOutcomes = [],
+  reportScope = 'section',
+  onReportScopeChange = null,
 }) => {
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [selectedCompareStudents, setSelectedCompareStudents] = useState([])
@@ -743,6 +746,7 @@ const ComprehensiveReports = ({
       })
       .filter(s => s.percentage < kpiCO || s.weakCOs.length > 0)
       .sort((a, b) => a.percentage - b.percentage)
+      .slice(0, 10)
   }, [students, studentTotalMarks, totalMaxMarks, calculations.studentCOs, activeCOs, kpiCO])
 
   // Pedagogical Action Recommendation Builder for weak COs
@@ -850,7 +854,7 @@ const ComprehensiveReports = ({
 
     // Summary Sheet
     const summaryData = [
-      ['OBE BATCH ATTAINMENT SUMMARY REPORT'],
+      [`OBE ${reportScope === 'combined' ? 'BATCH' : 'SECTION'} ATTAINMENT SUMMARY REPORT`],
       [],
       ['COURSE DETAILS'],
       ['Course Code', courseInfo?.courseCode || 'N/A'],
@@ -885,7 +889,7 @@ const ComprehensiveReports = ({
     ws2['!cols'] = [{ wch: 30 }, { wch: 30 }, { wch: 25 }]
     XLSX.utils.book_append_sheet(wb, ws2, 'Summary Report')
 
-    const fileName = `OBE_Batch_Report_${courseInfo?.courseCode || 'Course'}_${new Date().toISOString().split('T')[0]}.xlsx`
+    const fileName = `OBE_${reportScope === 'combined' ? 'Batch' : 'Section'}_Report_${courseInfo?.courseCode || 'Course'}_${new Date().toISOString().split('T')[0]}.xlsx`
     XLSX.writeFile(wb, fileName)
   }
 
@@ -1770,12 +1774,12 @@ const ComprehensiveReports = ({
       </div>
     `
 
-    const docHTML = generateWordDocumentHTMLString('OBE Batch Attainment Report', bodyHTML)
+    const docHTML = generateWordDocumentHTMLString(`OBE ${reportScope === 'combined' ? 'Batch' : 'Section'} Attainment Report`, bodyHTML)
     const blob = new Blob(['\ufeff' + docHTML], { type: 'application/msword' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `OBE_Batch_Report_${courseInfo.courseCode || 'Course'}_${courseInfo.batchName || 'Batch'}.doc`
+    link.download = `OBE_${reportScope === 'combined' ? 'Batch' : 'Section'}_Report_${courseInfo.courseCode || 'Course'}_${courseInfo.batchName || 'Batch'}.doc`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -1897,35 +1901,85 @@ const ComprehensiveReports = ({
             height: 250px !important;
             max-height: 250px !important;
           }
-          .page-break {
-            page-break-before: always !important;
-            break-before: page !important;
+          .printable-swot-document {
+            font-family: 'Times New Roman', Times, serif !important;
+            font-size: 11pt !important;
+            color: #000 !important;
+            box-shadow: none !important;
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+            width: 100% !important;
+          }
+          .printable-swot-document h4 {
+            font-size: 12pt !important;
+            font-weight: bold !important;
+            margin-top: 12px !important;
+            margin-bottom: 6px !important;
+          }
+          .printable-swot-document ul li {
+            list-style-type: disc !important;
+            font-size: 10pt !important;
           }
         }
       `}</style>
 
       {/* Header Panel */}
-      <div className="bg-gradient-to-br from-white via-green-50/30 to-blue-50/30 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border-2 border-green-200 no-print">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-4">
+      <div className="bg-gradient-to-br from-white via-green-50/30 to-blue-50/30 backdrop-blur-lg rounded-2xl shadow-xl p-6 border border-emerald-200/80 no-print">
+        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-4xl font-extrabold bg-gradient-to-r from-green-800 via-green-600 to-blue-700 bg-clip-text text-transparent flex items-center gap-2">
-              <Sparkles className="w-8 h-8 text-green-700 animate-pulse" />
+            <h1 className="text-3xl lg:text-4xl font-black bg-gradient-to-r from-emerald-900 via-green-700 to-teal-800 bg-clip-text text-transparent flex items-center gap-2.5">
+              <Sparkles className="w-8 h-8 text-emerald-600 animate-pulse" />
               Automated OBE Reports
             </h1>
-            <p className="text-gray-700 mt-2 font-semibold text-lg">
-              {courseInfo?.courseCode || 'Course'} - {courseInfo?.courseTitle || 'Title'}
-              {courseInfo?.batchName && ` | Batch: ${courseInfo.batchName}`}
-              {courseInfo?.sectionName && ` | Section: ${courseInfo.sectionName}`}
-              {courseInfo?.semesterName && ` | Semester: ${courseInfo.semesterName}`}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-2 text-gray-700 font-semibold text-sm">
+              <span className="font-bold text-gray-900">{courseInfo?.courseCode || 'Course'} - {courseInfo?.courseTitle || 'Title'}</span>
+              {courseInfo?.batchName && <span className="px-2.5 py-0.5 bg-emerald-100/80 text-emerald-900 rounded-full text-xs font-bold">Batch: {courseInfo.batchName}</span>}
+              {courseInfo?.sectionName && <span className="px-2.5 py-0.5 bg-blue-100/80 text-blue-900 rounded-full text-xs font-bold">{courseInfo.sectionName.includes('Section') ? courseInfo.sectionName : `Section: ${courseInfo.sectionName}`}</span>}
+              {courseInfo?.semesterName && <span className="px-2.5 py-0.5 bg-purple-100/80 text-purple-900 rounded-full text-xs font-bold">Semester: {courseInfo.semesterName}</span>}
+            </div>
           </div>
+
           {viewMode !== 'allDetails' && (
-            <div className="flex flex-wrap gap-2 md:justify-end">
+            <div className="flex flex-wrap items-center gap-2.5 xl:justify-end w-full xl:w-auto">
+              {/* Professional Segmented Report Scope Switch */}
+              {onReportScopeChange && (
+                <div className="inline-flex items-center p-1 bg-gray-100/90 rounded-xl border border-gray-200 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => onReportScopeChange('section')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
+                      reportScope === 'section'
+                        ? 'bg-white text-emerald-900 shadow-md border border-emerald-200/80'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
+                    }`}
+                    title="Generate report for your specific section only"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Section {courseInfo?.rawSectionName || 'Report'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onReportScopeChange('combined')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
+                      reportScope === 'combined'
+                        ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-green-700 text-white shadow-md'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
+                    }`}
+                    title="Generate combined aggregate report across all sections of this batch"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Combined Batch Report</span>
+                  </button>
+                </div>
+              )}
+
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-2 px-3.5 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-300 rounded-lg text-sm font-semibold transition-colors duration-200 shadow-sm"
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl text-xs font-bold shadow-sm transition-all duration-200 hover:shadow active:scale-95"
               >
-                <Printer size={16} />
+                <Printer size={15} />
                 <span>Print Report</span>
               </button>
 
@@ -1933,26 +1987,26 @@ const ComprehensiveReports = ({
                 <>
                   <button
                     onClick={handleDownloadExcel}
-                    className="flex items-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors duration-200 shadow-sm"
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all duration-200 active:scale-95"
                   >
-                    <Download size={16} />
+                    <Download size={15} />
                     <span>Download Excel</span>
                   </button>
                   {viewMode === 'batch' && (
                     <button
                       onClick={handleExportBatchWord}
-                      className="flex items-center gap-2 px-3.5 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-sm font-semibold transition-colors duration-200 shadow-sm"
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all duration-200 active:scale-95"
                     >
-                      <Download size={16} />
+                      <Download size={15} />
                       <span>Export Word Report</span>
                     </button>
                   )}
                   {viewMode === 'individual' && selectedStudentId && (
                     <button
                       onClick={() => handleExportIndividualWord(selectedStudentId)}
-                      className="flex items-center gap-2 px-3.5 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-sm font-semibold transition-colors duration-200 shadow-sm"
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all duration-200 active:scale-95"
                     >
-                      <Download size={16} />
+                      <Download size={15} />
                       <span>Export Word Report</span>
                     </button>
                   )}
@@ -1963,18 +2017,19 @@ const ComprehensiveReports = ({
         </div>
 
         {/* Tab Selection */}
-        <div className="flex flex-wrap gap-2 border-b-2 border-green-200 tabs-container mt-6">
+        <div className="flex flex-nowrap overflow-x-auto gap-1 sm:gap-2 border-b-2 border-green-200 tabs-container mt-6 no-scrollbar scrollbar-none">
           {[
             { id: 'overview', label: 'Course Overview' },
-            { id: 'batch', label: 'CO/PO Attainment (Batch)' },
+            { id: 'batch', label: reportScope === 'combined' ? 'CO/PO Attainment (Batch)' : 'CO/PO Attainment (Section)' },
             { id: 'individual', label: 'Student Analysis' },
             { id: 'compare', label: 'Comparative Analysis' },
             { id: 'allDetails', label: 'Mapping Details' },
+            { id: 'swot', label: 'SWOT Analysis' },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setViewMode(tab.id)}
-              className={`px-5 py-3 font-bold transition-all duration-300 rounded-t-lg -mb-[2px] ${viewMode === tab.id
+              className={`px-3.5 sm:px-4 lg:px-5 py-2.5 sm:py-3 text-xs sm:text-sm font-bold whitespace-nowrap transition-all duration-300 rounded-t-lg -mb-[2px] ${viewMode === tab.id
                 ? 'border-b-4 border-green-700 text-green-800 bg-green-50'
                 : 'text-gray-500 hover:text-green-700 hover:bg-green-50/50'
                 }`}
@@ -2944,7 +2999,7 @@ const ComprehensiveReports = ({
             {/* SECTION 1: Cover Page */}
             <div id="batch-report-cover">
               <ReportCoverPage
-                title="OBE COURSE REPORT"
+                title={reportScope === 'combined' ? 'OBE COMBINED BATCH REPORT' : `OBE SECTION REPORT (SEC: ${courseInfo.rawSectionName || 'A'})`}
                 courseInfo={courseInfo}
                 targetPassMarks={targetPassMarks}
                 kpiCO={kpiCO}
@@ -3752,6 +3807,25 @@ const ComprehensiveReports = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* VIEW 6: SWOT Analysis Tab */}
+        {viewMode === 'swot' && (
+          <SWOTAnalysisReport
+            courseInfo={courseInfo}
+            calculations={calculations}
+            coMarkAllocations={coMarkAllocations}
+            activeCOs={activeCOs}
+            activePOs={activePOs}
+            coMapping={coMapping}
+            targetPassMarks={targetPassMarks}
+            kpiCO={kpiCO}
+            kpiPO={kpiPO}
+            dbCourseOutcomes={dbCourseOutcomes}
+            dbProgramOutcomes={dbProgramOutcomes}
+            coDescriptions={coDescriptions}
+            poDescriptions={poDescriptions}
+          />
         )}
 
       </div>

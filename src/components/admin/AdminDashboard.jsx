@@ -867,6 +867,21 @@ export default function AdminDashboard() {
     }
   };
 
+  const isSectionAlreadyOffered = (secName) => {
+    if (!offeringForm.courseId || !offeringForm.batchId || !secName) return false;
+    const targetNorm = String(secName || "").trim().toLowerCase().replace(/^section\s+/i, "");
+    return offerings.some((o) => {
+      if (editingOfferingId && (o._id === editingOfferingId || String(o._id) === String(editingOfferingId))) {
+        return false;
+      }
+      const courseMatch = String(o.course?._id || o.course || "") === String(offeringForm.courseId);
+      const batchMatch = String(o.batch?._id || o.batch || "") === String(offeringForm.batchId);
+      const semesterMatch = !offeringForm.semesterId || String(o.semester?._id || o.semester || "") === String(offeringForm.semesterId);
+      const sectionMatch = String(o.section || "").trim().toLowerCase().replace(/^section\s+/i, "") === targetNorm;
+      return courseMatch && batchMatch && semesterMatch && sectionMatch;
+    });
+  };
+
   const handleCreateOffering = async (e) => {
     e.preventDefault();
     if (
@@ -880,6 +895,12 @@ export default function AdminDashboard() {
       alert("Please fill all course offering fields.");
       return;
     }
+
+    if (isSectionAlreadyOffered(offeringForm.section)) {
+      alert(`Section ${offeringForm.section} is already assigned for the selected course, batch, and session.`);
+      return;
+    }
+
     try {
       const payload = {
         courseId: offeringForm.courseId,
@@ -2841,11 +2862,14 @@ export default function AdminDashboard() {
                     required
                   >
                     <option value="">Select section</option>
-                    {offeringSections.map((sec) => (
-                      <option key={sec._id} value={sec.sectionName}>
-                        Section {sec.sectionName}
-                      </option>
-                    ))}
+                    {offeringSections.map((sec) => {
+                      const offered = isSectionAlreadyOffered(sec.sectionName);
+                      return (
+                        <option key={sec._id} value={sec.sectionName} disabled={offered}>
+                          Section {sec.sectionName} {offered ? "(Already Offered)" : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 

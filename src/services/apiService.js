@@ -478,6 +478,11 @@ export const apiService = {
     return handleResponse(res);
   },
 
+  async getCombinedBatchSpreadsheet(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/combined-batch-spreadsheet`);
+    return handleResponse(res);
+  },
+
   async saveMarksSpreadsheet(offeringId, payload) {
     const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/marks-spreadsheet`, {
       method: "POST",

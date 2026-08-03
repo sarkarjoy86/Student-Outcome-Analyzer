@@ -60,11 +60,35 @@ async function getCombinedSurvey(surveyDoc) {
   return survey
 }
 
+async function resolveSurveyForOffering(offeringId) {
+  if (!offeringId) return null;
+  let surveyDoc = await Survey.findOne({ courseOfferingId: offeringId });
+  if (surveyDoc) return surveyDoc;
+
+  const offering = await CourseOffering.findById(offeringId);
+  if (!offering || !offering.teacher) return null;
+
+  const sisterFilter = {
+    course: offering.course,
+    batch: offering.batch,
+    teacher: offering.teacher,
+    _id: { $ne: offering._id }
+  };
+  if (offering.semester) sisterFilter.semester = offering.semester;
+
+  const sisterOfferings = await CourseOffering.find(sisterFilter);
+  if (sisterOfferings.length === 0) return null;
+
+  const sisterOfferingIds = sisterOfferings.map(s => s._id);
+  surveyDoc = await Survey.findOne({ courseOfferingId: { $in: sisterOfferingIds } });
+  return surveyDoc;
+}
+
 // 1. Get survey config for a specific course offering
 router.get('/surveys/offering/:offeringId', requireAuth, async (req, res) => {
   try {
     const { offeringId } = req.params
-    const surveyDoc = await Survey.findOne({ courseOfferingId: offeringId })
+    const surveyDoc = await resolveSurveyForOffering(offeringId)
     if (!surveyDoc) {
       return res.status(200).json({ survey: null })
     }
@@ -89,10 +113,11 @@ router.post('/surveys', requireAuth, async (req, res) => {
       return res.status(404).json({ message: 'Course offering not found' })
     }
 
-    // Check if a survey already exists for this course offering
-    let surveyDoc = await Survey.findOne({ courseOfferingId })
+    // Check if a survey already exists for this course offering or a same-teacher sister offering
+    let surveyDoc = await resolveSurveyForOffering(courseOfferingId)
     if (surveyDoc) {
-      return res.status(400).json({ message: 'A survey already exists for this course offering.' })
+      const survey = await getCombinedSurvey(surveyDoc)
+      return res.status(200).json({ message: 'A survey already exists for this course offering and teacher.', survey })
     }
 
     const tempId = `SRV-TEMP-${Date.now()}`
@@ -283,6 +308,48 @@ router.get('/public/surveys/:id', async (req, res) => {
   }
 })
 
+async function checkStudentSurveyAccess(student, primaryOffering) {
+  if (!primaryOffering) return false;
+  
+  const directEnrolled = await Enrollment.findOne({ student: student._id, courseOffering: primaryOffering._id });
+  if (directEnrolled) return true;
+
+  if (!primaryOffering.batch || !primaryOffering.teacher) return false;
+
+  const CourseOfferingModel = mongoose.model('CourseOffering');
+  const SectionModel = mongoose.model('Section');
+
+  const sameTeacherFilter = {
+    course: primaryOffering.course?._id || primaryOffering.course,
+    batch: primaryOffering.batch?._id || primaryOffering.batch,
+    teacher: primaryOffering.teacher?._id || primaryOffering.teacher
+  };
+  if (primaryOffering.semester) {
+    sameTeacherFilter.semester = primaryOffering.semester?._id || primaryOffering.semester;
+  }
+
+  const sameTeacherOfferings = await CourseOfferingModel.find(sameTeacherFilter);
+  const offeringIds = sameTeacherOfferings.map(o => o._id);
+
+  const sisterEnrolled = await Enrollment.findOne({
+    student: student._id,
+    courseOffering: { $in: offeringIds }
+  });
+  if (sisterEnrolled) return true;
+
+  if (student.batchId && student.batchId.toString() === (primaryOffering.batch._id || primaryOffering.batch).toString()) {
+    for (const off of sameTeacherOfferings) {
+      const sectionDoc = await SectionModel.findOne({ batchId: off.batch, sectionName: off.section });
+      const sectionId = sectionDoc ? sectionDoc._id : null;
+      if (!sectionId || (student.sectionId && student.sectionId.toString() === sectionId.toString())) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 // 7. Public student route - Verify Student ID & Enrollment before starting survey
 router.post('/public/surveys/:id/verify-student', async (req, res) => {
   try {
@@ -317,30 +384,9 @@ router.post('/public/surveys/:id/verify-student', async (req, res) => {
       return res.status(400).json({ message: `Student profile not found for Student ID "${studentId}".` })
     }
 
-    // Validate Student Enrollment
-    const enrolled = await Enrollment.findOne({ student: student._id, courseOffering: surveyDoc.courseOfferingId })
-    let hasAccess = !!enrolled
-
-    if (!hasAccess && surveyDoc.courseOfferingId) {
-      // Fallback matching
-      const CourseOffering = mongoose.model('CourseOffering')
-      const Section = mongoose.model('Section')
-      const offering = await CourseOffering.findById(surveyDoc.courseOfferingId)
-      if (offering && offering.batch) {
-        const sectionDoc = await Section.findOne({ 
-          batchId: offering.batch, 
-          sectionName: offering.section 
-        })
-        const sectionId = sectionDoc ? sectionDoc._id : null
-        
-        const studentInSection = student.batchId?.toString() === offering.batch.toString() &&
-                                 (!sectionId || (student.sectionId && student.sectionId.toString() === sectionId.toString()))
-        
-        if (studentInSection) {
-          hasAccess = true
-        }
-      }
-    }
+    // Validate Student Enrollment across same-teacher offerings
+    const primaryOffering = await mongoose.model('CourseOffering').findById(surveyDoc.courseOfferingId);
+    const hasAccess = await checkStudentSurveyAccess(student, primaryOffering);
 
     if (!hasAccess) {
       return res.status(400).json({ message: 'You are not enrolled in this course offering.' })
@@ -399,29 +445,9 @@ router.post('/public/surveys/:id/submit', async (req, res) => {
       return res.status(400).json({ message: `Student profile not found for Student ID "${studentId}".` })
     }
 
-    // Validate Student Enrollment
-    const enrolled = await Enrollment.findOne({ student: student._id, courseOffering: surveyDoc.courseOfferingId })
-    let hasAccess = !!enrolled
-
-    if (!hasAccess && surveyDoc.courseOfferingId) {
-      const CourseOffering = mongoose.model('CourseOffering')
-      const Section = mongoose.model('Section')
-      const offering = await CourseOffering.findById(surveyDoc.courseOfferingId)
-      if (offering && offering.batch) {
-        const sectionDoc = await Section.findOne({ 
-            batchId: offering.batch, 
-            sectionName: offering.section 
-          })
-        const sectionId = sectionDoc ? sectionDoc._id : null
-        
-        const studentInSection = student.batchId?.toString() === offering.batch.toString() &&
-                                 (!sectionId || (student.sectionId && student.sectionId.toString() === sectionId.toString()))
-        
-        if (studentInSection) {
-          hasAccess = true
-        }
-      }
-    }
+    // Validate Student Enrollment across same-teacher offerings
+    const primaryOffering = await mongoose.model('CourseOffering').findById(surveyDoc.courseOfferingId);
+    const hasAccess = await checkStudentSurveyAccess(student, primaryOffering);
 
     if (!hasAccess) {
       return res.status(400).json({ message: 'You are not enrolled in this course offering.' })
@@ -464,10 +490,43 @@ router.get('/surveys/:id/analytics', requireAuth, async (req, res) => {
     // Fetch all responses
     const responses = await SurveyResponse.find({ surveyId: surveyDoc._id }).populate('studentId')
 
-    // Get total enrolled students
+    // Get total enrolled students across all sections taught by this teacher for this course & batch
     const offering = surveyDoc.courseOfferingId
-    const enrollments = await Enrollment.find({ courseOffering: offering._id })
-    const totalStudents = enrollments.length
+    let totalStudents = 0
+
+    if (offering && offering.batch && offering.teacher) {
+      const CourseOfferingModel = mongoose.model('CourseOffering')
+      const SectionModel = mongoose.model('Section')
+
+      const sameTeacherFilter = {
+        course: offering.course?._id || offering.course,
+        batch: offering.batch?._id || offering.batch,
+        teacher: offering.teacher?._id || offering.teacher
+      }
+      if (offering.semester) {
+        sameTeacherFilter.semester = offering.semester?._id || offering.semester
+      }
+
+      const sameTeacherOfferings = await CourseOfferingModel.find(sameTeacherFilter)
+      const offeringIds = sameTeacherOfferings.map(o => o._id)
+
+      const enrollments = await Enrollment.find({ courseOffering: { $in: offeringIds } })
+      totalStudents = enrollments.length
+
+      if (totalStudents === 0 && offering.batch) {
+        for (const off of sameTeacherOfferings) {
+          const sectionDoc = await SectionModel.findOne({ batchId: off.batch, sectionName: off.section })
+          const sectionId = sectionDoc ? sectionDoc._id : null
+          const query = { batchId: off.batch }
+          if (sectionId) query.sectionId = sectionId
+          const count = await Student.countDocuments(query)
+          totalStudents += count
+        }
+      }
+    } else {
+      const enrollments = await Enrollment.find({ courseOffering: offering._id })
+      totalStudents = enrollments.length
+    }
 
     res.status(200).json({
       survey,
