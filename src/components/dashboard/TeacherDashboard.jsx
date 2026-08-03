@@ -43,6 +43,7 @@ import {
   ChevronDown
 } from 'lucide-react'
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
+import ErrorBoundary from '../ErrorBoundary'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
 import CourseSurvey from '../survey/CourseSurvey'
 import PORecommendationMatrix from '../reports/PORecommendationMatrix'
@@ -1552,14 +1553,16 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   // If question paper editor is open, render it instead of the dashboard
   if (activeAssessmentForPaper) {
     return (
-      <QuestionPaperEditor
-        assessment={activeAssessmentForPaper}
-        offering={offering}
-        onBack={() => {
-          setActiveAssessmentForPaper(null)
-          loadAllData()
-        }}
-      />
+      <ErrorBoundary>
+        <QuestionPaperEditor
+          assessment={activeAssessmentForPaper}
+          offering={offering}
+          onBack={() => {
+            setActiveAssessmentForPaper(null)
+            loadAllData()
+          }}
+        />
+      </ErrorBoundary>
     )
   }
 

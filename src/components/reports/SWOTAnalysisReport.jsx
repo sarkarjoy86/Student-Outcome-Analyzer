@@ -394,8 +394,10 @@ Return ONLY a valid JSON object (no markdown backticks, no code fence wrapper) m
       let rawOutput = ''
 
       try {
-        const token = localStorage.getItem('token')
-        const backendRes = await fetch('/api/ai/swot-generate', {
+        const token = localStorage.getItem('obe-auth-token')
+        const isProduction = typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1')
+        const apiBase = isProduction ? 'https://student-outcome-analyzer-api.onrender.com' : ''
+        const backendRes = await fetch(`${apiBase}/api/ai/swot-generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
