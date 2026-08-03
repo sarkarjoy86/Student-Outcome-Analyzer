@@ -10,12 +10,8 @@ import {
   RichTextEditorComponent,
   Toolbar,
   Table,
-  FormatPainter,
-  EmojiPicker,
   PasteCleanup,
-  Count,
-  SlashMenu,
-  ImportExport
+  Count
 } from '@syncfusion/ej2-react-richtexteditor'
 import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw } from 'lucide-react'
 import mammoth from 'mammoth'
@@ -2721,25 +2717,6 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     ]
   }
 
-  // Syncfusion Import/Export service configuration (uses Syncfusion demo endpoints)
-  const importWordSettings = {
-    serviceUrl: 'https://services.syncfusion.com/react/production/api/RichTextEditor/ImportFromWord'
-  }
-  const exportWordSettings = {
-    serviceUrl: 'https://services.syncfusion.com/react/production/api/RichTextEditor/ExportToDocx',
-    fileName: `${assessment.name || 'QuestionPaper'}.docx`
-  }
-  const exportPdfSettings = {
-    serviceUrl: 'https://services.syncfusion.com/react/production/api/RichTextEditor/ExportToPdf',
-    fileName: `${assessment.name || 'QuestionPaper'}.pdf`
-  }
-
-  // Slash Menu configuration - type "/" for quick formatting
-  const slashMenuConfig = {
-    enable: true,
-    items: ['Paragraph', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'OrderedList', 'UnorderedList', 'CodeBlock', 'Blockquote']
-  }
-
   // Paste Cleanup configuration - prompts user when pasting from Word
   const pasteCleanupConfig = {
     prompt: true,
@@ -3104,13 +3081,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   height={isFullscreen ? 'calc(100vh - 180px)' : 500}
                   showCharCount={true}
                   maxLength={50000}
-                  importWord={importWordSettings}
-                  exportWord={exportWordSettings}
-                  exportPdf={exportPdfSettings}
-                  slashMenuSettings={slashMenuConfig}
                   pasteCleanupSettings={pasteCleanupConfig}
                 >
-                  <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, FormatPainter, EmojiPicker, PasteCleanup, Count, SlashMenu, ImportExport]} />
+                  <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, PasteCleanup, Count]} />
                 </RichTextEditorComponent>
               </div>
             </div>
