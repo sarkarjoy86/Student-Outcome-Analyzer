@@ -163,15 +163,20 @@ export function AuthProvider({ children }) {
     refreshAuth();
   }, []);
 
+  const [isEditingActive, setIsEditingActive] = useState(false);
+
   // Heartbeat & Idle Auto-Logout logic
   useEffect(() => {
     if (!user) return undefined;
 
-    const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+    const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes of inactivity
     let idleTimer = null;
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
+      // Disable auto-logout timer completely while user is actively editing marks or question paper
+      if (isEditingActive) return;
+
       idleTimer = setTimeout(() => {
         logout();
         setError("You have been automatically logged out due to inactivity.");
@@ -189,9 +194,9 @@ export function AuthProvider({ children }) {
       window.addEventListener(evt, handleUserActivity, { passive: true });
     });
 
-    // Heartbeat every 10s if tab is visible
+    // Heartbeat every 10s (if visible OR if active work is in progress)
     const heartbeatInterval = setInterval(() => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" || isEditingActive) {
         if (user.role !== "admin" && getStoredToken()) {
           apiRequest("/api/auth/heartbeat", { method: "POST" }).catch(() => {});
         }
@@ -203,36 +208,14 @@ export function AuthProvider({ children }) {
       apiRequest("/api/auth/heartbeat", { method: "POST" }).catch(() => {});
     }
 
-    // Send beacon logout when closing tab/window
-    const handleUnload = () => {
-      if (user.role !== "admin" && getStoredToken()) {
-        const token = getStoredToken();
-        if (token) {
-          try {
-            fetch(`${API_BASE}/api/auth/logout`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              keepalive: true,
-            }).catch(() => {});
-          } catch (e) {}
-        }
-      }
-    };
-
-    window.addEventListener("beforeunload", handleUnload);
-
     return () => {
       if (idleTimer) clearTimeout(idleTimer);
       clearInterval(heartbeatInterval);
       activityEvents.forEach((evt) => {
         window.removeEventListener(evt, handleUserActivity);
       });
-      window.removeEventListener("beforeunload", handleUnload);
     };
-  }, [user]);
+  }, [user, isEditingActive]);
 
   const login = async (payload) => {
     setActionLoading(true);
@@ -399,6 +382,8 @@ export function AuthProvider({ children }) {
       authLoading,
       actionLoading,
       message,
+      isEditingActive,
+      setIsEditingActive,
       login,
       logout,
       changePassword,
@@ -409,7 +394,7 @@ export function AuthProvider({ children }) {
       loadAdminUsers,
       adminCredentials: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
     }),
-    [user, users, authLoading, actionLoading, message],
+    [user, users, authLoading, actionLoading, message, isEditingActive],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

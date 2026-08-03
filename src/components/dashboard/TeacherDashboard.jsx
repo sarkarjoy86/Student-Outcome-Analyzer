@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { apiService } from '../../services/apiService'
+import { useAuth } from '../../context/AuthContext'
 import {
   BookOpen,
   Users,
@@ -111,6 +112,7 @@ const getQBankSessionName = (paper) => {
 }
 
 export default function TeacherDashboard({ offering: propOffering, onBackToDashboard, user }) {
+  const { setIsEditingActive } = useAuth()
   const [offering, setOffering] = useState(propOffering)
 
   useEffect(() => {
@@ -126,9 +128,24 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       localStorage.setItem("teacherActiveTab", activeTab);
     }
   }, [activeTab]);
+
   const [students, setStudents] = useState([])
   const [assessments, setAssessments] = useState([])
   const [qBankPapers, setQBankPapers] = useState([])
+
+  // Prevent idle auto-logout while actively entering marks or working on a question paper
+  useEffect(() => {
+    if (setIsEditingActive) {
+      if (activeTab === 'marksEntry' || activeAssessmentForPaper !== null) {
+        setIsEditingActive(true)
+      } else {
+        setIsEditingActive(false)
+      }
+    }
+    return () => {
+      if (setIsEditingActive) setIsEditingActive(false)
+    }
+  }, [activeTab, activeAssessmentForPaper, setIsEditingActive])
 
   // Marks Entry Spreadsheet States
   const [marksSpreadsheetData, setMarksSpreadsheetData] = useState({
@@ -1024,6 +1041,13 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
+  const [restoredDraftInfo, setRestoredDraftInfo] = useState(null)
+
+  const getMarksDraftKey = useCallback((asmtId) => {
+    if (!offering?._id || !asmtId) return null
+    return `obe_marks_draft_${offering._id}_${asmtId}`
+  }, [offering?._id])
+
   const initializeTempMarks = (marksMap, assessmentId, questions = [], studentsList = []) => {
     const temp = {}
     studentsList.forEach(s => {
@@ -1039,10 +1063,151 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         temp[sId]['marks'] = existing?.totalMark ?? ''
       }
     })
+
+    // Check for local unsaved marks draft
+    const draftKey = getMarksDraftKey(assessmentId)
+    if (draftKey) {
+      try {
+        const savedDraftRaw = localStorage.getItem(draftKey)
+        if (savedDraftRaw) {
+          const savedDraft = JSON.parse(savedDraftRaw)
+          if (savedDraft && savedDraft.tempMarks && Object.keys(savedDraft.tempMarks).length > 0) {
+            Object.keys(savedDraft.tempMarks).forEach(sId => {
+              if (temp[sId]) {
+                temp[sId] = { ...temp[sId], ...savedDraft.tempMarks[sId] }
+              }
+            })
+            setRestoredDraftInfo({
+              timestamp: savedDraft.timestamp ? new Date(savedDraft.timestamp).toLocaleTimeString() : 'recently',
+              assessmentId
+            })
+          } else {
+            setRestoredDraftInfo(null)
+          }
+        } else {
+          setRestoredDraftInfo(null)
+        }
+      } catch (e) {
+        console.error('Failed to load local marks draft:', e)
+        setRestoredDraftInfo(null)
+      }
+    } else {
+      setRestoredDraftInfo(null)
+    }
+
     setTempMarks(temp)
   }
 
-  const handleAssessmentChange = (id) => {
+  // Persist unsaved tempMarks to localStorage as draft
+  useEffect(() => {
+    if (selectedAssessmentId && offering?._id && Object.keys(tempMarks).length > 0) {
+      const draftKey = getMarksDraftKey(selectedAssessmentId)
+      if (draftKey) {
+        try {
+          localStorage.setItem(draftKey, JSON.stringify({
+            tempMarks,
+            timestamp: Date.now()
+          }))
+        } catch (e) {}
+      }
+    }
+  }, [tempMarks, selectedAssessmentId, offering?._id, getMarksDraftKey])
+
+  const handleDiscardMarksDraft = () => {
+    const draftKey = getMarksDraftKey(selectedAssessmentId)
+    if (draftKey) {
+      try { localStorage.removeItem(draftKey) } catch (e) {}
+    }
+    setRestoredDraftInfo(null)
+    initializeTempMarks(
+      marksSpreadsheetData.marks,
+      selectedAssessmentId,
+      marksSpreadsheetData.metadata[selectedAssessmentId],
+      marksSpreadsheetData.students
+    )
+  }
+
+  const autoSaveMarks = async () => {
+    if (!selectedAssessmentId || !offering?._id || !tempMarks || Object.keys(tempMarks).length === 0) return
+    try {
+      const questions = marksSpreadsheetData.metadata[selectedAssessmentId] || []
+      const selectedAsmt = (marksSpreadsheetData.assessments || []).find(a => a._id === selectedAssessmentId)
+      const isCTWithUniformCO = selectedAsmt && selectedAsmt.type === 'cts' && questions.length > 0 &&
+        new Set(questions.map(q => (q.co || 'NONE').toUpperCase().replace(/[\s-_]/g, ''))).size === 1
+      const isTotalMode = marksEntryMode === 'total' && isCTWithUniformCO
+
+      let hasEnteredAnyMark = false
+
+      const payload = (marksSpreadsheetData.students || []).map(s => {
+        const sId = s._id
+        const studentTemp = tempMarks[sId] || {}
+        let totalMark = 0
+        const questionMarks = {}
+        let isEmpty = true
+
+        if (questions && questions.length > 0) {
+          if (isTotalMode) {
+            const totalVal = studentTemp['_ctTotal']
+            if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
+              const enteredTotal = parseFloat(totalVal) || 0
+              const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+              questions.forEach(q => {
+                const qMax = parseFloat(q.maxMarks) || 0
+                const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+                questionMarks[q.questionNumber] = distributed
+                totalMark += distributed
+              })
+              const diff = enteredTotal - totalMark
+              if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                const lastQ = questions[questions.length - 1].questionNumber
+                questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
+                totalMark = enteredTotal
+              }
+              isEmpty = false
+              hasEnteredAnyMark = true
+            }
+          } else {
+            questions.forEach(q => {
+              const val = studentTemp[q.questionNumber]
+              if (val !== undefined && val !== null && val !== '') {
+                const markVal = parseFloat(val) || 0
+                questionMarks[q.questionNumber] = markVal
+                totalMark += markVal
+                isEmpty = false
+                hasEnteredAnyMark = true
+              }
+            })
+          }
+        } else {
+          const val = studentTemp['marks']
+          if (val !== undefined && val !== null && val !== '') {
+            totalMark = parseFloat(val) || 0
+            isEmpty = false
+            hasEnteredAnyMark = true
+          }
+        }
+
+        return { studentId: sId, questionMarks, totalMark, isEmpty }
+      })
+
+      if (hasEnteredAnyMark) {
+        await apiService.saveMarksSpreadsheet(offering._id, {
+          assessmentId: selectedAssessmentId,
+          marks: payload
+        })
+        const draftKey = getMarksDraftKey(selectedAssessmentId)
+        if (draftKey) {
+          try { localStorage.removeItem(draftKey) } catch (e) {}
+        }
+      }
+    } catch (e) {
+      console.error('Auto-save marks failed silently:', e)
+    }
+  }
+
+  const handleAssessmentChange = async (id) => {
+    await autoSaveMarks()
     setSelectedAssessmentId(id)
     initializeTempMarks(
       marksSpreadsheetData.marks,
@@ -1162,6 +1327,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         assessmentId: selectedAssessmentId,
         marks: payload
       })
+
+      const draftKey = getMarksDraftKey(selectedAssessmentId)
+      if (draftKey) {
+        try { localStorage.removeItem(draftKey) } catch (e) {}
+      }
+      setRestoredDraftInfo(null)
 
       alert('Marks saved and attainments calculated successfully!')
       loadAllData() // refresh assessments & attainment tables
@@ -1447,7 +1618,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                if (activeTab === 'marksEntry') {
+                  autoSaveMarks()
+                }
+                setActiveTab(tab.id)
+              }}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all ${isActive
                 ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-md'
                 : 'text-gray-600 hover:bg-green-50 hover:text-green-700'
@@ -3011,16 +3187,6 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                   <Printer size={12} />
                                   Print
                                 </button>
-
-                                {isOwn && (
-                                  <button
-                                    onClick={() => setActiveAssessmentForPaper(paper.assessment)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100 rounded-lg text-xs font-bold transition-all"
-                                  >
-                                    <Edit size={12} />
-                                    Edit
-                                  </button>
-                                )}
                               </div>
                             </div>
                           )
@@ -3131,6 +3297,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     </div>
                   )}
                 </div>
+
+                {restoredDraftInfo && restoredDraftInfo.assessmentId === selectedAssessmentId && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-amber-800 text-sm font-semibold shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                      <span>Restored unsaved draft marks from your previous session ({restoredDraftInfo.timestamp}). Click <strong>Save Spreadsheet Marks</strong> when ready.</span>
+                    </div>
+                    <button onClick={handleDiscardMarksDraft} className="text-xs bg-amber-200/80 hover:bg-amber-300 px-3 py-1.5 rounded-lg text-amber-900 font-bold transition-colors">
+                      Discard Draft
+                    </button>
+                  </div>
+                )}
 
                 {assessments.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">

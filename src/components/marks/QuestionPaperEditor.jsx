@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiService } from '../../services/apiService'
+import { useAuth } from '../../context/AuthContext'
 import {
   HtmlEditor,
   Image,
@@ -348,6 +349,7 @@ function generateTableHtml(headers = [], rows = []) {
 }
 
 export default function QuestionPaperEditor({ assessment, offering, onBack }) {
+  const { setIsEditingActive } = useAuth()
   const [editorValue, setEditorValue] = useState('')
   const [questions, setQuestions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -355,7 +357,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [error, setError] = useState('')
   const [availableCOs, setAvailableCOs] = useState([])
   const [coDetails, setCoDetails] = useState([]) // Full CO objects with code + description
-  // Bloom levels are now stored directly in the questions array (q.bloom)
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadingCount, setUploadingCount] = useState(0)
   const [showBlobWarning, setShowBlobWarning] = useState(false)
@@ -363,7 +364,48 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [showAiMenu, setShowAiMenu] = useState(false)
   const [aiMenuPosition, setAiMenuPosition] = useState({ top: 0, left: 0 })
   const [aiProcessing, setAiProcessing] = useState(false)
-  const [aiPreview, setAiPreview] = useState(null) // { originalText, suggestedText, range, commandLabel }
+  const [aiPreview, setAiPreview] = useState(null)
+
+  const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
+
+  // Disable idle auto-logout while editing a question paper
+  useEffect(() => {
+    if (setIsEditingActive) setIsEditingActive(true)
+    return () => {
+      if (setIsEditingActive) setIsEditingActive(false)
+    }
+  }, [setIsEditingActive])
+
+  const getPaperDraftKey = useCallback(() => {
+    if (!offering?._id || !assessment?._id) return null
+    return `obe_paper_draft_${offering._id}_${assessment._id}`
+  }, [offering?._id, assessment?._id])
+
+  // Persist unsaved question paper draft to localStorage
+  useEffect(() => {
+    if (!loading && (questions.length > 0 || (editorValue && editorValue.trim().length > 20))) {
+      const draftKey = getPaperDraftKey()
+      if (draftKey) {
+        try {
+          localStorage.setItem(draftKey, JSON.stringify({
+            questions,
+            editorValue,
+            numQuestions,
+            timestamp: Date.now()
+          }))
+        } catch (e) {}
+      }
+    }
+  }, [questions, editorValue, numQuestions, loading, getPaperDraftKey])
+
+  const handleDiscardPaperDraft = () => {
+    const draftKey = getPaperDraftKey()
+    if (draftKey) {
+      try { localStorage.removeItem(draftKey) } catch (e) {}
+    }
+    setRestoredPaperDraftInfo(null)
+    loadPaperData()
+  }
 
   // AI Creation Tools States (Enhanced)
   const [showQuestionGenModal, setShowQuestionGenModal] = useState(false)
@@ -1307,6 +1349,40 @@ Equation description: "${aiEquationPrompt}"`
         }
       }
       setQuestions(finalQs)
+
+      // Check for local unsaved paper draft
+      const draftKey = getPaperDraftKey()
+      if (draftKey) {
+        try {
+          const savedDraftRaw = localStorage.getItem(draftKey)
+          if (savedDraftRaw) {
+            const savedDraft = JSON.parse(savedDraftRaw)
+            if (savedDraft && (savedDraft.questions?.length > 0 || savedDraft.editorValue)) {
+              if (savedDraft.questions && savedDraft.questions.length > 0) {
+                setQuestions(savedDraft.questions)
+              }
+              if (savedDraft.editorValue) {
+                setEditorValue(savedDraft.editorValue)
+              }
+              if (savedDraft.numQuestions) {
+                setNumQuestions(savedDraft.numQuestions)
+              }
+              setRestoredPaperDraftInfo({
+                timestamp: savedDraft.timestamp ? new Date(savedDraft.timestamp).toLocaleTimeString() : 'recently'
+              })
+            } else {
+              setRestoredPaperDraftInfo(null)
+            }
+          } else {
+            setRestoredPaperDraftInfo(null)
+          }
+        } catch (e) {
+          console.error('Failed to load local paper draft:', e)
+          setRestoredPaperDraftInfo(null)
+        }
+      } else {
+        setRestoredPaperDraftInfo(null)
+      }
     } catch (err) {
       setError('Failed to load question paper data: ' + err.message)
     } finally {
@@ -1435,6 +1511,13 @@ Equation description: "${aiEquationPrompt}"`
           bloom: q.bloom || ''
         }))
       })
+
+      const draftKey = getPaperDraftKey()
+      if (draftKey) {
+        try { localStorage.removeItem(draftKey) } catch (e) {}
+      }
+      setRestoredPaperDraftInfo(null)
+
       alert('Question paper, metadata, and assessment settings saved successfully!')
       loadPaperData()
     } catch (err) {
@@ -1442,6 +1525,50 @@ Equation description: "${aiEquationPrompt}"`
     } finally {
       setSaving(false)
     }
+  }
+
+  const autoSavePaper = async () => {
+    if (!assessment?._id || loading) return
+    const currentContent = rteRef.current ? rteRef.current.value : editorValue
+    if (!currentContent && questions.length === 0) return
+    try {
+      const validCOs = Array.from(new Set(
+        questions.map(q => q.co).filter(c => c && c !== 'NONE' && c !== '')
+      ))
+      const aggregatedCO = validCOs.join(', ')
+
+      await apiService.updateAssessment(assessment._id, {
+        examDuration,
+        deadline,
+        numQuestions,
+        level,
+        term,
+        co: aggregatedCO || assessment.co || '',
+        status: validCOs.length > 0 ? 'Published' : assessment.status
+      })
+
+      await apiService.saveQuestionPaper(assessment._id, {
+        content: currentContent,
+        questions: questions.map(q => ({
+          questionNumber: q.questionNumber,
+          maxMarks: q.maxMarks,
+          co: q.co,
+          bloom: q.bloom || ''
+        }))
+      })
+
+      const draftKey = getPaperDraftKey()
+      if (draftKey) {
+        try { localStorage.removeItem(draftKey) } catch (e) {}
+      }
+    } catch (e) {
+      console.error('Auto-save paper failed silently:', e)
+    }
+  }
+
+  const handleBackWithAutoSave = async () => {
+    await autoSavePaper()
+    onBack()
   }
 
   // Get pre-populated university header
@@ -2636,7 +2763,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <button
-              onClick={onBack}
+              onClick={handleBackWithAutoSave}
               className="p-2 hover:bg-green-50 rounded-lg text-green-700 transition-colors border border-green-150"
             >
               <ArrowLeft size={16} />
@@ -2648,7 +2775,19 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           <p className="text-sm text-gray-500 font-semibold pl-9">
             Manage, format, map, and export question papers.
           </p>
+      </div>
+
+      {restoredPaperDraftInfo && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between text-amber-800 text-sm font-semibold shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={18} className="text-amber-600 shrink-0" />
+            <span>Restored unsaved question paper draft from your previous session ({restoredPaperDraftInfo.timestamp}). Click <strong>Save Paper</strong> when ready.</span>
+          </div>
+          <button onClick={handleDiscardPaperDraft} className="text-xs bg-amber-200/80 hover:bg-amber-300 px-3 py-1.5 rounded-lg text-amber-900 font-bold transition-colors">
+            Discard Draft
+          </button>
         </div>
+      )}
 
         <div className="flex items-center gap-2 pl-9 md:pl-0">
           <button
