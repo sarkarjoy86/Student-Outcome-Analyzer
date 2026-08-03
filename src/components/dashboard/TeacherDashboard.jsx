@@ -132,6 +132,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [students, setStudents] = useState([])
   const [assessments, setAssessments] = useState([])
   const [qBankPapers, setQBankPapers] = useState([])
+  const [activeAssessmentForPaper, setActiveAssessmentForPaper] = useState(null)
 
   // Prevent idle auto-logout while actively entering marks or working on a question paper
   useEffect(() => {
@@ -456,9 +457,6 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   })
   const [kpiInput, setKpiInput] = useState({ targetPassMarks: 40, kpiCO: 50, kpiPO: 50 })
  
-  // Question Paper Editor State
-  const [activeAssessmentForPaper, setActiveAssessmentForPaper] = useState(null)
-
   // Question Bank Drill-down Path State
   const [qBankPath, setQBankPath] = useState({ type: null, session: null, section: null })
 
