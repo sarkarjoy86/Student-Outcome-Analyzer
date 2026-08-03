@@ -231,7 +231,7 @@ async function recalculateAttainments(offeringId) {
 
       await POAttainment.findOneAndUpdate(
         { courseOffering: offeringId, po: poKey },
-        { coAttainments: poMap[poKey] },
+        { passMarksPercentage, kpiPercentage, attained, updatedAt: new Date() },
         { upsert: true }
       )
     }

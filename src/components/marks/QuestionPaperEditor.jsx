@@ -364,6 +364,21 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
 
+  const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
+  const [deadline, setDeadline] = useState(() => {
+    if (assessment.deadline) {
+      const d = new Date(assessment.deadline)
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      }
+      return assessment.deadline
+    }
+    return ''
+  })
+  const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
+  const [level, setLevel] = useState(assessment.level || offering?.course?.level || '1')
+  const [term, setTerm] = useState(assessment.term || offering?.course?.term || 'I')
+
   // Disable idle auto-logout while editing a question paper
   useEffect(() => {
     if (setIsEditingActive) setIsEditingActive(true)
@@ -546,21 +561,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [editingTokenIdx, setEditingTokenIdx] = useState(null) // index of token being edited inline
   const [tokenEditValue, setTokenEditValue] = useState('')
   const aiPreviewRef = useRef(null)
-
-  const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
-  const [deadline, setDeadline] = useState(() => {
-    if (assessment.deadline) {
-      const d = new Date(assessment.deadline)
-      if (!isNaN(d.getTime())) {
-        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-      }
-      return assessment.deadline
-    }
-    return ''
-  })
-  const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
-  const [level, setLevel] = useState(assessment.level || offering?.course?.level || '1')
-  const [term, setTerm] = useState(assessment.term || offering?.course?.term || 'I')
 
   const BLOOM_OPTIONS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']
 
@@ -2755,12 +2755,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       </div>
 
       {restoredPaperDraftInfo && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between text-amber-800 text-sm font-semibold shadow-xs">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={18} className="text-amber-600 shrink-0" />
-            <span>Restored unsaved question paper draft from your previous session ({restoredPaperDraftInfo.timestamp}). Click <strong>Save Paper</strong> when ready.</span>
+        <div className="bg-amber-50/90 border border-amber-200 rounded-xl px-3 py-1.5 flex items-center justify-between gap-3 text-amber-900 text-xs font-medium shadow-xs max-w-md">
+          <div className="flex items-center gap-1.5 truncate">
+            <AlertCircle size={14} className="text-amber-600 shrink-0" />
+            <span className="truncate">Restored draft ({restoredPaperDraftInfo.timestamp})</span>
           </div>
-          <button onClick={handleDiscardPaperDraft} className="text-xs bg-amber-200/80 hover:bg-amber-300 px-3 py-1.5 rounded-lg text-amber-900 font-bold transition-colors">
+          <button onClick={handleDiscardPaperDraft} className="text-[11px] bg-amber-200/70 hover:bg-amber-300 px-2 py-0.5 rounded text-amber-900 font-semibold transition-colors shrink-0">
             Discard Draft
           </button>
         </div>

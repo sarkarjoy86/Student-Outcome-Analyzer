@@ -1126,11 +1126,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     )
   }
 
-  const autoSaveMarks = async () => {
-    if (!selectedAssessmentId || !offering?._id || !tempMarks || Object.keys(tempMarks).length === 0) return
+  const autoSaveMarks = async (targetAsmtId = selectedAssessmentId) => {
+    if (!targetAsmtId || !offering?._id || !tempMarks || Object.keys(tempMarks).length === 0) return
     try {
-      const questions = marksSpreadsheetData.metadata[selectedAssessmentId] || []
-      const selectedAsmt = (marksSpreadsheetData.assessments || []).find(a => a._id === selectedAssessmentId)
+      const questions = marksSpreadsheetData.metadata[targetAsmtId] || []
+      const selectedAsmt = (marksSpreadsheetData.assessments || []).find(a => a._id === targetAsmtId)
       const isCTWithUniformCO = selectedAsmt && selectedAsmt.type === 'cts' && questions.length > 0 &&
         new Set(questions.map(q => (q.co || 'NONE').toUpperCase().replace(/[\s-_]/g, ''))).size === 1
       const isTotalMode = marksEntryMode === 'total' && isCTWithUniformCO
@@ -1192,10 +1192,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
       if (hasEnteredAnyMark) {
         await apiService.saveMarksSpreadsheet(offering._id, {
-          assessmentId: selectedAssessmentId,
+          assessmentId: targetAsmtId,
           marks: payload
         })
-        const draftKey = getMarksDraftKey(selectedAssessmentId)
+        const draftKey = getMarksDraftKey(targetAsmtId)
         if (draftKey) {
           try { localStorage.removeItem(draftKey) } catch (e) {}
         }
@@ -1205,8 +1205,11 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
-  const handleAssessmentChange = async (id) => {
-    await autoSaveMarks()
+  const handleAssessmentChange = (id) => {
+    const currentId = selectedAssessmentId
+    if (currentId && currentId !== id) {
+      autoSaveMarks(currentId).catch(e => console.error('Auto-save marks error:', e))
+    }
     setSelectedAssessmentId(id)
     initializeTempMarks(
       marksSpreadsheetData.marks,
@@ -3300,12 +3303,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 </div>
 
                 {restoredDraftInfo && restoredDraftInfo.assessmentId === selectedAssessmentId && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-amber-800 text-sm font-semibold shadow-xs">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle size={18} className="text-amber-600 shrink-0" />
-                      <span>Restored unsaved draft marks from your previous session ({restoredDraftInfo.timestamp}). Click <strong>Save Spreadsheet Marks</strong> when ready.</span>
+                  <div className="bg-amber-50/90 border border-amber-200 rounded-xl px-3 py-1.5 flex items-center justify-between gap-3 text-amber-900 text-xs font-medium shadow-xs max-w-md">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <AlertTriangle size={14} className="text-amber-600 shrink-0" />
+                      <span className="truncate">Restored draft marks ({restoredDraftInfo.timestamp})</span>
                     </div>
-                    <button onClick={handleDiscardMarksDraft} className="text-xs bg-amber-200/80 hover:bg-amber-300 px-3 py-1.5 rounded-lg text-amber-900 font-bold transition-colors">
+                    <button onClick={handleDiscardMarksDraft} className="text-[11px] bg-amber-200/70 hover:bg-amber-300 px-2 py-0.5 rounded text-amber-900 font-semibold transition-colors shrink-0">
                       Discard Draft
                     </button>
                   </div>
