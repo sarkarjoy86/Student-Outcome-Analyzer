@@ -11,6 +11,8 @@ const AssessmentConfig = ({ onComplete, existingConfig }) => {
       attendance: { maxMarks: 10, co: '' },
       performance: { maxMarks: 10, co: '' },
       presentation: { maxMarks: 10, co: '' },
+      participation: { maxMarks: 10, co: '' },
+      projectReport: { maxMarks: 10, co: '' },
     }
   )
 

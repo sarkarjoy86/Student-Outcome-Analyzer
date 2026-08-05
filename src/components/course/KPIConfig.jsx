@@ -47,7 +47,7 @@ const KPIConfig = ({ onComplete, existingConfig }) => {
               <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
               General Parameters
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   No. of Students
@@ -59,19 +59,28 @@ const KPIConfig = ({ onComplete, existingConfig }) => {
                   value="Calculated automatically"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Target Pass Marks (%) <span className="text-red-500">*</span>
-                </label>
+              <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-bold text-gray-700">
+                    Target Pass Marks (%) <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-base font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {kpiConfig.targetPassMarks}%
+                  </span>
+                </div>
                 <input
-                  type="number"
-                  min="0"
+                  type="range"
+                  min="1"
                   max="100"
                   value={kpiConfig.targetPassMarks}
                   onChange={(e) => handleChange('targetPassMarks', e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-green-300 rounded-xl bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-800 font-semibold transition-colors"
-                  placeholder="40"
+                  className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none"
                 />
+                <div className="flex justify-between text-[10px] font-bold text-gray-400">
+                  <span>0%</span>
+                  <span>50%</span>
+                  <span>100%</span>
+                </div>
               </div>
             </div>
           </div>
@@ -82,33 +91,51 @@ const KPIConfig = ({ onComplete, existingConfig }) => {
               Key Performance Indicator (KPI)
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  KPI for COs (%) <span className="text-red-500">*</span>
-                </label>
+              <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-sm space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-bold text-gray-700">
+                    KPI for COs (%) <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-base font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {kpiConfig.kpiCO}%
+                  </span>
+                </div>
                 <input
-                  type="number"
-                  min="0"
+                  type="range"
+                  min="1"
                   max="100"
                   value={kpiConfig.kpiCO}
                   onChange={(e) => handleChange('kpiCO', e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-green-300 rounded-xl bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-800 font-semibold transition-colors"
-                  placeholder="50"
+                  className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none"
                 />
+                <div className="flex justify-between text-[10px] font-bold text-gray-400">
+                  <span>0%</span>
+                  <span>50%</span>
+                  <span>100%</span>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  KPI for POs (%) <span className="text-red-500">*</span>
-                </label>
+              <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-sm space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-bold text-gray-700">
+                    KPI for POs (%) <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-base font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {kpiConfig.kpiPO}%
+                  </span>
+                </div>
                 <input
-                  type="number"
-                  min="0"
+                  type="range"
+                  min="1"
                   max="100"
                   value={kpiConfig.kpiPO}
                   onChange={(e) => handleChange('kpiPO', e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-green-300 rounded-xl bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-800 font-semibold transition-colors"
-                  placeholder="50"
+                  className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none"
                 />
+                <div className="flex justify-between text-[10px] font-bold text-gray-400">
+                  <span>0%</span>
+                  <span>50%</span>
+                  <span>100%</span>
+                </div>
               </div>
             </div>
           </div>

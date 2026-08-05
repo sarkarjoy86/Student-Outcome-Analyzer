@@ -23,6 +23,14 @@ export const downloadChartAsJPG = (containerId, filename = 'chart') => {
       if (downloadButton) {
         downloadButton.style.display = 'none'
       }
+
+      // Remove borders, box-shadow, rounded corners, and extra container padding for a clean JPG export
+      clonedContainer.style.border = 'none'
+      clonedContainer.style.outline = 'none'
+      clonedContainer.style.boxShadow = 'none'
+      clonedContainer.style.borderRadius = '0px'
+      clonedContainer.style.padding = '12px'
+      clonedContainer.style.backgroundColor = '#ffffff'
       
       // Fix title text rendering - remove gradient styling for better text capture
       const titleElement = clonedContainer.querySelector('h2, h3')
@@ -45,8 +53,10 @@ export const downloadChartAsJPG = (containerId, filename = 'chart') => {
       const tempWrapper = document.createElement('div')
       tempWrapper.style.position = 'absolute'
       tempWrapper.style.left = '-9999px'
-      tempWrapper.style.backgroundColor = 'white'
-      tempWrapper.style.padding = '20px'
+      tempWrapper.style.backgroundColor = '#ffffff'
+      tempWrapper.style.padding = '0px'
+      tempWrapper.style.border = 'none'
+      tempWrapper.style.boxShadow = 'none'
       
       // Get computed style from original
       const containerRect = container.getBoundingClientRect()
@@ -62,7 +72,7 @@ export const downloadChartAsJPG = (containerId, filename = 'chart') => {
         allowTaint: true,
         useCORS: true,
         logging: false,
-        margin: 10
+        margin: 0
       }).then((canvas) => {
         downloadCanvasAsJPG(canvas, filename)
         document.body.removeChild(tempWrapper)

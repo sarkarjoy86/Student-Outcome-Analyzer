@@ -281,6 +281,12 @@ const ComprehensiveReports = ({
     if (assessments.presentation) {
       list.push({ ...assessments.presentation, name: 'Presentation', type: 'presentation' })
     }
+    if (assessments.participation) {
+      list.push({ ...assessments.participation, name: 'Class Participation', type: 'participation' })
+    }
+    if (assessments.projectReport) {
+      list.push({ ...assessments.projectReport, name: 'Project Report', type: 'projectReport' })
+    }
     if (assessments.assignments) {
       assessments.assignments.forEach((a) => list.push({ ...a, type: 'assignments' }))
     }
@@ -597,11 +603,11 @@ const ComprehensiveReports = ({
     })
 
     // Others
-    const others = allAssessments.filter(a => ['assignments', 'presentation', 'attendance', 'performance'].includes(a.type))
+    const others = allAssessments.filter(a => ['assignments', 'presentation', 'attendance', 'performance', 'participation', 'projectReport'].includes(a.type))
     others.forEach(a => {
       cols.push({
         id: a._id?.toString() || `${a.type}_${a.name}`,
-        name: a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name,
+        name: a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name === 'Class Participation' ? 'Class Part.' : a.name === 'Project Report' ? 'Proj. Report' : a.name,
         parent: 'Others',
         assessment: a,
         isQuestion: false,

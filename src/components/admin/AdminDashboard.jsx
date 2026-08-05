@@ -94,6 +94,8 @@ export default function AdminDashboard() {
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [courseForm, setCourseForm] = useState({
+    codePrefix: "CSE",
+    codeNumber: "",
     courseCode: "",
     courseName: "",
     creditHours: "3",
@@ -103,6 +105,8 @@ export default function AdminDashboard() {
     term: "I",
   });
   const [editingCourseId, setEditingCourseId] = useState(null);
+  const [courseFilterLevel, setCourseFilterLevel] = useState("ALL");
+  const [courseFilterTerm, setCourseFilterTerm] = useState("ALL");
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [courseOutcomes, setCourseOutcomes] = useState([]);
   const [courseOutcomeForm, setCourseOutcomeForm] = useState({
@@ -147,6 +151,9 @@ export default function AdminDashboard() {
     academicYear: new Date().getFullYear(),
   });
   const [editingOfferingId, setEditingOfferingId] = useState(null);
+  const [offeringFilterSemester, setOfferingFilterSemester] = useState("current");
+  const [offeringFilterTerm, setOfferingFilterTerm] = useState("ALL");
+  const [offeringFilterYear, setOfferingFilterYear] = useState("ALL");
 
   // CO-PO Request Panel States
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
@@ -500,18 +507,20 @@ export default function AdminDashboard() {
 
   const handleCreateCourse = async (e) => {
     e.preventDefault();
-    if (
-      !courseForm.courseCode.trim() ||
-      !courseForm.courseName.trim() ||
-      !courseForm.department.trim()
-    ) {
+    const cleanNum = (courseForm.codeNumber || "").replace(/\D/g, "");
+    if (cleanNum.length !== 3) {
+      alert("Course number must be a 3-digit number (e.g. 213).");
+      return;
+    }
+    const finalCourseCode = `${courseForm.codePrefix || "CSE"} ${cleanNum}`;
+    if (!courseForm.courseName.trim() || !courseForm.department.trim()) {
       alert("Please fill all required course fields.");
       return;
     }
 
     try {
       await apiService.createCourse({
-        courseCode: courseForm.courseCode.trim(),
+        courseCode: finalCourseCode,
         courseName: courseForm.courseName.trim(),
         creditHours: parseFloat(courseForm.creditHours) || 3,
         department: courseForm.department.trim(),
@@ -520,6 +529,8 @@ export default function AdminDashboard() {
         term: courseForm.term || "I",
       });
       setCourseForm({
+        codePrefix: "CSE",
+        codeNumber: "",
         courseCode: "",
         courseName: "",
         creditHours: "3",
@@ -538,10 +549,17 @@ export default function AdminDashboard() {
   const handleUpdateCourse = async (e) => {
     e.preventDefault();
     if (!editingCourseId) return;
+    const cleanNum = (courseForm.codeNumber || "").replace(/\D/g, "");
+    if (cleanNum.length !== 3) {
+      alert("Course number must be a 3-digit number (e.g. 213).");
+      return;
+    }
+    const finalCourseCode = `${courseForm.codePrefix || "CSE"} ${cleanNum}`;
+
     try {
       const updatedNumCOs = parseInt(courseForm.numCOs) || 4;
       await apiService.updateCourse(editingCourseId, {
-        courseCode: courseForm.courseCode.trim(),
+        courseCode: finalCourseCode,
         courseName: courseForm.courseName.trim(),
         creditHours: parseFloat(courseForm.creditHours) || 3,
         department: courseForm.department.trim(),
@@ -554,7 +572,7 @@ export default function AdminDashboard() {
           prev
             ? {
                 ...prev,
-                courseCode: courseForm.courseCode.trim(),
+                courseCode: finalCourseCode,
                 courseName: courseForm.courseName.trim(),
                 creditHours: parseFloat(courseForm.creditHours) || 3,
                 department: courseForm.department.trim(),
@@ -567,6 +585,8 @@ export default function AdminDashboard() {
       }
       setEditingCourseId(null);
       setCourseForm({
+        codePrefix: "CSE",
+        codeNumber: "",
         courseCode: "",
         courseName: "",
         creditHours: "3",
@@ -584,7 +604,19 @@ export default function AdminDashboard() {
 
   const startEditCourse = (course) => {
     setEditingCourseId(course._id);
+    const rawCode = (course.courseCode || "").trim();
+    const parts = rawCode.split(/\s+/);
+    let prefix = "CSE";
+    let num = "";
+    if (parts.length > 1) {
+      prefix = parts[0].toUpperCase();
+      num = parts.slice(1).join("").replace(/\D/g, "").slice(0, 3);
+    } else {
+      num = rawCode.replace(/\D/g, "").slice(0, 3);
+    }
     setCourseForm({
+      codePrefix: prefix,
+      codeNumber: num,
       courseCode: course.courseCode,
       courseName: course.courseName,
       creditHours: String(course.creditHours || 3),
@@ -947,13 +979,15 @@ export default function AdminDashboard() {
 
   const startEditOffering = async (offering) => {
     setEditingOfferingId(offering._id);
+    const semId = offering.semester?._id || offering.semester || "";
+    const foundSem = sessions.find((s) => s._id === semId);
     setOfferingForm({
-      courseId: offering.course?._id || "",
-      batchId: offering.batch?._id || "",
-      teacherId: offering.teacher?._id || "",
-      semesterId: offering.semester?._id || "",
+      courseId: offering.course?._id || offering.course || "",
+      batchId: offering.batch?._id || offering.batch || "",
+      teacherId: offering.teacher?._id || offering.teacher || "",
+      semesterId: semId,
       section: offering.section || "",
-      academicYear: offering.academicYear || new Date().getFullYear(),
+      academicYear: foundSem ? String(foundSem.academicYear) : String(offering.academicYear || ""),
     });
     if (offering.batch?._id) {
       try {
@@ -985,6 +1019,65 @@ export default function AdminDashboard() {
     }
   };
 
+  // Extract offerings matching the primary admin filter state (Current vs Completed vs All)
+  const relevantAdminOfferings = offerings.filter((o) => {
+    const isSemActive = o.semester?.status === 'active';
+    if (offeringFilterSemester === 'completed') return !isSemActive;
+    if (offeringFilterSemester === 'current') return isSemActive;
+    return true; // 'all'
+  });
+
+  // Dynamically extract available years and terms strictly from relevant offerings!
+  const availableAdminYears = Array.from(
+    new Set(
+      relevantAdminOfferings
+        .map((o) => o.academicYear || o.semester?.academicYear)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => b - a);
+
+  const availableAdminTerms = Array.from(
+    new Set(
+      relevantAdminOfferings
+        .map((o) => {
+          const raw = o.semester?.semesterName;
+          if (!raw) return null;
+          return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+        })
+        .filter(Boolean)
+    )
+  ).sort();
+
+  // Final filtered list of offerings for Admin Dashboard directory view
+  const filteredAdminOfferings = relevantAdminOfferings.filter((offering) => {
+    // Sub-Filter: Term (Spring, Fall, Summer, etc.)
+    if (offeringFilterSemester !== 'current' && offeringFilterTerm !== 'ALL') {
+      const termName = (offering.semester?.semesterName || '').toLowerCase();
+      if (termName !== offeringFilterTerm.toLowerCase()) return false;
+    }
+
+    // Sub-Filter: Year (2026, 2025, etc.)
+    if (offeringFilterSemester !== 'current' && offeringFilterYear !== 'ALL') {
+      const yr = String(offering.academicYear || offering.semester?.academicYear || '');
+      if (yr !== String(offeringFilterYear)) return false;
+    }
+
+    return true;
+  });
+
+  // Filter courses by Level and Term in Master Course Directory
+  const filteredCourses = courses.filter((c) => {
+    if (courseFilterLevel !== 'ALL') {
+      const lvl = String(c.level || '1');
+      if (lvl !== String(courseFilterLevel)) return false;
+    }
+    if (courseFilterTerm !== 'ALL') {
+      const trm = String(c.term || 'I').toUpperCase();
+      if (trm !== String(courseFilterTerm).toUpperCase()) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-blue-50/20 p-8">
       <div className="max-w-7xl mx-auto">
@@ -1007,59 +1100,59 @@ export default function AdminDashboard() {
           </button>
         </div>
 
-        <div className="flex flex-wrap gap-3 mb-8 bg-gray-200/50 p-1.5 rounded-xl border border-gray-300/30">
+        <div className="flex items-center justify-between gap-1 mb-8 bg-gray-200/50 p-1.5 rounded-xl border border-gray-300/30 overflow-x-auto">
           <button
             onClick={() => setActiveTab("users")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "users" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "users" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <UserPlus size={16} />
+            <UserPlus size={15} />
             Manage Teachers
           </button>
           <button
             onClick={() => setActiveTab("sessions")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "sessions" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "sessions" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <Calendar size={16} />
+            <Calendar size={15} />
             Sessions
           </button>
           <button
             onClick={() => setActiveTab("courses")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "courses" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "courses" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <BookOpen size={16} />
+            <BookOpen size={15} />
             Course Management
           </button>
           <button
             onClick={() => setActiveTab("programOutcomes")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "programOutcomes" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "programOutcomes" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <Layers size={16} />
+            <Layers size={15} />
             PO Management
           </button>
           <button
             onClick={() => setActiveTab("batches")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "batches" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "batches" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <Users size={16} />
+            <Users size={15} />
             Batch Management
           </button>
           <button
             onClick={() => setActiveTab("courseOfferings")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "courseOfferings" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "courseOfferings" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <ClipboardList size={16} />
+            <ClipboardList size={15} />
             Course Offering
           </button>
           <button
             onClick={() => setActiveTab("requests")}
-            className={`relative flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200 ${activeTab === "requests" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
+            className={`relative flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all duration-200 ${activeTab === "requests" ? "bg-white text-blue-700 shadow-md" : "text-gray-600 hover:text-gray-800"}`}
           >
-            <Bell size={16} />
+            <Bell size={15} />
             Requests
             {pendingRequestCount > 0 && (
-              <span className="relative flex h-5 w-5 items-center justify-center ml-1">
+              <span className="relative inline-flex items-center justify-center ml-0.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-5 w-5 bg-red-600 text-white font-extrabold text-[10px] items-center justify-center shadow-xs">
+                <span className="relative inline-flex items-center justify-center bg-red-600 text-white font-extrabold text-[11px] px-2 py-0.5 rounded-full min-w-[20px] shadow-xs">
                   {pendingRequestCount}
                 </span>
               </span>
@@ -1140,7 +1233,7 @@ export default function AdminDashboard() {
                         })
                       }
                       className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
-                      placeholder="e.g. Dr. John Doe"
+                      placeholder="e.g. Joy Sarkar"
                     />
                   </div>
                   <div>
@@ -1157,7 +1250,7 @@ export default function AdminDashboard() {
                         })
                       }
                       className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
-                      placeholder="teacher@university.edu"
+                      placeholder="joy.cse@baiust.ac.bd"
                     />
                   </div>
                   <div>
@@ -1597,18 +1690,55 @@ export default function AdminDashboard() {
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Course Code
                     </label>
-                    <input
-                      type="text"
-                      value={courseForm.courseCode}
-                      onChange={(e) =>
-                        setCourseForm({
-                          ...courseForm,
-                          courseCode: e.target.value,
-                        })
-                      }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-semibold bg-gray-50/30"
-                      placeholder="e.g. CSE 213"
-                    />
+                    <div className="flex items-center gap-2">
+                      {/* Department Prefix Dropdown */}
+                      <select
+                        value={courseForm.codePrefix || "CSE"}
+                        onChange={(e) => {
+                          const newPrefix = e.target.value;
+                          const num = courseForm.codeNumber || "";
+                          setCourseForm({
+                            ...courseForm,
+                            codePrefix: newPrefix,
+                            courseCode: num ? `${newPrefix} ${num}` : newPrefix,
+                          });
+                        }}
+                        className="w-1/3 border border-gray-300 px-3 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-black bg-gray-50/50 cursor-pointer text-gray-800"
+                      >
+                        <option value="CSE">CSE</option>
+                        <option value="GED">GED</option>
+                        <option value="EEE">EEE</option>
+                        <option value="CE">CE</option>
+                        <option value="MATH">MATH</option>
+                        <option value="ENG">ENG</option>
+                        <option value="PHY">PHY</option>
+                        <option value="CHEM">CHEM</option>
+                      </select>
+
+                      {/* 3-Digit Number Input */}
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          maxLength={3}
+                          value={courseForm.codeNumber || ""}
+                          onChange={(e) => {
+                            const cleanNum = e.target.value.replace(/\D/g, "").slice(0, 3);
+                            const prefix = courseForm.codePrefix || "CSE";
+                            setCourseForm({
+                              ...courseForm,
+                              codeNumber: cleanNum,
+                              courseCode: cleanNum ? `${prefix} ${cleanNum}` : prefix,
+                            });
+                          }}
+                          className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs font-bold bg-gray-50/30 text-gray-900"
+                          placeholder="e.g. 213 (3 Digits)"
+                          required
+                        />
+                        <span className="absolute right-3 top-2.5 text-[10px] font-extrabold text-gray-400 select-none">
+                          {(courseForm.codeNumber || "").length}/3
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
@@ -1759,7 +1889,6 @@ export default function AdminDashboard() {
                       <option value="CSE">CSE (Computer Science & Engineering)</option>
                       <option value="EEE">EEE (Electrical & Electronic Engineering)</option>
                       <option value="CE">CE (Civil Engineering)</option>
-                      <option value="BBA">BBA (Business Administration)</option>
                     </select>
                   </div>
 
@@ -1789,16 +1918,49 @@ export default function AdminDashboard() {
 
               {/* Course List */}
               <div className="lg:col-span-7 bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-                <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-150 pb-4">
                   <div>
                     <h2 className="text-lg font-extrabold text-gray-900">
                       Master Course Directory
                     </h2>
                     <p className="text-xs text-gray-500 font-medium">Select a course below to manage its COs and CO-PO allocation matrix</p>
                   </div>
-                  <span className="bg-emerald-50 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full border border-emerald-200">
-                    {courses.length} Active Courses
-                  </span>
+
+                  <div className="flex items-center justify-end gap-2 flex-wrap">
+                    {/* Level Filter Dropdown */}
+                    <div className="flex items-center gap-1 bg-emerald-50/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 text-emerald-950 text-xs font-bold shadow-xs">
+                      <span className="text-emerald-700 font-bold">Level:</span>
+                      <select
+                        value={courseFilterLevel}
+                        onChange={(e) => setCourseFilterLevel(e.target.value)}
+                        className="bg-transparent text-xs font-extrabold text-emerald-950 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Levels</option>
+                        <option value="1">Level 1</option>
+                        <option value="2">Level 2</option>
+                        <option value="3">Level 3</option>
+                        <option value="4">Level 4</option>
+                      </select>
+                    </div>
+
+                    {/* Term Filter Dropdown */}
+                    <div className="flex items-center gap-1 bg-emerald-50/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 text-emerald-950 text-xs font-bold shadow-xs">
+                      <span className="text-emerald-700 font-bold">Term:</span>
+                      <select
+                        value={courseFilterTerm}
+                        onChange={(e) => setCourseFilterTerm(e.target.value)}
+                        className="bg-transparent text-xs font-extrabold text-emerald-950 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Terms</option>
+                        <option value="I">Term I</option>
+                        <option value="II">Term II</option>
+                      </select>
+                    </div>
+
+                    <span className="bg-emerald-50 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-200 whitespace-nowrap">
+                      {filteredCourses.length} Courses
+                    </span>
+                  </div>
                 </div>
 
                 {coursesLoading ? (
@@ -1807,10 +1969,13 @@ export default function AdminDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                    {courses.length === 0 ? (
-                      <p className="text-gray-400 italic text-xs py-6 text-center">No master courses created yet.</p>
+                    {filteredCourses.length === 0 ? (
+                      <div className="p-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                        <p className="text-gray-500 font-bold text-sm">No master courses match the selected Level / Term filter.</p>
+                        <p className="text-gray-400 text-xs">Try switching Level or Term filter to "All".</p>
+                      </div>
                     ) : (
-                      courses.map((course) => {
+                      filteredCourses.map((course) => {
                         const isSelected = selectedCourse?._id === course._id;
                         return (
                           <div
@@ -2829,12 +2994,15 @@ export default function AdminDashboard() {
                   </label>
                   <select
                     value={offeringForm.semesterId}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const selectedSemId = e.target.value;
+                      const selectedSem = sessions.find((s) => s._id === selectedSemId);
                       setOfferingForm({
                         ...offeringForm,
-                        semesterId: e.target.value,
-                      })
-                    }
+                        semesterId: selectedSemId,
+                        academicYear: selectedSem ? String(selectedSem.academicYear) : offeringForm.academicYear,
+                      });
+                    }}
                     className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                   >
                     <option value="">Select session</option>
@@ -2878,15 +3046,11 @@ export default function AdminDashboard() {
                     Academic Year
                   </label>
                   <input
-                    type="number"
-                    value={offeringForm.academicYear}
-                    onChange={(e) =>
-                      setOfferingForm({
-                        ...offeringForm,
-                        academicYear: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
+                    type="text"
+                    value={offeringForm.academicYear || ''}
+                    readOnly
+                    placeholder="Auto-assigned from session"
+                    className="w-full border border-gray-200 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 cursor-not-allowed select-none outline-none"
                   />
                 </div>
 
@@ -2924,16 +3088,78 @@ export default function AdminDashboard() {
 
             {/* Existing Course Offerings Directory */}
             <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-gray-150 pb-4">
                 <div>
                   <h2 className="text-lg font-extrabold text-gray-900">
-                    Active Course Offerings
+                    {offeringFilterSemester === 'current'
+                      ? 'Active Course Offerings'
+                      : offeringFilterSemester === 'completed'
+                      ? 'Completed Course Offerings'
+                      : 'All Course Offerings'}
                   </h2>
-                  <p className="text-xs text-gray-500 font-medium font-semibold">Configured offerings for student enrollment and assessment</p>
+                  <p className="text-xs text-gray-500 font-semibold">Configured offerings for student enrollment and assessment</p>
                 </div>
-                <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1 rounded-full border border-orange-200">
-                  {offerings.length} Active Offerings
-                </span>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Primary Filter Selector */}
+                  <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl shadow-xs border border-gray-200 text-gray-700 font-semibold focus-within:border-orange-400 transition-all select-none">
+                    <Filter className="text-orange-600" size={15} />
+                    <select
+                      value={offeringFilterSemester}
+                      onChange={(e) => {
+                        setOfferingFilterSemester(e.target.value);
+                        if (e.target.value === 'current') {
+                          setOfferingFilterTerm('ALL');
+                          setOfferingFilterYear('ALL');
+                        }
+                      }}
+                      className="bg-transparent text-xs font-extrabold focus:outline-none cursor-pointer text-gray-800"
+                    >
+                      <option value="current">Current Semesters</option>
+                      <option value="completed">Completed Semesters</option>
+                      <option value="all">All Semesters</option>
+                    </select>
+                  </div>
+
+                  {/* Sub-Filters (Term & Year for Completed or All Semesters) */}
+                  {offeringFilterSemester !== 'current' && (
+                    <div className="flex flex-wrap items-center gap-2 animate-fadeIn">
+                      {/* Term Dropdown */}
+                      <div className="flex items-center gap-1.5 bg-orange-50/80 px-3 py-2 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
+                        <span className="text-orange-700 font-bold">Term:</span>
+                        <select
+                          value={offeringFilterTerm}
+                          onChange={(e) => setOfferingFilterTerm(e.target.value)}
+                          className="bg-transparent text-xs font-extrabold text-orange-950 focus:outline-none cursor-pointer"
+                        >
+                          <option value="ALL">All Terms</option>
+                          {availableAdminTerms.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Year Dropdown */}
+                      <div className="flex items-center gap-1.5 bg-orange-50/80 px-3 py-2 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
+                        <span className="text-orange-700 font-bold">Year:</span>
+                        <select
+                          value={offeringFilterYear}
+                          onChange={(e) => setOfferingFilterYear(e.target.value)}
+                          className="bg-transparent text-xs font-extrabold text-orange-950 focus:outline-none cursor-pointer"
+                        >
+                          <option value="ALL">All Years</option>
+                          {availableAdminYears.map((y) => (
+                            <option key={y} value={y}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1.5 rounded-full border border-orange-200">
+                    {filteredAdminOfferings.length} {offeringFilterSemester === 'current' ? 'Active' : offeringFilterSemester === 'completed' ? 'Completed' : 'Total'} Offerings
+                  </span>
+                </div>
               </div>
 
               {offeringsLoading ? (
@@ -2942,12 +3168,13 @@ export default function AdminDashboard() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {offerings.length === 0 ? (
-                    <p className="text-gray-400 italic text-xs py-6 text-center">
-                      No course offerings created yet.
-                    </p>
+                  {filteredAdminOfferings.length === 0 ? (
+                    <div className="p-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                      <p className="text-gray-500 font-bold text-sm">No course offerings match the selected filter.</p>
+                      <p className="text-gray-400 text-xs">Try switching Term / Year or choosing <span className="font-bold text-orange-700">"Current Semesters"</span>.</p>
+                    </div>
                   ) : (
-                    offerings.map((offering) => (
+                    filteredAdminOfferings.map((offering) => (
                       <div
                         key={offering._id}
                         className="p-4 rounded-xl border border-gray-200 hover:border-orange-300 hover:shadow-xs transition flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white"

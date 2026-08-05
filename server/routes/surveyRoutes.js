@@ -392,10 +392,18 @@ router.post('/public/surveys/:id/verify-student', async (req, res) => {
       return res.status(400).json({ message: 'You are not enrolled in this course offering.' })
     }
 
-    // Check duplicate submission
-    const existingResponse = await SurveyResponse.findOne({ surveyId: surveyDoc._id, studentId: student._id })
+    // Check duplicate submission across related surveys
+    const relatedSurveys = await Survey.find({
+      $or: [
+        { _id: surveyDoc._id },
+        { surveyId: surveyDoc.surveyId }
+      ]
+    })
+    const relatedSurveyIds = relatedSurveys.map(s => s._id)
+
+    const existingResponse = await SurveyResponse.findOne({ surveyId: { $in: relatedSurveyIds }, studentId: student._id })
     if (existingResponse) {
-      return res.status(400).json({ message: 'You have already submitted a response for this survey.' })
+      return res.status(400).json({ message: `Student ID "${studentId.trim()}" has ALREADY submitted one of the existing survey responses recorded previously. Duplicate submissions for the same Student ID are blocked. To submit a NEW response, please use a DIFFERENT enrolled Student ID.` })
     }
 
     res.status(200).json({ success: true, message: 'Student enrollment verified.' })
@@ -453,10 +461,18 @@ router.post('/public/surveys/:id/submit', async (req, res) => {
       return res.status(400).json({ message: 'You are not enrolled in this course offering.' })
     }
 
-    // Check duplicate submission
-    const existingResponse = await SurveyResponse.findOne({ surveyId: surveyDoc._id, studentId: student._id })
+    // Check duplicate submission across related surveys
+    const relatedSurveys = await Survey.find({
+      $or: [
+        { _id: surveyDoc._id },
+        { surveyId: surveyDoc.surveyId }
+      ]
+    })
+    const relatedSurveyIds = relatedSurveys.map(s => s._id)
+
+    const existingResponse = await SurveyResponse.findOne({ surveyId: { $in: relatedSurveyIds }, studentId: student._id })
     if (existingResponse) {
-      return res.status(400).json({ message: 'You have already submitted a response for this survey.' })
+      return res.status(400).json({ message: `Student ID "${studentId.trim()}" has ALREADY submitted one of the existing survey responses recorded previously. Duplicate submissions for the same Student ID are blocked. To submit a NEW response, please use a DIFFERENT enrolled Student ID.` })
     }
 
     // Create Survey Response Anonymously (exclude name and email)
@@ -476,23 +492,54 @@ router.post('/public/surveys/:id/submit', async (req, res) => {
 // 8. Get survey analytics (Authenticated, teachers/admins)
 router.get('/surveys/:id/analytics', requireAuth, async (req, res) => {
   try {
-    const surveyDoc = await Survey.findById(req.params.id).populate({
-      path: 'courseOfferingId',
-      populate: ['course', 'batch', 'semester', 'teacher']
-    })
-    
+    const { id } = req.params
+
+    let surveyDoc = null
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      surveyDoc = await Survey.findById(id).populate({
+        path: 'courseOfferingId',
+        populate: ['course', 'batch', 'semester', 'teacher']
+      })
+    }
+    if (!surveyDoc) {
+      surveyDoc = await Survey.findOne({ surveyId: id }).populate({
+        path: 'courseOfferingId',
+        populate: ['course', 'batch', 'semester', 'teacher']
+      })
+    }
+    if (!surveyDoc) {
+      const resolved = await resolveSurveyForOffering(id)
+      if (resolved) {
+        surveyDoc = await Survey.findById(resolved._id).populate({
+          path: 'courseOfferingId',
+          populate: ['course', 'batch', 'semester', 'teacher']
+        })
+      }
+    }
+
     if (!surveyDoc) {
       return res.status(404).json({ message: 'Survey not found' })
     }
 
     const survey = await getCombinedSurvey(surveyDoc)
 
-    // Fetch all responses
-    const responses = await SurveyResponse.find({ surveyId: surveyDoc._id }).populate('studentId')
+    // Find ALL related surveys for this course offering (primary + sister offerings + matching surveyId code)
+    const relatedSurveys = await Survey.find({
+      $or: [
+        { _id: surveyDoc._id },
+        { surveyId: surveyDoc.surveyId },
+        { courseOfferingId: surveyDoc.courseOfferingId }
+      ]
+    })
+    const relatedSurveyIds = relatedSurveys.map(s => s._id)
+
+    // Fetch all responses across all related surveys
+    const responses = await SurveyResponse.find({ surveyId: { $in: relatedSurveyIds } }).populate('studentId').sort({ submittedAt: -1 })
 
     // Get total enrolled students across all sections taught by this teacher for this course & batch
     const offering = surveyDoc.courseOfferingId
     let totalStudents = 0
+    const sectionStats = []
 
     if (offering && offering.batch && offering.teacher) {
       const CourseOfferingModel = mongoose.model('CourseOffering')
@@ -523,7 +570,47 @@ router.get('/surveys/:id/analytics', requireAuth, async (req, res) => {
           totalStudents += count
         }
       }
-    } else {
+
+      // Calculate Per-Section Statistics
+      for (const off of sameTeacherOfferings) {
+        const secName = off.section || 'A'
+        
+        const secEnrollments = await Enrollment.find({ courseOffering: off._id }).populate('student')
+        let secStudentCount = secEnrollments.length
+        let secStudentIds = new Set(secEnrollments.map(e => e.student?._id?.toString()).filter(Boolean))
+
+        if (secStudentCount === 0 && off.batch) {
+          const sectionDoc = await SectionModel.findOne({ batchId: off.batch, sectionName: secName })
+          const query = { batchId: off.batch }
+          if (sectionDoc) query.sectionId = sectionDoc._id
+          const secStudents = await Student.find(query)
+          secStudentCount = secStudents.length
+          secStudentIds = new Set(secStudents.map(s => s._id.toString()))
+        }
+
+        const secSubmittedCount = responses.filter(r => {
+          if (!r.studentId) return false
+          const sId = r.studentId._id ? r.studentId._id.toString() : r.studentId.toString()
+          if (secStudentIds.has(sId)) return true
+          const rSecName = r.studentId.sectionId?.sectionName
+          if (rSecName && rSecName.toLowerCase() === secName.toLowerCase()) return true
+          return false
+        }).length
+
+        const secPendingCount = Math.max(0, secStudentCount - secSubmittedCount)
+        const secRate = secStudentCount > 0 ? ((secSubmittedCount / secStudentCount) * 100).toFixed(1) : '0.0'
+
+        sectionStats.push({
+          offeringId: off._id,
+          section: secName,
+          totalStudents: secStudentCount,
+          submittedCount: secSubmittedCount,
+          pendingCount: secPendingCount,
+          responseRate: secRate,
+          isCurrentSection: off._id.toString() === offering._id.toString()
+        })
+      }
+    } else if (offering) {
       const enrollments = await Enrollment.find({ courseOffering: offering._id })
       totalStudents = enrollments.length
     }
@@ -531,9 +618,11 @@ router.get('/surveys/:id/analytics', requireAuth, async (req, res) => {
     res.status(200).json({
       survey,
       responses,
-      totalStudents
+      totalStudents,
+      sectionStats
     })
   } catch (error) {
+    console.error("Error loading survey analytics:", error)
     res.status(500).json({ message: 'Error loading survey analytics', error: error.message })
   }
 })

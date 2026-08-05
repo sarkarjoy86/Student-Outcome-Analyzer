@@ -18,6 +18,7 @@ import COAttainment from "../models/COAttainment.js";
 import POAttainment from "../models/POAttainment.js";
 import { syncAllStudentsLongitudinalPO } from "./poRecommendationRoutes.js";
 import { logActivity } from "../utils/activityLogger.js";
+import { recalculateAttainments } from "./teacherRoutes.js";
 
 const router = express.Router();
 
@@ -1273,17 +1274,22 @@ router.put(
 router.put("/course-offerings/:id/kpi", requireAuth, async (req, res) => {
   try {
     const { targetPassMarks, kpiCO, kpiPO } = req.body;
-    const offering = await CourseOffering.findOneAndUpdate(
-      { _id: req.params.id, teacher: req.user._id },
-      { targetPassMarks, kpiCO, kpiPO },
-      { returnDocument: 'after' },
-    );
+    let offering = await CourseOffering.findById(req.params.id);
     if (!offering) {
       return res
         .status(404)
-        .json({ message: "Course offering not found or unauthorized." });
+        .json({ message: "Course offering not found." });
     }
-    await logActivity(req.params.id, req.user._id, 'KPI Config Updated', `Updated KPI config targets`)
+
+    if (targetPassMarks !== undefined) offering.targetPassMarks = targetPassMarks;
+    if (kpiCO !== undefined) offering.kpiCO = kpiCO;
+    if (kpiPO !== undefined) offering.kpiPO = kpiPO;
+    await offering.save();
+
+    // Automatically recalculate CO and PO attainments with updated thresholds
+    await recalculateAttainments(req.params.id);
+
+    await logActivity(req.params.id, req.user._id, 'KPI Config Updated', `Updated KPI config targets: Pass Marks ${targetPassMarks}%, CO KPI ${kpiCO}%, PO KPI ${kpiPO}%`);
     res
       .status(200)
       .json({ message: "KPI configuration updated successfully.", offering });
@@ -1503,6 +1509,8 @@ router.get(
         attendance: null,
         performance: null,
         presentation: null,
+        participation: null,
+        projectReport: null,
       };
 
       dbAssessments.forEach((a) => {
@@ -1544,6 +1552,10 @@ router.get(
         assessments.performance = { maxMarks: 10, co: "" };
       if (!assessments.presentation)
         assessments.presentation = { maxMarks: 10, co: "" };
+      if (!assessments.participation)
+        assessments.participation = { maxMarks: 10, co: "" };
+      if (!assessments.projectReport)
+        assessments.projectReport = { maxMarks: 10, co: "" };
 
       res.status(200).json({ assessments });
     } catch (error) {
@@ -1663,6 +1675,8 @@ router.post(
         attendance: null,
         performance: null,
         presentation: null,
+        participation: null,
+        projectReport: null,
       };
 
       savedAssessments.forEach((a) => {
@@ -1946,6 +1960,8 @@ router.get(
         attendance: null,
         performance: null,
         presentation: null,
+        participation: null,
+        projectReport: null,
       };
 
       dbAssessments.forEach((a) => {
@@ -1968,6 +1984,10 @@ router.get(
         assessments.performance = { maxMarks: 10, co: "" };
       if (!assessments.presentation)
         assessments.presentation = { maxMarks: 10, co: "" };
+      if (!assessments.participation)
+        assessments.participation = { maxMarks: 10, co: "" };
+      if (!assessments.projectReport)
+        assessments.projectReport = { maxMarks: 10, co: "" };
 
       // 5. Fetch marks
       const dbMarks = await Marks.find({ courseOffering: courseOfferingId });
@@ -2010,9 +2030,9 @@ router.get(
         marks,
         coMapping: normalizedCoMapping,
         kpiConfig: {
-          targetPassMarks: offering.targetPassMarks,
-          kpiCO: offering.kpiCO,
-          kpiPO: offering.kpiPO,
+          targetPassMarks: offering.targetPassMarks || 40,
+          kpiCO: offering.kpiCO || 50,
+          kpiPO: offering.kpiPO || 50,
         },
       });
     } catch (error) {

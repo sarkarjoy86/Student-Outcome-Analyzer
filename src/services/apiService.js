@@ -473,7 +473,7 @@ export const apiService = {
 
   // Teacher Module Specific Endpoints
   async getTeacherCourseOfferings() {
-    const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings`, { skipCache: true });
     return handleResponse(res);
   },
 
@@ -607,7 +607,7 @@ export const apiService = {
 
   // Student Course Survey Endpoints
   async getSurveys(offeringId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/offering/${offeringId}`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/offering/${offeringId}`, { skipCache: true });
     return handleResponse(res);
   },
 
@@ -649,7 +649,7 @@ export const apiService = {
   },
 
   async getPublicSurvey(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}`, { skipCache: true });
     return handleResponse(res);
   },
 
@@ -662,15 +662,17 @@ export const apiService = {
   },
 
   async submitSurveyResponse(id, payload) {
+    clearApiCache();
     const res = await fetchWithDefaults(`${API_BASE}/api/public/surveys/${encodeURIComponent(id)}/submit`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    clearApiCache();
     return handleResponse(res);
   },
 
   async getSurveyAnalytics(id) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/analytics`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/surveys/${encodeURIComponent(id)}/analytics`, { skipCache: true });
     return handleResponse(res);
   },
 

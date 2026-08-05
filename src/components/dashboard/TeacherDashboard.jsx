@@ -40,13 +40,15 @@ import {
   XCircle,
   X,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Target
 } from 'lucide-react'
 import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ErrorBoundary from '../ErrorBoundary'
 import ComprehensiveReports from '../reports/ComprehensiveReports'
 import CourseSurvey from '../survey/CourseSurvey'
 import PORecommendationMatrix from '../reports/PORecommendationMatrix'
+import { calculateAllAttainments } from '../../utils/comprehensiveCalculations'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -457,6 +459,42 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     kpiConfig: { targetPassMarks: 40, kpiCO: 50, kpiPO: 50 }
   })
   const [kpiInput, setKpiInput] = useState({ targetPassMarks: 40, kpiCO: 50, kpiPO: 50 })
+
+  // Live computed attainment data as threshold sliders change
+  const liveAttainmentData = useMemo(() => {
+    if (
+      marksSpreadsheetData &&
+      marksSpreadsheetData.students &&
+      marksSpreadsheetData.students.length > 0 &&
+      marksSpreadsheetData.marks
+    ) {
+      const activeAssessmentsList = marksSpreadsheetData.assessments || assessments || []
+      const cts = activeAssessmentsList.filter(a => a.type === 'cts')
+      const midTerm = activeAssessmentsList.filter(a => a.type === 'midTerm')
+      const final = activeAssessmentsList.filter(a => a.type === 'final')
+      const assignments = activeAssessmentsList.filter(a => a.type === 'assignments')
+      const attendance = activeAssessmentsList.find(a => a.type === 'attendance')
+      const performance = activeAssessmentsList.find(a => a.type === 'performance')
+      const presentation = activeAssessmentsList.find(a => a.type === 'presentation')
+      const participation = activeAssessmentsList.find(a => a.type === 'participation')
+      const projectReport = activeAssessmentsList.find(a => a.type === 'projectReport')
+
+      const structured = { cts, midTerm, final, assignments, attendance, performance, presentation, participation, projectReport }
+      const activeStudents = (marksSpreadsheetData.students || []).map(s => ({ id: s.id, name: s.name, _id: s._id }))
+
+      return calculateAllAttainments(
+        activeStudents,
+        marksSpreadsheetData.marks,
+        structured,
+        coMapping,
+        kpiInput.targetPassMarks,
+        kpiInput.kpiCO,
+        kpiInput.kpiPO,
+        marksSpreadsheetData.metadata || {}
+      )
+    }
+    return null
+  }, [marksSpreadsheetData, assessments, coMapping, kpiInput])
  
   // Question Bank Drill-down Path State
   const [qBankPath, setQBankPath] = useState({ type: null, session: null, section: null })
@@ -602,7 +640,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       return 'Assigned'
     }
 
-    if (['attendance', 'presentation'].includes(a.type)) {
+    if (['attendance', 'presentation', 'performance', 'participation', 'projectReport'].includes(a.type)) {
       return 'Assigned'
     }
 
@@ -664,7 +702,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         else if (a.type === 'assignments') typeLabel = 'Assignment'
         else if (a.type === 'presentation') typeLabel = 'Presentation'
         else if (a.type === 'attendance') typeLabel = 'Attendance'
-        else if (a.type === 'performance') typeLabel = 'Performance'
+        else if (a.type === 'performance') typeLabel = 'Class Performance'
+        else if (a.type === 'participation') typeLabel = 'Class Participation'
+        else if (a.type === 'projectReport') typeLabel = 'Project Report'
 
         const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
         const standardCTCount = Math.max(1, Math.floor(creditsVal))
@@ -876,6 +916,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       }
       if (assessmentsRes.assessments?.presentation && assessmentsRes.assessments.presentation._id) {
         flatAssessments.push(assessmentsRes.assessments.presentation)
+      }
+      if (assessmentsRes.assessments?.participation && assessmentsRes.assessments.participation._id) {
+        flatAssessments.push(assessmentsRes.assessments.participation)
+      }
+      if (assessmentsRes.assessments?.projectReport && assessmentsRes.assessments.projectReport._id) {
+        flatAssessments.push(assessmentsRes.assessments.projectReport)
       }
 
       setAssessments(flatAssessments)
@@ -1610,7 +1656,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           { id: 'coMapping', label: 'CO-PO Mapping', icon: Network },
           { id: 'students', label: 'Student Table', icon: Users },
           { id: 'assessments', label: 'Assessments', icon: ClipboardList },
-          { id: 'questionBank', label: 'Question Bank', icon: FolderOpen },
+          { id: 'questionBank', label: 'Question Archives', icon: FolderOpen },
           { id: 'marksEntry', label: 'Marks Entry', icon: CheckSquare },
           { id: 'attainment', label: 'Attainment', icon: Award },
           { id: 'reports', label: 'Reports', icon: BarChart3 },
@@ -2707,8 +2753,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             <option value="performance" disabled={Boolean(existingTypes['performance'])}>
                               Class Performance {existingTypes['performance'] ? '(Already Created)' : ''}
                             </option>
+                            <option value="participation" disabled={Boolean(existingTypes['participation'])}>
+                              Class Participation {existingTypes['participation'] ? '(Already Created)' : ''}
+                            </option>
                             <option value="presentation" disabled={Boolean(existingTypes['presentation'])}>
                               Presentation {existingTypes['presentation'] ? '(Already Created)' : ''}
+                            </option>
+                            <option value="projectReport" disabled={Boolean(existingTypes['projectReport'])}>
+                              Project Report {existingTypes['projectReport'] ? '(Already Created)' : ''}
                             </option>
                           </select>
                           {isTypeDisabled && (
@@ -2725,7 +2777,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           const midLimit = credits === 2 ? 60 : 90
                           const finalLimit = credits === 2 ? 100 : 150
 
-                          const isContinuous = ['cts', 'assignments', 'attendance', 'presentation', 'performance'].includes(newAssessment.type)
+                          const isContinuous = ['cts', 'assignments', 'attendance', 'presentation', 'performance', 'participation', 'projectReport'].includes(newAssessment.type)
                           const isMid = newAssessment.type === 'midTerm'
                           const isFinal = newAssessment.type === 'final'
 
@@ -2994,7 +3046,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     className="text-green-700 hover:text-green-800 hover:underline transition-colors flex items-center gap-1"
                   >
                     <FolderOpen size={14} />
-                    Question Bank
+                    Question Archives
                   </button>
 
                   {qBankPath.type && (
@@ -3032,7 +3084,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
               {qBankPapers.length === 0 ? (
                 <div className="bg-white rounded-2xl border p-12 text-center text-gray-500 font-semibold shadow-sm">
-                  No question papers found for this course in the question bank.
+                  No question papers found for this course in the question archives.
                 </div>
               ) : (
                 <div>
@@ -4095,55 +4147,150 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               })
             })
 
+            // Determine CO attainment data (live calculated if available, otherwise DB state)
+            const displayCoAttainments = (attainmentData.coAttainments && attainmentData.coAttainments.length > 0)
+              ? [...attainmentData.coAttainments]
+              : (liveAttainmentData?.coAttainment
+                  ? Object.keys(liveAttainmentData.coAttainment).map(coKey => ({
+                      co: coKey,
+                      passMarksPercentage: liveAttainmentData.coAttainment[coKey].passMarksPercentage,
+                      kpiPercentage: liveAttainmentData.coAttainment[coKey].kpiPercentage,
+                      attained: liveAttainmentData.coAttainment[coKey].kpiPercentage >= kpiInput.kpiCO
+                    }))
+                  : [])
+
+            // Determine PO attainment data (live calculated if available, otherwise DB state)
+            const displayPoAttainments = (attainmentData.poAttainments && attainmentData.poAttainments.length > 0)
+              ? [...attainmentData.poAttainments]
+              : (liveAttainmentData?.poAttainment
+                  ? Object.keys(liveAttainmentData.poAttainment).map(poKey => ({
+                      po: poKey,
+                      passMarksPercentage: liveAttainmentData.poAttainment[poKey].passMarksPercentage,
+                      kpiPercentage: liveAttainmentData.poAttainment[poKey].kpiPercentage,
+                      attained: liveAttainmentData.poAttainment[poKey].kpiPercentage >= kpiInput.kpiPO
+                    }))
+                  : [])
+
             return (
               <div className="space-y-6">
-                {/* Threshold configurations */}
-                <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-                  <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">KPI Attainment Thresholds</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Threshold configurations with Sliders */}
+                <div className="bg-gradient-to-r from-green-50/40 via-white to-emerald-50/40 rounded-2xl shadow-md border border-green-200 p-6 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-150 pb-4">
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Target Pass Marks (%)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={kpiInput.targetPassMarks}
-                        onChange={(e) => setKpiInput({ ...kpiInput, targetPassMarks: parseInt(e.target.value) || 0 })}
-                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                      />
+                      <h3 className="text-xl font-extrabold text-gray-800 flex items-center gap-2">
+                        <Target className="text-green-600" size={22} />
+                        KPI Attainment Thresholds
+                      </h3>
+                      <p className="text-xs text-gray-500 font-medium mt-0.5">
+                        Adjust target pass marks and CO/PO target percentages using the interactive sliders
+                      </p>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">CO Attainment Target KPI (%)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={kpiInput.kpiCO}
-                        onChange={(e) => setKpiInput({ ...kpiInput, kpiCO: parseInt(e.target.value) || 0 })}
-                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">PO Attainment Target KPI (%)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={kpiInput.kpiPO}
-                        onChange={(e) => setKpiInput({ ...kpiInput, kpiPO: parseInt(e.target.value) || 0 })}
-                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50/50 font-semibold"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end pt-2">
                     <button
                       onClick={saveKpiConfig}
                       disabled={saving}
-                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-bold shadow-md disabled:opacity-50"
+                      className="flex items-center gap-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white px-5 py-2.5 rounded-xl font-bold shadow-md hover:shadow-lg transition-all transform hover:scale-[1.02] disabled:opacity-50 text-sm cursor-pointer"
                     >
-                      <Save size={16} />
+                      <Save size={18} />
                       {saving ? 'Saving Thresholds...' : 'Save Thresholds'}
                     </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Slider 1: Target Pass Marks */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                          Target Pass Marks (%)
+                        </label>
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                          {kpiInput.targetPassMarks}%
+                        </span>
+                      </div>
+                      <div className="relative flex items-center">
+                        <input
+                          type="range"
+                          min="1"
+                          max="100"
+                          value={kpiInput.targetPassMarks}
+                          onChange={(e) =>
+                            setKpiInput({
+                              ...kpiInput,
+                              targetPassMarks: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                        <span>0%</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+
+                    {/* Slider 2: CO Attainment Target KPI */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                          CO Attainment Target KPI (%)
+                        </label>
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                          {kpiInput.kpiCO}%
+                        </span>
+                      </div>
+                      <div className="relative flex items-center">
+                        <input
+                          type="range"
+                          min="1"
+                          max="100"
+                          value={kpiInput.kpiCO}
+                          onChange={(e) =>
+                            setKpiInput({
+                              ...kpiInput,
+                              kpiCO: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                        <span>0%</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+
+                    {/* Slider 3: PO Attainment Target KPI */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                          PO Attainment Target KPI (%)
+                        </label>
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                          {kpiInput.kpiPO}%
+                        </span>
+                      </div>
+                      <div className="relative flex items-center">
+                        <input
+                          type="range"
+                          min="1"
+                          max="100"
+                          value={kpiInput.kpiPO}
+                          onChange={(e) =>
+                            setKpiInput({
+                              ...kpiInput,
+                              kpiPO: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                        <span>0%</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -4157,16 +4304,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <thead>
                           <tr className="bg-gray-50 border-b">
                             <th className="px-4 py-2 border-r font-bold text-gray-700">CO</th>
-                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
-                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiCO}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({kpiInput.targetPassMarks}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({kpiInput.kpiCO}%)</th>
                             <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y font-semibold text-gray-700">
-                          {attainmentData.coAttainments && attainmentData.coAttainments.length > 0 ? (
-                            [...attainmentData.coAttainments]
+                          {displayCoAttainments && displayCoAttainments.length > 0 ? (
+                            [...displayCoAttainments]
                               .filter(co => {
-                                // If database outcomes are empty, display all as fallback
                                 if (dbCourseOutcomes.length === 0) return true
                                 const normCo = co.co.replace(/\s+/g, '').toUpperCase()
                                 return dbCourseOutcomes.some(c => c.code.replace(/\s+/g, '').toUpperCase() === normCo)
@@ -4176,19 +4322,27 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                 const numB = parseInt(b.co.replace(/^\D+/g, ''), 10) || 0
                                 return numA - numB
                               })
-                              .map(co => (
-                                <tr key={co.co}>
-                                  <td className="px-4 py-3 border-r font-bold text-blue-700">{co.co}</td>
-                                  <td className="px-4 py-3 border-r text-center">{(co.passMarksPercentage || 0).toFixed(1)}%</td>
-                                  <td className="px-4 py-3 border-r text-center">{(co.kpiPercentage || 0).toFixed(1)}%</td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${co.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              .map(co => {
+                                const liveData = liveAttainmentData?.coAttainment?.[co.co]
+                                const passPct = liveData ? liveData.passMarksPercentage : (co.passMarksPercentage || 0)
+                                const kpiPct = liveData ? liveData.kpiPercentage : (co.kpiPercentage || 0)
+                                const isAttained = kpiPct >= kpiInput.kpiCO
+
+                                return (
+                                  <tr key={co.co}>
+                                    <td className="px-4 py-3 border-r font-bold text-blue-700">{co.co}</td>
+                                    <td className="px-4 py-3 border-r text-center">{passPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center">{kpiPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 text-center">
+                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${
+                                        isAttained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                       }`}>
-                                      {co.attained ? 'Attained' : 'Not Attained'}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))
+                                        {isAttained ? 'Attained' : 'Not Attained'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                )
+                              })
                           ) : (
                             <tr>
                               <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Run a marks sheet update first.</td>
@@ -4207,16 +4361,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <thead>
                           <tr className="bg-gray-50 border-b">
                             <th className="px-4 py-2 border-r font-bold text-gray-700">PO</th>
-                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({attainmentData.kpiConfig?.targetPassMarks}%)</th>
-                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({attainmentData.kpiConfig?.kpiPO}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({kpiInput.targetPassMarks}%)</th>
+                            <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({kpiInput.kpiPO}%)</th>
                             <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y font-semibold text-gray-700">
-                          {attainmentData.poAttainments && attainmentData.poAttainments.length > 0 ? (
-                            [...attainmentData.poAttainments]
+                          {displayPoAttainments && displayPoAttainments.length > 0 ? (
+                            [...displayPoAttainments]
                               .filter(po => {
-                                // If no mapped keys are computed, display all as fallback
                                 if (mappedPoKeysForAttainment.size === 0) return true
                                 const normPo = po.po.replace(/\s+/g, '').toUpperCase()
                                 return mappedPoKeysForAttainment.has(normPo)
@@ -4226,19 +4379,27 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                 const numB = parseInt(b.po.replace(/^\D+/g, ''), 10) || 0
                                 return numA - numB
                               })
-                              .map(po => (
-                                <tr key={po.po}>
-                                  <td className="px-4 py-3 border-r font-bold text-purple-700" title={PO_NAMES[po.po]}>{po.po}</td>
-                                  <td className="px-4 py-3 border-r text-center">{(po.passMarksPercentage || 0).toFixed(1)}%</td>
-                                  <td className="px-4 py-3 border-r text-center">{(po.kpiPercentage || 0).toFixed(1)}%</td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${po.attained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              .map(po => {
+                                const liveData = liveAttainmentData?.poAttainment?.[po.po]
+                                const passPct = liveData ? liveData.passMarksPercentage : (po.passMarksPercentage || 0)
+                                const kpiPct = liveData ? liveData.kpiPercentage : (po.kpiPercentage || 0)
+                                const isAttained = kpiPct >= kpiInput.kpiPO
+
+                                return (
+                                  <tr key={po.po}>
+                                    <td className="px-4 py-3 border-r font-bold text-purple-700" title={PO_NAMES[po.po]}>{po.po}</td>
+                                    <td className="px-4 py-3 border-r text-center">{passPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center">{kpiPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 text-center">
+                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${
+                                        isAttained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                       }`}>
-                                      {po.attained ? 'Attained' : 'Not Attained'}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))
+                                        {isAttained ? 'Attained' : 'Not Attained'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                )
+                              })
                           ) : (
                             <tr>
                               <td colSpan="4" className="text-center py-6 text-gray-500 font-semibold">No attainment data found. Map outcomes and save marks first.</td>

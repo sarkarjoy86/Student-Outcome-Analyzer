@@ -41,7 +41,7 @@ The **OBE Student Outcome Analyzer** is a full-stack, enterprise-grade education
 
 ---
 
-### 📝 3. Question Bank & Assessment Paper Generator
+### 📝 3. Question Archives & Assessment Paper Generator
 - **Rich Text Editor**: Integrated `@syncfusion/ej2-react-richtexteditor` for composing complex question papers.
 - **LaTeX Math Equation Support**: Native **KaTeX** rendering for inline and display mathematical formulas (`\( ... \)`, `$$ ... $$`).
 - **Bloom's Taxonomy & CO-PO Alignment**: Tag individual questions with Bloom's Taxonomy cognitive levels, CO mapping, and maximum marks.

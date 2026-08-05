@@ -440,7 +440,7 @@ export async function syncCourseOfferingStudentsLongitudinalPO(offeringId, targe
  */
 router.get('/po-recommendation/students', async (req, res) => {
   try {
-    const threshold = parseFloat(req.query.threshold) || 60;
+    const threshold = parseFloat(req.query.threshold) || 50;
     const { offeringId, teacherId } = req.query;
 
     let targetStudentIds = null;
@@ -542,7 +542,7 @@ router.get('/po-recommendation/students', async (req, res) => {
 router.get('/po-recommendation/student/:studentId', async (req, res) => {
   try {
     const { studentId } = req.params;
-    const threshold = parseFloat(req.query.threshold) || 60;
+    const threshold = parseFloat(req.query.threshold) || 50;
     const recalculate = req.query.recalculate === 'true';
 
     let student = null;
@@ -595,7 +595,7 @@ router.get('/po-recommendation/student/:studentId', async (req, res) => {
  */
 router.post('/po-recommendation/sync-all', async (req, res) => {
   try {
-    const threshold = parseFloat(req.body.threshold) || 60;
+    const threshold = parseFloat(req.body.threshold) || 50;
     const syncedCount = await syncAllStudentsLongitudinalPO(threshold);
 
     res.status(200).json({

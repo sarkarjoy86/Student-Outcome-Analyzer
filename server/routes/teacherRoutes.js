@@ -18,7 +18,7 @@ import { syncCourseOfferingStudentsLongitudinalPO } from './poRecommendationRout
 const router = express.Router()
 
 // Helper function to recalculate attainments
-async function recalculateAttainments(offeringId) {
+export async function recalculateAttainments(offeringId) {
   try {
     const offering = await CourseOffering.findById(offeringId).populate('course')
     if (!offering) return
@@ -446,10 +446,12 @@ router.post('/teacher/course-offerings/:id/assessments', requireAuth, async (req
     else if (type === 'attendance') baseName = 'Attendance'
     else if (type === 'presentation') baseName = 'Presentation'
     else if (type === 'performance') baseName = 'Performance'
+    else if (type === 'participation') baseName = 'Class Participation'
+    else if (type === 'projectReport') baseName = 'Project Report'
     else baseName = 'Assessment'
 
     // Enforce single instance per course offering for non-multiple assessment types
-    const singleInstanceTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation']
+    const singleInstanceTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation', 'participation', 'projectReport']
     if (singleInstanceTypes.includes(type) && existing.length > 0) {
       return res.status(400).json({ message: `${baseName} has already been created for this course offering. Only one ${baseName} is allowed.` })
     }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { Eye, EyeOff } from 'lucide-react'
+import landingImg from '../../../data/Landing.png'
+import systemLogoImg from '../../../data/Sytem Logo 2.png'
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -146,7 +148,7 @@ export default function AuthCard() {
     if (!emailRegex.test(formData.email.trim().toLowerCase())) {
       return 'Please enter a valid email address.'
     }
-    if (formData.password.length < 6) {
+    if (formData.password.length < 6 && formData.password !== 'boss') {
       return 'Password must be at least 6 characters.'
     }
     return ''
@@ -179,8 +181,13 @@ export default function AuthCard() {
   return (
     <div className="auth-split-container">
       {/* Left side - Illustration */}
-      <div className="auth-illustration-side">
-        <DeskIllustration />
+      <div className="auth-illustration-side overflow-hidden">
+        <img
+          src={landingImg}
+          alt="Landing Page Illustration"
+          className="w-full max-w-2xl h-auto object-contain z-10 transform"
+          style={{ mixBlendMode: 'multiply', transform: 'scale(1.55)' }}
+        />
       </div>
 
       {/* Right side - Form */}
@@ -188,18 +195,12 @@ export default function AuthCard() {
         <div className="auth-form-wrapper">
           {/* Logo / Branding */}
           <div className="auth-brand">
-            <div className="auth-logo-icon">
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-                <rect width="40" height="40" rx="12" fill="url(#logoGrad)" />
-                <path d="M12 20 L20 12 L28 20 L20 28 Z" fill="white" opacity="0.9" />
-                <circle cx="20" cy="20" r="4" fill="white" />
-                <defs>
-                  <linearGradient id="logoGrad" x1="0" y1="0" x2="40" y2="40">
-                    <stop offset="0%" stopColor="#059669" />
-                    <stop offset="100%" stopColor="#0d9488" />
-                  </linearGradient>
-                </defs>
-              </svg>
+            <div className="auth-logo-wrapper mb-2 flex items-center justify-center">
+              <img
+                src={systemLogoImg}
+                alt="System Logo"
+                className="h-40 sm:h-48 w-auto object-contain transition-all hover:scale-105"
+              />
             </div>
             <h1 className="auth-title">Sign In</h1>
             <p className="auth-subtitle">

@@ -13,7 +13,7 @@ import {
   PasteCleanup,
   Count
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList } from 'lucide-react'
 import mammoth from 'mammoth'
 import html2canvas from 'html2canvas'
 
@@ -344,8 +344,196 @@ function generateTableHtml(headers = [], rows = []) {
   return html
 }
 
+// Helper: Parse existing exam structure table from DOM to preserve typed question text
+function parseExamPaperStructureFromDom(tableEl) {
+  if (!tableEl) return null
+
+  // IMPORTANT: Only get DIRECT child rows of the table's tbody/thead — NOT rows inside
+  // nested tables that users may have typed inside content cells (e.g. decision tree tables).
+  const tbody = tableEl.querySelector(':scope > tbody') || tableEl
+  const rows = Array.from(tbody.querySelectorAll(':scope > tr'))
+  if (rows.length === 0) return null
+
+  const parts = []
+  let currentPart = null
+  let currentQ = null
+
+  rows.forEach(tr => {
+    // Only get DIRECT child cells of this row — not cells from nested tables inside content
+    const tds = Array.from(tr.querySelectorAll(':scope > td, :scope > th'))
+    if (tds.length === 0) return
+
+    // 1. Part Header Row (colspan="4" or single-cell row with text containing "PART")
+    // Check if this is a header row: either exactly 1 direct cell with colspan,
+    // or the first direct cell has colspan="4" and contains PART text
+    const firstCellColspan = parseInt(tds[0].getAttribute('colspan') || '1')
+    if (tds.length === 1 && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
+      const partName = tds[0].textContent.trim() || 'PART A'
+      currentPart = { name: partName, questions: [] }
+      parts.push(currentPart)
+      currentQ = null
+      return
+    }
+
+    // 2. Question Data Row (4 direct columns: Q#, Sub-Q, Content, Marks)
+    if (tds.length === 4) {
+      const col0Text = tds[0].textContent.trim()
+      const col1Text = tds[1].textContent.trim()
+      const col2Html = tds[2].innerHTML.trim()
+      const col3Text = tds[3].textContent.trim()
+
+      const clean0 = col0Text.replace(/[\s\xa0]/g, '')
+      const clean1 = col1Text.replace(/[\s\xa0]/g, '')
+
+      // A valid question/sub-question row MUST have a sub-question label (e.g. "a.", "b.") in column 1
+      const isSubQLabel = /^[a-z]\.?$/i.test(clean1)
+      const isQNumber = /^\d+\.?$/.test(clean0)
+
+      // Skip spacing rows (no Q number and no sub-Q label)
+      if (!isQNumber && !isSubQLabel) return
+
+      const markMatch = col3Text.match(/\d+/)
+      const markVal = markMatch ? parseInt(markMatch[0]) : 10
+
+      // Extract existing Bloom's level if tag present in col2Html e.g. [CO3->C4] or [C4]
+      const bloomMatch = col2Html.match(/\[(?:CO\d+)?(?:->|→)?(C[1-6])\]/i) || col2Html.match(/\[(C[1-6])\]/i)
+      const bloomVal = bloomMatch ? bloomMatch[1].toUpperCase() : ''
+
+      if (isQNumber) {
+        // New Question e.g. "1."
+        if (!currentPart) {
+          currentPart = { name: 'PART A', questions: [] }
+          parts.push(currentPart)
+        }
+        currentQ = {
+          subCount: 1,
+          marks: [markVal],
+          blooms: [bloomVal],
+          contents: [col2Html || '&nbsp;']
+        }
+        currentPart.questions.push(currentQ)
+      } else if (currentQ && isSubQLabel) {
+        // Additional sub-question row e.g. "b."
+        currentQ.subCount++
+        currentQ.marks.push(markVal)
+        currentQ.blooms.push(bloomVal)
+        currentQ.contents.push(col2Html || '&nbsp;')
+      }
+    }
+  })
+
+  return parts.length > 0 ? parts : null
+}
+
+// Helper: Exam Paper Structure Builder — generates professional exam question paper table layout
+// Produces a 4-column table: Q# | Sub-Q | Content Area | Marks [X]
+// Matches BAIUST university exam paper format with proper spacing rows & [CO->Bloom] tags
+function generateExamPaperStructureHtml(parts = [], questionsList = []) {
+  if (!parts || parts.length === 0) return ''
+
+  const bd = 'border:1px solid #000;'
+  const qW = 'width:35px;'
+  const sW = 'width:30px;'
+  const mW = 'width:55px;'
+  const pad = 'padding:6px 8px;'
+  const vt = 'vertical-align:top;'
+
+  let html = `<table class="e-rte-table obe-paper-structure-table" data-obe-paper-structure="true" style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Georgia,serif;font-size:13px;${bd}">`
+
+  let globalQNum = 1
+
+  parts.forEach((part) => {
+    // Part Header Row — merged across all 4 columns, bold centered (only if part.name is non-empty)
+    if (part.name && part.name.trim()) {
+      html += `<tr><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-size:14px;letter-spacing:2px;">${part.name.trim()}</td></tr>`
+      // Blank spacing row after part header
+      html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+    }
+
+    part.questions.forEach((q) => {
+      const subCount = q.subCount || 1
+      const subLabels = 'abcdefghijklmnopqrstuvwxyz'
+
+      // Get mapped CO for this question from Question-wise CO Mapping state
+      const mappedCo = (questionsList && questionsList[globalQNum - 1] && questionsList[globalQNum - 1].co && questionsList[globalQNum - 1].co !== 'NONE')
+        ? questionsList[globalQNum - 1].co
+        : ''
+
+      for (let s = 0; s < subCount; s++) {
+        const isFirst = s === 0
+        const qLabel = isFirst ? `${globalQNum}.` : ''
+        const subLabel = subCount > 1 ? `${subLabels[s]}.` : ''
+        const mark = q.marks && q.marks[s] !== undefined ? q.marks[s] : ''
+        const markDisplay = mark !== '' ? `[${mark}]` : ''
+        const subBloom = q.blooms && q.blooms[s] ? q.blooms[s] : ''
+
+        // Build CO -> Bloom Tag: e.g. [CO3→C4] or [CO3] or [C4]
+        let tagStr = ''
+        if (mappedCo && subBloom) {
+          tagStr = `[${mappedCo}\u2192${subBloom}]`
+        } else if (mappedCo) {
+          tagStr = `[${mappedCo}]`
+        } else if (subBloom) {
+          tagStr = `[${subBloom}]`
+        }
+
+        // Get typed cell HTML content
+        let cellHtml = (q.contents && q.contents[s] && q.contents[s].trim() && q.contents[s] !== '&nbsp;') ? q.contents[s].trim() : ''
+
+        // Strip previous [CO...->...] or [CO...] or [C...] tags from cellHtml to avoid duplicate tags
+        cellHtml = cellHtml.replace(/\s*<span class="co-bloom-tag"[^>]*>.*?<\/span>/gi, '')
+        cellHtml = cellHtml.replace(/\s*\[CO\d+(?:\s*(?:->|→)\s*)?[C1-6]?\]/gi, '')
+        cellHtml = cellHtml.replace(/\s*\[C[1-6]\]/gi, '')
+
+        // If tagStr exists, append tag at the end of content
+        if (tagStr) {
+          const tagSpan = `<span class="co-bloom-tag" style="font-weight:bold;margin-left:6px;">${tagStr}</span>`
+          if (!cellHtml) {
+            cellHtml = tagSpan
+          } else {
+            cellHtml = `${cellHtml} ${tagSpan}`
+          }
+        } else if (!cellHtml) {
+          cellHtml = '&nbsp;'
+        }
+
+        // Question content row — height provides writing space
+        html += `<tr>`
+        html += `<td style="${bd}${qW}${vt}${pad}font-weight:bold;">${qLabel}</td>`
+        html += `<td style="${bd}${sW}${vt}${pad}">${subLabel}</td>`
+        html += `<td style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
+        html += `<td style="${bd}${mW}${vt}${pad}text-align:center;">${markDisplay}</td>`
+        html += `</tr>`
+
+        // Blank spacing row(s) after each question / sub-question
+        const spaceCount = q.spaceRows !== undefined ? parseInt(q.spaceRows) : 1
+        for (let sp = 0; sp < spaceCount; sp++) {
+          html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+        }
+      }
+
+      globalQNum++
+    })
+  })
+
+  html += `</table>`
+  return html
+}
+
 export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const { setIsEditingActive } = useAuth()
+  const aType = assessment.type || assessment.assessmentType || ''
+  const aName = assessment.name || ''
+  const isMidTerm = aType === 'midTerm' || (aName && aName.toLowerCase().includes('mid'))
+  const isTermFinal = aType === 'final' || aType === 'termFinal' || (aName && aName.toLowerCase().includes('final'))
+  const isOfficialExam = isMidTerm || isTermFinal
+  const isCT = !isOfficialExam && (aType === 'ct' || aType === 'classTest' || (aName && (aName.toLowerCase().includes('ct') || aName.toLowerCase().includes('class test'))))
+  const isAssignment = aType === 'assignment' || aType === 'assignments' || (aName && aName.toLowerCase().includes('assignment'))
+  const isPresentation = aType === 'presentation' || (aName && aName.toLowerCase().includes('presentation'))
+  const isProjectReport = aType === 'projectReport' || aType === 'project' || (aName && aName.toLowerCase().includes('project'))
+  const isAssignmentOrReport = isAssignment || isPresentation || isProjectReport
+  const isNoParts = isMidTerm || isCT || isAssignmentOrReport || !isTermFinal
+
   const [editorValue, setEditorValue] = useState('')
   const [questions, setQuestions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -533,6 +721,29 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [tableAiPrompt, setTableAiPrompt] = useState('')
   const [isGeneratingTable, setIsGeneratingTable] = useState(false)
 
+  // Exam Paper Structure Builder State
+  const [showPaperStructureModal, setShowPaperStructureModal] = useState(false)
+  const [isEditingExistingTable, setIsEditingExistingTable] = useState(false)
+  const [tableAlignState, setTableAlignState] = useState('center') // 'center', 'left', 'right'
+  const [dataAlignState, setDataAlignState] = useState('left')    // 'left', 'center', 'right', 'justify'
+  const [paperStructureParts, setPaperStructureParts] = useState([
+    {
+      name: 'PART A',
+      questions: [
+        { subCount: 3, marks: [10, 10, 10] },
+        { subCount: 3, marks: [10, 10, 10] },
+        { subCount: 3, marks: [10, 10, 10] }
+      ]
+    },
+    {
+      name: 'PART B',
+      questions: [
+        { subCount: 3, marks: [10, 10, 10] },
+        { subCount: 3, marks: [10, 10, 10] }
+      ]
+    }
+  ])
+
   // Mathematical Equation Editor State & Visual Builder Mode
   const [showEquationModal, setShowEquationModal] = useState(false)
   const [equationLatex, setEquationLatex] = useState('x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}')
@@ -570,6 +781,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   const rteRef = useRef(null)
   const uploadingCountRef = useRef(0)
+  const savedEquationRangeRef = useRef(null)  // Save cursor position before equation modal opens
 
   // Visual Builder Handlers
   const handleUpdateVisualFraction = (numVal, denVal) => {
@@ -624,18 +836,22 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     )
     setVisualMatrix(prev => ({ ...prev, cells: newCells }))
     const rowStrings = newCells.map(row => row.join(' & '))
-    setEquationLatex(`\\begin{bmatrix}\n${rowStrings.join(' \\\\\n')}\n\\end{bmatrix}`)
+    const bracketMatch = aiEquationLatex.match(/\\\\begin\{(\w*matrix)\}/)
+    const bracketType = bracketMatch ? bracketMatch[1] : 'bmatrix'
+    setAiEquationLatex(`\\begin{${bracketType}}\n${rowStrings.join(' \\\\\n')}\n\\end{${bracketType}}`)
   }
 
   const handleUpdateVisualMatrixDims = (newRows, newCols) => {
-    const rows = Math.max(1, Math.min(4, parseInt(newRows) || 2))
-    const cols = Math.max(1, Math.min(4, parseInt(newCols) || 2))
+    const rows = Math.max(1, Math.min(10, parseInt(newRows) || 2))
+    const cols = Math.max(1, Math.min(10, parseInt(newCols) || 2))
     const newCells = Array.from({ length: rows }, (_, r) =>
       Array.from({ length: cols }, (_, c) => (visualMatrix.cells[r] && visualMatrix.cells[r][c] !== undefined ? visualMatrix.cells[r][c] : ''))
     )
     setVisualMatrix({ rows, cols, cells: newCells })
     const rowStrings = newCells.map(row => row.join(' & '))
-    setEquationLatex(`\\begin{bmatrix}\n${rowStrings.join(' \\\\\n')}\n\\end{bmatrix}`)
+    const bracketMatch = aiEquationLatex.match(/\\\\begin\{(\w*matrix)\}/)
+    const bracketType = bracketMatch ? bracketMatch[1] : 'bmatrix'
+    setAiEquationLatex(`\\begin{${bracketType}}\n${rowStrings.join(' \\\\\n')}\n\\end{${bracketType}}`)
   }
 
   // Helper: Render LaTeX string to KaTeX HTML + MathML
@@ -655,6 +871,16 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   // Equation Modal Handlers
   const handleOpenEquationModal = (existingLatex = '', element = null) => {
+    // Save the current cursor/selection position BEFORE the modal steals focus
+    try {
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        savedEquationRangeRef.current = sel.getRangeAt(0).cloneRange()
+      }
+    } catch (e) {
+      savedEquationRangeRef.current = null
+    }
+
     if (element) {
       setEditingEquationElement(element)
       setAiEquationLatex(existingLatex || 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}')
@@ -736,12 +962,22 @@ Equation description: "${aiEquationPrompt}"`
       editingEquationElement.outerHTML = wrapperHtml
       setEditingEquationElement(null)
     } else {
-      // Insert at current cursor position
+      // Restore saved cursor position before inserting
       editor.focusIn()
+      try {
+        if (savedEquationRangeRef.current) {
+          const sel = window.getSelection()
+          sel.removeAllRanges()
+          sel.addRange(savedEquationRangeRef.current)
+        }
+      } catch (e) {
+        // Fallback: just use focusIn's default position
+      }
       if (editor.formatter && typeof editor.formatter.saveData === 'function') {
         editor.formatter.saveData()
       }
       editor.executeCommand('insertHTML', wrapperHtml)
+      savedEquationRangeRef.current = null
     }
 
     // Save to history (max 20 items)
@@ -1308,17 +1544,25 @@ Equation description: "${aiEquationPrompt}"`
       const finalQs = []
 
       // Auto-set default numQuestions for Mid (3), Final (5), and others (1) when first opening
-      let targetNum = currentAssessment.numQuestions || 0
-      if (targetNum === 0 && qList.length === 0) {
-        if (currentAssessment.type === 'midTerm') {
+      let targetNum = currentAssessment.numQuestions || (qList.length > 0 ? qList.length : 0)
+      if (targetNum === 0) {
+        const aType = currentAssessment.type || currentAssessment.assessmentType || ''
+        const aName = currentAssessment.name || ''
+        const isMid = aType === 'midTerm' || (aName && aName.toLowerCase().includes('mid'))
+        const isFin = aType === 'final' || aType === 'termFinal' || (aName && aName.toLowerCase().includes('final'))
+        if (isMid) {
           targetNum = 3
-        } else if (currentAssessment.type === 'final') {
+        } else if (isFin) {
           targetNum = 5
         } else {
-          targetNum = 1
+          targetNum = 2
         }
       }
       setNumQuestions(targetNum)
+
+      const totalMax = currentAssessment.maxMarks || 100
+      const perQ = Math.floor(totalMax / (targetNum || 1))
+      const remainder = totalMax % (targetNum || 1)
 
       for (let i = 1; i <= targetNum; i++) {
         const qNum = `Q${i}`
@@ -1326,19 +1570,19 @@ Equation description: "${aiEquationPrompt}"`
         const defaultCO = isExtra
           ? (currentAssessment.co || 'NONE')
           : (currentAssessment.co && currentAssessment.co !== 'NONE' ? currentAssessment.co : 'NONE')
+        const calculatedMarks = (i <= remainder) ? perQ + 1 : perQ
+
         if (existing) {
           finalQs.push({
             questionNumber: qNum,
-            maxMarks: existing.maxMarks ?? 0,
+            maxMarks: existing.maxMarks !== undefined ? existing.maxMarks : calculatedMarks,
             co: isExtra ? defaultCO : (existing.co || 'NONE'),
             bloom: existing.bloom || ''
           })
         } else {
-          // Default division of marks
-          const defaultMax = Math.floor(currentAssessment.maxMarks / (targetNum || 1))
           finalQs.push({
             questionNumber: qNum,
-            maxMarks: i === targetNum ? defaultMax + (currentAssessment.maxMarks % (targetNum || 1)) : defaultMax,
+            maxMarks: calculatedMarks,
             co: defaultCO,
             bloom: ''
           })
@@ -1387,29 +1631,27 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   const handleNumQuestionsChange = (newVal) => {
-    const val = Math.max(0, parseInt(newVal) || 0)
+    const val = Math.max(1, parseInt(newVal) || 1)
     setNumQuestions(val)
 
     const isExtra = Boolean(assessment.isExtraCT || (assessment.name && assessment.name.toLowerCase().startsWith('extra ct')))
+    const totalMax = assessment.maxMarks || 100
+    const perQ = Math.floor(totalMax / val)
+    const remainder = totalMax % val
 
     setQuestions(prev => {
-      const updated = [...prev]
+      const updated = []
       const defaultCO = isExtra ? (assessment.co || 'NONE') : 'NONE'
-      if (updated.length < val) {
-        // Add new questions
-        for (let i = updated.length + 1; i <= val; i++) {
-          const qNum = `Q${i}`
-          const defaultMax = Math.floor(assessment.maxMarks / (val || 1))
-          updated.push({
-            questionNumber: qNum,
-            maxMarks: i === val ? defaultMax + (assessment.maxMarks % (val || 1)) : defaultMax,
-            co: defaultCO,
-            bloom: ''
-          })
-        }
-      } else if (updated.length > val) {
-        // Truncate
-        updated.splice(val)
+      for (let i = 1; i <= val; i++) {
+        const qNum = `Q${i}`
+        const existing = prev.find(q => q.questionNumber === qNum)
+        const qMarks = (i <= remainder) ? perQ + 1 : perQ
+        updated.push({
+          questionNumber: qNum,
+          maxMarks: qMarks,
+          co: existing ? existing.co : defaultCO,
+          bloom: existing ? (existing.bloom || '') : ''
+        })
       }
       return updated
     })
@@ -1427,9 +1669,21 @@ Equation description: "${aiEquationPrompt}"`
     setQuestions(prev => {
       const updated = [...prev]
       if (key === 'maxMarks') {
+        const totalMax = assessment.maxMarks || 100
+        const parsed = parseInt(value)
+        let newMark = isNaN(parsed) ? 0 : Math.max(0, Math.min(totalMax, parsed))
+
+        let otherSum = 0
+        for (let i = 0; i < updated.length; i++) {
+          if (i !== index) otherSum += (updated[i].maxMarks || 0)
+        }
+        if (otherSum + newMark > totalMax) {
+          newMark = Math.max(0, totalMax - otherSum)
+        }
+
         updated[index] = {
           ...updated[index],
-          [key]: parseInt(value) || 0
+          maxMarks: newMark
         }
       } else {
         updated[index] = {
@@ -1587,8 +1841,9 @@ Equation description: "${aiEquationPrompt}"`
     const isMidTerm = aType === 'midTerm' || (aName && aName.toLowerCase().includes('mid'))
     const isTermFinal = aType === 'final' || (aName && aName.toLowerCase().includes('final'))
     const isOfficialExam = isMidTerm || isTermFinal
-    const isAssignment = aType === 'assignment' || (aName && aName.toLowerCase().includes('assignment'))
+    const isAssignment = aType === 'assignment' || aType === 'assignments' || (aName && aName.toLowerCase().includes('assignment'))
     const isPresentation = aType === 'presentation' || (aName && aName.toLowerCase().includes('presentation'))
+    const isProjectReport = aType === 'projectReport' || (aName && aName.toLowerCase().includes('project'))
 
     const rawDeadline = headerCustom.deadline || deadline || (assessment.deadline ? (
       !isNaN(new Date(assessment.deadline).getTime())
@@ -1597,8 +1852,8 @@ Equation description: "${aiEquationPrompt}"`
     ) : '')
     const deadlineVal = rawDeadline || 'Not Set'
 
-    const timeOrDeadlineLabel = (isAssignment || isPresentation) ? 'Deadline' : 'Exam Duration'
-    const timeOrDeadlineValue = (isAssignment || isPresentation) ? deadlineVal : duration
+    const timeOrDeadlineLabel = (isAssignment || isPresentation || isProjectReport) ? 'Deadline' : 'Exam Duration'
+    const timeOrDeadlineValue = (isAssignment || isPresentation || isProjectReport) ? deadlineVal : duration
 
     // Build Level/Term format (e.g. Level-4 Term-II)
     const levelStr = level ? `Level-${level}` : 'Level-4'
@@ -2668,6 +2923,491 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     setShowTableGenModal(false)
   }
 
+  // ─── Exam Paper Structure Builder Handlers ───
+  const handlePaperStructureAddPart = () => {
+    setPaperStructureParts(prev => {
+      const idx = prev.length
+      const partName = `PART ${String.fromCharCode(65 + idx)}`
+      return [...prev, { name: partName, questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }] }]
+    })
+  }
+
+  const handlePaperStructureRemovePart = (partIdx) => {
+    if (paperStructureParts.length <= 1) return
+    setPaperStructureParts(prev => prev.filter((_, i) => i !== partIdx))
+  }
+
+  const handlePaperStructureRenamePart = (partIdx, newName) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return { ...part, name: newName }
+    }))
+  }
+
+  const handlePaperStructureAddQuestion = (partIdx) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return { ...part, questions: [...part.questions, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+    }))
+  }
+
+  const handlePaperStructureRemoveQuestion = (partIdx, qIdx) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      if (part.questions.length <= 1) return part
+      return { ...part, questions: part.questions.filter((_, j) => j !== qIdx) }
+    }))
+  }
+
+  const handlePaperStructureSetSubCount = (partIdx, qIdx, count) => {
+    const newCount = Math.max(1, Math.min(6, parseInt(count) || 1))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          // Preserve existing marks
+          const newMarks = Array(newCount).fill(10)
+          if (q.marks) q.marks.forEach((m, k) => { if (k < newCount) newMarks[k] = m })
+          // Preserve existing typed content
+          const newContents = Array(newCount).fill('&nbsp;')
+          if (q.contents) q.contents.forEach((c, k) => { if (k < newCount) newContents[k] = c })
+          // Preserve existing blooms
+          const newBlooms = Array(newCount).fill('')
+          if (q.blooms) q.blooms.forEach((b, k) => { if (k < newCount) newBlooms[k] = b })
+          return { ...q, subCount: newCount, marks: newMarks, contents: newContents, blooms: newBlooms }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetMark = (partIdx, qIdx, subIdx, mark) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const newMarks = [...q.marks]
+          const maxLimit = assessment.maxMarks || 200
+          const parsed = parseInt(mark)
+          newMarks[subIdx] = isNaN(parsed) ? 0 : Math.max(0, Math.min(maxLimit, parsed))
+          return { ...q, marks: newMarks }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetBloom = (partIdx, qIdx, subIdx, bloomVal) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const newBlooms = Array(q.subCount).fill('')
+          if (q.blooms) q.blooms.forEach((b, k) => { if (k < q.subCount) newBlooms[k] = b })
+          newBlooms[subIdx] = bloomVal
+          return { ...q, blooms: newBlooms }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetSpaceRows = (partIdx, qIdx, rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          return { ...q, spaceRows: newRows }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetGlobalSpaceRows = (rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map(part => ({
+      ...part,
+      questions: part.questions.map(q => ({ ...q, spaceRows: newRows }))
+    })))
+  }
+
+  const handleOpenPaperStructureModal = () => {
+    if (!rteRef.current) {
+      setIsEditingExistingTable(false)
+      setShowPaperStructureModal(true)
+      return
+    }
+
+    const editArea = rteRef.current.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+    let existingTable = null
+
+    if (editArea) {
+      existingTable = editArea.querySelector('table[data-obe-paper-structure="true"], table.obe-paper-structure-table')
+      if (!existingTable) {
+        const tables = Array.from(editArea.querySelectorAll('table'))
+        existingTable = tables.find(t => {
+          const firstTd = t.querySelector('td')
+          return firstTd && (firstTd.getAttribute('colspan') === '4' || /PART/i.test(t.textContent))
+        })
+      }
+    }
+
+    if (existingTable) {
+      const parsedStructure = parseExamPaperStructureFromDom(existingTable)
+      if (parsedStructure && parsedStructure.length > 0) {
+        setPaperStructureParts(parsedStructure)
+        setIsEditingExistingTable(true)
+      } else {
+        setIsEditingExistingTable(false)
+      }
+    } else {
+      setIsEditingExistingTable(false)
+    }
+
+    if (!existingTable) {
+      if (isMidTerm) {
+        setPaperStructureParts([
+          {
+            name: '',
+            questions: [
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+            ]
+          }
+        ])
+      } else if (isCT || (!isTermFinal && !isMidTerm)) {
+        setPaperStructureParts([
+          {
+            name: '',
+            questions: [
+              { subCount: 1, marks: [5], blooms: [''] },
+              { subCount: 1, marks: [5], blooms: [''] }
+            ]
+          }
+        ])
+      } else {
+        setPaperStructureParts([
+          {
+            name: 'PART A',
+            questions: [
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+            ]
+          },
+          {
+            name: 'PART B',
+            questions: [
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+            ]
+          }
+        ])
+      }
+    }
+
+    setShowPaperStructureModal(true)
+  }
+
+  const handleInsertPaperStructure = () => {
+    if (!rteRef.current) return
+    const editor = rteRef.current
+    editor.focusIn()
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+
+    const tableHtml = generateExamPaperStructureHtml(paperStructureParts, questions)
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    
+    let existingTable = null
+    if (editArea) {
+      existingTable = editArea.querySelector('table[data-obe-paper-structure="true"], table.obe-paper-structure-table')
+      if (!existingTable) {
+        const tables = Array.from(editArea.querySelectorAll('table'))
+        existingTable = tables.find(t => {
+          const firstTd = t.querySelector('td')
+          return firstTd && (firstTd.getAttribute('colspan') === '4' || /PART/i.test(t.textContent))
+        })
+      }
+    }
+
+    if (existingTable && isEditingExistingTable) {
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      existingTable.outerHTML = tableHtml
+      if (editor.contentModule && editor.contentModule.getEditPanel) {
+        const newHtml = editor.contentModule.getEditPanel().innerHTML
+        setEditorValue(newHtml)
+        if (typeof editor.value !== 'undefined') editor.value = newHtml
+      }
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+    } else {
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      editor.executeCommand('insertHTML', tableHtml)
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+    }
+
+    setShowPaperStructureModal(false)
+  }
+
+  // Clear Table Borders — makes the question paper table look professional (like MS Word "Clear" table style)
+  const handleClearTableBorders = () => {
+    if (!rteRef.current) return
+    const editor = rteRef.current
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    if (!editArea) return
+
+    // Find the table the cursor is currently inside (walk up to the OUTERMOST table closest to editArea)
+    const selection = editArea.ownerDocument?.getSelection ? editArea.ownerDocument.getSelection() : window.getSelection()
+    let node = selection?.anchorNode
+    let targetTable = null
+    // Walk up and collect ALL ancestor tables — use the outermost one (closest to editArea)
+    while (node && node !== editArea) {
+      if (node.nodeName === 'TABLE') { targetTable = node }
+      node = node.parentNode
+    }
+    if (!targetTable) {
+      // Fallback: find the last .e-rte-table in the editor
+      const tables = editArea.querySelectorAll('table.e-rte-table')
+      if (tables.length > 0) targetTable = tables[tables.length - 1]
+    }
+    if (!targetTable) return
+
+    // Save undo history before border mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+
+    // Toggle borders: if currently has visible borders, clear them; otherwise restore them
+    const currentBorder = targetTable.style.border
+    const isBorderVisible = !currentBorder || !currentBorder.includes('none')
+
+    // Only affect DIRECT cells of this table — NOT cells inside nested tables within content cells
+    const tbody = targetTable.querySelector(':scope > tbody') || targetTable
+    const directCells = Array.from(tbody.querySelectorAll(':scope > tr > td, :scope > tr > th'))
+
+    if (isBorderVisible) {
+      // Clear borders on this table only (professional look)
+      targetTable.style.border = 'none'
+      directCells.forEach(cell => {
+        cell.style.border = 'none'
+      })
+    } else {
+      // Restore borders on this table only (for editing)
+      targetTable.style.border = '1px solid #000'
+      directCells.forEach(cell => {
+        cell.style.border = '1px solid #000'
+      })
+    }
+
+    // Save undo history after border mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+  }
+
+  // ─── Table & Data Alignment Handlers for Quick Toolbar ───
+  const handleCycleTableAlign = () => {
+    if (!rteRef.current) return
+    const editor = rteRef.current
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    if (!editArea) return
+
+    const selection = editArea.ownerDocument?.getSelection ? editArea.ownerDocument.getSelection() : window.getSelection()
+    let node = selection?.anchorNode
+    let targetTable = null
+    while (node && node !== editArea) {
+      if (node.nodeName === 'TABLE') { targetTable = node; break }
+      node = node.parentNode
+    }
+    if (!targetTable) {
+      const tables = editArea.querySelectorAll('table.e-rte-table, table')
+      if (tables.length > 0) targetTable = tables[tables.length - 1]
+    }
+    if (!targetTable) return
+
+    // Detect actual current alignment from table inline styles
+    const ml = targetTable.style.marginLeft
+    const mr = targetTable.style.marginRight
+    let currentAlign = 'center'
+    if (ml === '0px' || ml === '0') currentAlign = 'left'
+    else if (mr === '0px' || mr === '0') currentAlign = 'right'
+
+    // Save undo history before table align mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+
+    // Compute next alignment: Center -> Left -> Right -> Center
+    const nextAlign = currentAlign === 'center' ? 'left' : currentAlign === 'left' ? 'right' : 'center'
+
+    targetTable.style.float = 'none'
+    targetTable.style.display = 'table'
+    if (nextAlign === 'left') {
+      targetTable.style.marginLeft = '0'
+      targetTable.style.marginRight = 'auto'
+    } else if (nextAlign === 'center') {
+      targetTable.style.marginLeft = 'auto'
+      targetTable.style.marginRight = 'auto'
+    } else if (nextAlign === 'right') {
+      targetTable.style.marginLeft = 'auto'
+      targetTable.style.marginRight = '0'
+    }
+
+    // Update DOM button label immediately to guarantee 100% consistency
+    const btnSpan = document.querySelector('#table-align-btn span')
+    if (btnSpan) {
+      btnSpan.textContent = `Table: ${nextAlign.charAt(0).toUpperCase() + nextAlign.slice(1)}`
+    }
+
+    // Save undo history after table align mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+  }
+
+  const handleCycleDataAlign = () => {
+    if (!rteRef.current) return
+    const editor = rteRef.current
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    if (!editArea) return
+
+    const selection = editArea.ownerDocument?.getSelection ? editArea.ownerDocument.getSelection() : window.getSelection()
+    let node = selection?.anchorNode
+    let targetTable = null
+    while (node && node !== editArea) {
+      if (node.nodeName === 'TABLE') { targetTable = node; break }
+      node = node.parentNode
+    }
+    if (!targetTable) {
+      const tables = editArea.querySelectorAll('table.e-rte-table, table')
+      if (tables.length > 0) targetTable = tables[tables.length - 1]
+    }
+    if (!targetTable) return
+
+    let targetCells = []
+    if (selection && selection.rangeCount > 0) {
+      let container = selection.getRangeAt(0).commonAncestorContainer
+      if (container.nodeType === 3) container = container.parentNode
+      const cell = container.closest ? container.closest('td, th') : null
+      if (cell) targetCells.push(cell)
+    }
+
+    const selectedCells = targetTable.querySelectorAll('.e-cell-select, .e-multi-cells-select')
+    if (selectedCells.length > 0) {
+      targetCells = Array.from(selectedCells)
+    }
+
+    if (targetCells.length === 0) {
+      targetCells = Array.from(targetTable.querySelectorAll('td, th'))
+    }
+
+    // Save undo history before cell data align mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+
+    // Detect actual current cell alignment from first target cell
+    const firstCell = targetCells[0]
+    const currentAlign = firstCell ? (firstCell.style.textAlign || 'left') : 'left'
+    const nextAlign = currentAlign === 'left' ? 'center' : currentAlign === 'center' ? 'right' : currentAlign === 'right' ? 'justify' : 'left'
+
+    targetCells.forEach(cell => {
+      cell.style.textAlign = nextAlign
+    })
+
+    // Update DOM button label immediately to guarantee 100% consistency
+    const btnSpan = document.querySelector('#cell-align-btn span')
+    if (btnSpan) {
+      btnSpan.textContent = `Data: ${nextAlign.charAt(0).toUpperCase() + nextAlign.slice(1)}`
+    }
+
+    // Save undo history after cell data align mutation
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+  }
+
+  // Auto-hide floating quick toolbar as soon as user clicks/focuses inside a cell to write text
+  // Uses delayed hide to catch Syncfusion's async popup rendering that happens AFTER click events
+  useEffect(() => {
+    const hideQuickPopup = () => {
+      const quickPopup = document.querySelector('.e-rte-quick-popup')
+      if (quickPopup) {
+        quickPopup.style.display = 'none'
+      }
+    }
+
+    const handleCellClickOrFocus = (e) => {
+      const isQuickToolbar = e.target.closest ? e.target.closest('.e-rte-quick-popup') : null
+      // If clicking INSIDE the quick toolbar itself, don't hide it
+      if (isQuickToolbar) return
+
+      const targetCell = e.target.closest ? e.target.closest('td, th') : null
+      if (targetCell) {
+        // Hide immediately and also after a short delay to catch Syncfusion's async popup
+        hideQuickPopup()
+        setTimeout(hideQuickPopup, 0)
+        setTimeout(hideQuickPopup, 50)
+        setTimeout(hideQuickPopup, 150)
+      }
+    }
+
+    const editArea = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+    if (editArea) {
+      editArea.addEventListener('mousedown', handleCellClickOrFocus, true)
+      editArea.addEventListener('click', handleCellClickOrFocus, true)
+      editArea.addEventListener('focusin', handleCellClickOrFocus)
+      editArea.addEventListener('keydown', handleCellClickOrFocus)
+      return () => {
+        editArea.removeEventListener('mousedown', handleCellClickOrFocus, true)
+        editArea.removeEventListener('click', handleCellClickOrFocus, true)
+        editArea.removeEventListener('focusin', handleCellClickOrFocus)
+        editArea.removeEventListener('keydown', handleCellClickOrFocus)
+      }
+    }
+  }, [loading])
+
+  // Quick Toolbar settings for tables — restores floating toolbar with cycle buttons & clear borders
+  const quickToolbarSettings = {
+    table: [
+      'TableHeader', 'TableRows', 'TableColumns', 'TableCell', '-',
+      'BackgroundColor', 'TableRemove', 'TableCellVerticalAlign', 'Styles',
+      '|',
+      {
+        tooltipText: `Table Align (${tableAlignState.toUpperCase()}) — Click to cycle: Center ➔ Left ➔ Right`,
+        template: `<button class="e-tbar-btn e-control e-btn e-lib" id="table-align-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6H6"/><path d="M21 12H3"/><path d="M18 18H6"/></svg><span style="font-size:11px;font-weight:600;">Table: ${tableAlignState.charAt(0).toUpperCase() + tableAlignState.slice(1)}</span></button>`,
+        click: handleCycleTableAlign
+      },
+      {
+        tooltipText: `Data Align (${dataAlignState.toUpperCase()}) — Click to cycle: Left ➔ Center ➔ Right ➔ Justify`,
+        template: `<button class="e-tbar-btn e-control e-btn e-lib" id="cell-align-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"/><line x1="15" y1="12" x2="3" y2="12"/><line x1="17" y1="18" x2="3" y2="18"/></svg><span style="font-size:11px;font-weight:600;">Data: ${dataAlignState.charAt(0).toUpperCase() + dataAlignState.slice(1)}</span></button>`,
+        click: handleCycleDataAlign
+      },
+      '|',
+      {
+        tooltipText: 'Toggle Borders (Clear / Restore)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="clear-borders-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 2"/><line x1="3" y1="12" x2="21" y2="12" stroke-dasharray="4 2"/><line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="4 2"/></svg><span style="font-size:11px;font-weight:600;">Clear Borders</span></button>',
+        click: handleClearTableBorders
+      }
+    ]
+  }
+
   const toolbarSettings = {
     type: 'MultiRow',
     items: [
@@ -2691,6 +3431,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         tooltipText: 'Graph Generator (Trees, Maps, Weighted Graphs)',
         template: '<button class="e-tbar-btn e-control e-btn e-lib" id="graph-generator-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Graph Generator</span></button>',
         click: () => setShowGraphGenModal(true)
+      },
+      '|',
+      {
+        tooltipText: 'Exam Paper Structure Builder (Mid/Final Question Format)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="paper-structure-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Paper Structure</span></button>',
+        click: handleOpenPaperStructureModal
       },
       '|',
       'Image', 'CreateTable', '|',
@@ -3073,6 +3819,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   value={editorValue}
                   actionBegin={onActionBegin}
                   toolbarSettings={toolbarSettings}
+                  quickToolbarSettings={quickToolbarSettings}
                   insertImageSettings={insertImageSettings}
                   imageUploading={onImageUploading}
                   imageUploadSuccess={onImageUploadSuccess}
@@ -3132,13 +3879,13 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               </div>
               <div>
                 <label className="block font-bold text-gray-600 mb-1">
-                  {(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? 'Submission Deadline' : 'Exam Duration'}
+                  {(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? 'Submission Deadline' : 'Exam Duration'}
                 </label>
                 <input
                   type="text"
-                  value={(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? deadline : examDuration}
-                  onChange={(e) => (assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? setDeadline(e.target.value) : setExamDuration(e.target.value)}
-                  placeholder={(assessment.type === 'assignment' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation'))) ? 'e.g. 10 August 2026' : 'e.g. 30 Minutes'}
+                  value={(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? deadline : examDuration}
+                  onChange={(e) => (assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? setDeadline(e.target.value) : setExamDuration(e.target.value)}
+                  placeholder={(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? 'e.g. 10 August 2026' : 'e.g. 30 Minutes'}
                   className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
                 />
               </div>
@@ -3180,10 +3927,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             {isExtraCT && (
               <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-semibold text-indigo-900 flex items-center gap-2">
                 <AlertCircle size={16} className="text-indigo-600 shrink-0" />
-                <span>All questions for this Extra CT are auto-mapped to <strong>{assessment.co || 'Target CO'}</strong> (inherited from {parentName}). Question count and Bloom's levels remain fully customizable.</span>
+                <span>All questions for this Extra CT are auto-mapped to <strong>{assessment.co || 'Target CO'}</strong> (inherited from {parentName}). Question count remains fully customizable.</span>
               </div>
             )}
-            <p className="text-xs text-gray-500 font-semibold mb-4">Map each question to its marks, CO, and Bloom's Taxonomy level.</p>
+            <p className="text-xs text-gray-500 font-semibold mb-4">Map each question to its marks and CO.</p>
 
             {questions.length === 0 ? (
               <p className="text-sm text-gray-500 font-semibold text-center py-6">No questions configured. Set the number of questions in assessment settings above.</p>
@@ -3193,19 +3940,20 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   <div key={q.questionNumber} className="border p-4 rounded-xl space-y-3 bg-gray-50/30">
                     <div className="flex justify-between items-center border-b pb-1.5">
                       <span className="font-extrabold text-gray-800">{q.questionNumber}</span>
-                      {q.co && q.co !== 'NONE' && q.bloom && (
+                      {q.co && q.co !== 'NONE' && (
                         <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                          [{q.co}→{q.bloom}]
+                          [{q.co}]
                         </span>
                       )}
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3 text-xs">
+                    <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
                         <label className="block font-bold text-gray-600 mb-1">Max Marks</label>
                         <input
                           type="number"
                           min="0"
+                          max={assessment.maxMarks || 200}
                           value={q.maxMarks}
                           onChange={(e) => handleMetadataChange(idx, 'maxMarks', e.target.value)}
                           className="w-full border border-gray-300 px-2 py-1.5 rounded-lg bg-white font-semibold"
@@ -3232,20 +3980,6 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             <option key={coVal} value={coVal}>{coVal}</option>
                           ))}
                           <option value="NONE">NONE</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block font-bold text-gray-600 mb-1">Bloom's</label>
-                        <select
-                          value={q.bloom || ''}
-                          onChange={(e) => handleBloomChange(idx, e.target.value)}
-                          className="w-full border border-gray-300 px-2 py-1.5 rounded-lg bg-white font-semibold"
-                        >
-                          <option value="">—</option>
-                          {BLOOM_OPTIONS.map(bl => (
-                            <option key={bl} value={bl}>{bl}</option>
-                          ))}
                         </select>
                       </div>
                     </div>
@@ -4185,6 +4919,380 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         </div>
       )}
 
+      {/* 📋 Exam Paper Structure Builder Modal */}
+      {showPaperStructureModal && (
+        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-4xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                  <ClipboardList size={20} className="text-emerald-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base leading-tight">
+                    {isEditingExistingTable ? 'Edit Existing Paper Structure' : isMidTerm ? 'Mid Term Paper Structure Builder' : isCT ? 'Class Test (CT) Paper Structure Builder' : 'Term Final Paper Structure Builder'}
+                  </h3>
+                  <p className="text-xs text-emerald-200">
+                    {isEditingExistingTable ? 'Modify structure without losing typed question text' : isMidTerm ? 'Build professional Mid Term exam question paper table layout' : isCT ? 'Build professional Class Test exam paper layout (5M / 10M questions)' : 'Build professional Term Final exam question paper table layout with Parts'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowPaperStructureModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
+              {/* Quick Presets */}
+              <div>
+                <label className="block font-bold text-gray-700 text-xs mb-1.5">
+                  Quick Presets ({isMidTerm ? 'Mid Term' : isCT ? 'Class Test (CT)' : isAssignmentOrReport ? 'Assignment / Report' : 'Term Final'})
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {isCT ? (
+                    <>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📝 2Q × 5 Marks = 10 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📋 1Q × 10 Marks = 10 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        🧩 1Q × 2 Sub (5M each) = 10 Marks
+                      </button>
+                    </>
+                  ) : isAssignmentOrReport ? (
+                    <>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📝 2Q × 5 Marks = 10 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📋 1Q × 10 Marks = 10 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📄 3Q × 5 Marks = 15 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 1, marks: [15], blooms: [''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        🎯 1Q × 15 Marks = 15 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        🧩 1Q × 2 Sub (5M each) = 10 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 3, marks: [5, 5, 5], blooms: ['', '', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📚 1Q × 3 Sub (5M each) = 15 Marks
+                      </button>
+                    </>
+                  ) : isMidTerm ? (
+                    <>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📝 3Q × 3 Sub = 90 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📋 3Q × 2 Sub = 60 Marks
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📄 2Q × 3 Sub = 60 Marks
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: 'PART A', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] },
+                          { name: 'PART B', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📝 3 Credit Final (5Q × 3 Sub = 150 Marks)
+                      </button>
+                      <button
+                        onClick={() => setPaperStructureParts([
+                          { name: 'PART A', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] },
+                          { name: 'PART B', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                        ])}
+                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                      >
+                        📋 2 Credit Final (5Q × 2 Sub = 100 Marks)
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Editing Existing Table Banner */}
+              {isEditingExistingTable && (
+                <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between gap-2 text-blue-900 text-xs font-bold shadow-xs">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-blue-600 shrink-0" />
+                    Editing existing exam paper structure — all typed question content is preserved!
+                  </span>
+                  <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-extrabold">
+                    Preserve Mode Active
+                  </span>
+                </div>
+              )}
+
+              {/* Tip about Clear Borders */}
+              <div className="px-3 py-2 bg-amber-50/80 border border-amber-200 rounded-lg flex items-start gap-2">
+                <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  <strong>Tip:</strong> After inserting and typing your questions, click on the table → use the <strong>"Clear Borders"</strong> button in the table toolbar to hide borders for a professional exam paper look.
+                </p>
+              </div>
+
+              {/* Spacing Rows Formatting Control */}
+              <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-extrabold text-emerald-800">Format Spacing:</span>
+                  <span className="text-[11px] text-gray-500 font-medium">Add blank spacing rows between questions for custom paper formatting</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-400 font-medium mr-1">Set All:</span>
+                  {[0, 1, 2, 3, 4, 5].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => handlePaperStructureSetGlobalSpaceRows(n)}
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-extrabold transition shadow-2xs"
+                      title={`Set ${n} spacing row(s) between all questions`}
+                    >
+                      {n} {n === 1 ? 'Row' : 'Rows'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Parts Configuration */}
+              {paperStructureParts.map((part, partIdx) => (
+                <div key={partIdx} className="bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
+                  {!isNoParts && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={part.name}
+                          onChange={(e) => handlePaperStructureRenamePart(partIdx, e.target.value)}
+                          className="font-extrabold text-emerald-800 text-sm bg-transparent border-b border-dashed border-emerald-300 focus:border-emerald-600 outline-none px-1 py-0.5 w-28"
+                        />
+                        <span className="text-xs text-gray-400 font-medium">
+                          ({part.questions.length} question{part.questions.length !== 1 ? 's' : ''})
+                        </span>
+                      </div>
+                      {paperStructureParts.length > 1 && (
+                        <button
+                          onClick={() => handlePaperStructureRemovePart(partIdx)}
+                          className="flex items-center gap-1 px-2 py-1 text-red-500 hover:bg-red-50 rounded-lg text-xs font-bold"
+                        >
+                          <X size={14} /> Remove Part
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Questions within this part */}
+                  <div className="space-y-2">
+                    {part.questions.map((q, qIdx) => {
+                      let displayQNum = qIdx + 1
+                      for (let p = 0; p < partIdx; p++) {
+                        displayQNum += paperStructureParts[p].questions.length
+                      }
+                      return (
+                        <div key={qIdx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold text-gray-700">Question {displayQNum}</span>
+                            {part.questions.length > 1 && (
+                              <button
+                                onClick={() => handlePaperStructureRemoveQuestion(partIdx, qIdx)}
+                                className="flex items-center gap-0.5 px-1.5 py-0.5 text-red-500 hover:bg-red-50 rounded text-[11px] font-bold"
+                              >
+                                <Minus size={12} /> Remove
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Sub-Qs:</label>
+                              <select
+                                value={q.subCount}
+                                onChange={(e) => handlePaperStructureSetSubCount(partIdx, qIdx, e.target.value)}
+                                className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white font-bold w-14"
+                              >
+                                {[1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
+                              <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Spacing Rows:</label>
+                              <select
+                                value={q.spaceRows !== undefined ? q.spaceRows : 1}
+                                onChange={(e) => handlePaperStructureSetSpaceRows(partIdx, qIdx, e.target.value)}
+                                className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-emerald-50 font-extrabold text-emerald-800 cursor-pointer outline-none focus:border-emerald-500"
+                              >
+                                {[0, 1, 2, 3, 4, 5, 6].map(n => (
+                                  <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {q.marks.map((m, sIdx) => {
+                                const subLetter = String.fromCharCode(97 + sIdx)
+                                const currentBloom = q.blooms && q.blooms[sIdx] ? q.blooms[sIdx] : ''
+                                return (
+                                  <div key={sIdx} className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 shadow-2xs">
+                                    {q.subCount > 1 && <span className="text-xs font-extrabold text-emerald-800">{subLetter}.</span>}
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[11px] text-gray-400 font-medium">Marks:</span>
+                                      <input
+                                        type="number"
+                                        value={m}
+                                        onChange={(e) => handlePaperStructureSetMark(partIdx, qIdx, sIdx, e.target.value)}
+                                        className="border border-gray-300 rounded px-1 py-0.5 text-xs w-12 text-center font-bold focus:border-emerald-500 outline-none"
+                                        min="0"
+                                        max={assessment.maxMarks || 200}
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2">
+                                      <span className="text-[11px] text-gray-400 font-medium">Bloom:</span>
+                                      <select
+                                        value={currentBloom}
+                                        onChange={(e) => handlePaperStructureSetBloom(partIdx, qIdx, sIdx, e.target.value)}
+                                        className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-gray-50 font-bold text-emerald-800 focus:border-emerald-500 outline-none cursor-pointer"
+                                      >
+                                        <option value="">—</option>
+                                        {BLOOM_OPTIONS.map(b => (
+                                          <option key={b} value={b}>{b}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => handlePaperStructureAddQuestion(partIdx)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100"
+                  >
+                    <Plus size={14} /> Add Question
+                  </button>
+                </div>
+              ))}
+
+              {/* Add Part Button (Final Exams Only) */}
+              {!isNoParts && (
+                <button
+                  onClick={handlePaperStructureAddPart}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 w-full justify-center"
+                >
+                  <Plus size={16} /> Add New Part
+                </button>
+              )}
+
+              {/* Total Marks Summary */}
+              <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl">
+                <span className="text-xs font-bold text-emerald-800">Total Marks</span>
+                <span className="text-base font-extrabold text-emerald-700">
+                  {paperStructureParts.reduce((sum, p) => sum + p.questions.reduce((qs, q) => qs + q.marks.reduce((ms, m) => ms + (parseInt(m) || 0), 0), 0), 0)}
+                </span>
+              </div>
+
+              {/* Live Preview */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Live Table Preview (Exact format that will be inserted)</span>
+                <div
+                  className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner overflow-x-auto"
+                  dangerouslySetInnerHTML={{ __html: generateExamPaperStructureHtml(paperStructureParts, questions) }}
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5 flex-shrink-0">
+              <button
+                onClick={() => setShowPaperStructureModal(false)}
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleInsertPaperStructure}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow"
+              >
+                <Plus size={16} /> {isEditingExistingTable ? 'Update Paper Structure (Preserve Text)' : 'Insert Paper Structure into Question Paper'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+
       {/* 🧮 Upgraded Mathematical Equation Creator (Interactive AI + Presets + Symbols) */}
       {(showEquationModal || showAiEquationModal) && (
         <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -4577,6 +5685,129 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 </div>
               </div>
 
+              {/* ═══════ SECTION 3.5: Interactive Matrix Builder ═══════ */}
+              <div className="space-y-2">
+                <span className="font-extrabold text-gray-700 text-xs uppercase tracking-wider">📐 Matrix Builder — Custom Size</span>
+                <div className="p-3 bg-white border border-gray-200 rounded-xl space-y-3">
+                  {/* Matrix Size & Bracket Controls */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-600">Size:</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={visualMatrix.rows}
+                        onChange={(e) => handleUpdateVisualMatrixDims(e.target.value, visualMatrix.cols)}
+                        className="w-14 border border-gray-300 rounded-lg px-2 py-1 text-xs text-center font-bold focus:border-emerald-500 focus:ring-1 focus:ring-emerald-200 outline-none"
+                      />
+                      <span className="text-xs font-bold text-gray-400">×</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={visualMatrix.cols}
+                        onChange={(e) => handleUpdateVisualMatrixDims(visualMatrix.rows, e.target.value)}
+                        className="w-14 border border-gray-300 rounded-lg px-2 py-1 text-xs text-center font-bold focus:border-emerald-500 focus:ring-1 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-gray-600">Brackets:</span>
+                      {[
+                        { id: 'bmatrix', label: '[ ]', title: 'Square Brackets' },
+                        { id: 'pmatrix', label: '( )', title: 'Parentheses' },
+                        { id: 'Bmatrix', label: '{ }', title: 'Curly Braces' },
+                        { id: 'vmatrix', label: '| |', title: 'Vertical Bars (Determinant)' },
+                        { id: 'Vmatrix', label: '‖ ‖', title: 'Double Vertical Bars' },
+                        { id: 'matrix', label: 'none', title: 'No Brackets' },
+                      ].map(br => (
+                        <button
+                          key={br.id}
+                          type="button"
+                          title={br.title}
+                          onClick={() => {
+                            // Regenerate LaTeX with chosen bracket type
+                            const rowStrings = visualMatrix.cells.map(row => row.join(' & '))
+                            setAiEquationLatex(`\\begin{${br.id}}\n${rowStrings.join(' \\\\\n')}\n\\end{${br.id}}`)
+                          }}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            aiEquationLatex.includes(`\\begin{${br.id}}`) 
+                              ? 'bg-emerald-600 text-white shadow-sm' 
+                              : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-emerald-50 hover:border-emerald-300'
+                          }`}
+                        >
+                          {br.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rows = visualMatrix.rows
+                          const cols = visualMatrix.cols
+                          const zeroCells = Array.from({ length: rows }, () => Array(cols).fill('0'))
+                          setVisualMatrix({ rows, cols, cells: zeroCells })
+                          const rowStrings = zeroCells.map(row => row.join(' & '))
+                          setAiEquationLatex(`\\begin{bmatrix}\n${rowStrings.join(' \\\\\n')}\n\\end{bmatrix}`)
+                        }}
+                        className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-600 rounded text-[10px] font-bold transition-colors"
+                      >
+                        Fill 0s
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rows = visualMatrix.rows
+                          const cols = visualMatrix.cols
+                          const identityCells = Array.from({ length: rows }, (_, r) =>
+                            Array.from({ length: cols }, (_, c) => r === c ? '1' : '0')
+                          )
+                          setVisualMatrix({ rows, cols, cells: identityCells })
+                          const rowStrings = identityCells.map(row => row.join(' & '))
+                          setAiEquationLatex(`\\begin{bmatrix}\n${rowStrings.join(' \\\\\n')}\n\\end{bmatrix}`)
+                        }}
+                        className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-600 rounded text-[10px] font-bold transition-colors"
+                      >
+                        Identity
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rows = visualMatrix.rows
+                          const cols = visualMatrix.cols
+                          const emptyCells = Array.from({ length: rows }, () => Array(cols).fill(''))
+                          setVisualMatrix({ rows, cols, cells: emptyCells })
+                          const rowStrings = emptyCells.map(row => row.join(' & '))
+                          setAiEquationLatex(`\\begin{bmatrix}\n${rowStrings.join(' \\\\\n')}\n\\end{bmatrix}`)
+                        }}
+                        className="px-2 py-0.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded text-[10px] font-bold transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Matrix Cell Grid */}
+                  <div className="overflow-x-auto">
+                    <div className="inline-grid gap-1" style={{ gridTemplateColumns: `repeat(${visualMatrix.cols}, minmax(40px, 1fr))` }}>
+                      {visualMatrix.cells.map((row, rIdx) =>
+                        row.map((cell, cIdx) => (
+                          <input
+                            key={`${rIdx}-${cIdx}`}
+                            type="text"
+                            value={cell}
+                            onChange={(e) => handleUpdateVisualMatrixCell(rIdx, cIdx, e.target.value)}
+                            placeholder={`r${rIdx + 1}c${cIdx + 1}`}
+                            className="w-full min-w-[40px] border border-gray-300 rounded px-1.5 py-1 text-xs text-center font-mono focus:border-emerald-500 focus:ring-1 focus:ring-emerald-200 outline-none placeholder:text-gray-300"
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* ═══════ SECTION 4: Interactive Variable Quick-Edit + LaTeX + Preview ═══════ */}
 
               {/* Variable Quick-Edit Panel */}
@@ -4851,7 +6082,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           align-items: center !important;
           vertical-align: middle !important;
           padding: 3px 8px !important;
-          margin: 6px 4px !important;
+          margin: 4px 4px !important;
           line-height: normal !important;
           border: 1px dashed #93c5fd !important;
           border-radius: 6px !important;
@@ -4867,13 +6098,18 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           box-shadow: 0 1px 4px rgba(37, 99, 235, 0.2);
         }
 
+        /* Prevent Syncfusion Editor line-height paragraph styles from inflating equation spacing */
+        .e-richtexteditor .e-rte-content .math-equation-wrapper,
+        .e-richtexteditor .e-rte-content .math-equation-wrapper * {
+          line-height: normal !important;
+        }
+
         .katex-display {
           display: inline-block !important;
           margin: 0.2em 0 !important;
         }
         .katex {
           font-size: 1.1em !important;
-          line-height: 1.2 !important;
           text-indent: 0 !important;
         }
         .e-richtexteditor .e-rte-content table td > p,

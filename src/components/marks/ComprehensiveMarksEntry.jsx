@@ -62,6 +62,20 @@ const ComprehensiveMarksEntry = ({
           type: "presentation",
         });
       }
+      if (assessments.participation) {
+        allAssessments.push({
+          ...assessments.participation,
+          name: "Class Participation",
+          type: "participation",
+        });
+      }
+      if (assessments.projectReport) {
+        allAssessments.push({
+          ...assessments.projectReport,
+          name: "Project Report",
+          type: "projectReport",
+        });
+      }
 
       allAssessments.forEach((assessment) => {
         const key = `${assessment.type}_${assessment.name}`;
@@ -98,6 +112,10 @@ const ComprehensiveMarksEntry = ({
       return [{ ...assessments.performance, name: "Performance" }];
     if (type === "presentation" && assessments?.presentation)
       return [{ ...assessments.presentation, name: "Presentation" }];
+    if (type === "participation" && assessments?.participation)
+      return [{ ...assessments.participation, name: "Class Participation" }];
+    if (type === "projectReport" && assessments?.projectReport)
+      return [{ ...assessments.projectReport, name: "Project Report" }];
     return [];
   };
 
@@ -265,6 +283,16 @@ const ComprehensiveMarksEntry = ({
       id: "presentation",
       label: "Presentation",
       count: assessments?.presentation ? 1 : 0,
+    },
+    {
+      id: "participation",
+      label: "Class Participation",
+      count: assessments?.participation ? 1 : 0,
+    },
+    {
+      id: "projectReport",
+      label: "Project Report",
+      count: assessments?.projectReport ? 1 : 0,
     },
   ];
 

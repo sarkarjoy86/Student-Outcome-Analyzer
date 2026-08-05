@@ -8,7 +8,7 @@ const assessmentSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['cts', 'midTerm', 'final', 'assignments', 'attendance', 'performance', 'presentation'],
+    enum: ['cts', 'midTerm', 'final', 'assignments', 'attendance', 'performance', 'presentation', 'participation', 'projectReport'],
     required: true
   },
   name: {

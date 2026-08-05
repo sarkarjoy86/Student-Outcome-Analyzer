@@ -32,6 +32,22 @@ const getAllAssessments = (assessments) => {
       co: assessments.presentation.co || '' // Keep empty if no CO assigned
     })
   }
+  if (assessments.participation) {
+    all.push({
+      ...assessments.participation,
+      name: 'Class Participation',
+      type: 'participation',
+      co: assessments.participation.co || ''
+    })
+  }
+  if (assessments.projectReport) {
+    all.push({
+      ...assessments.projectReport,
+      name: 'Project Report',
+      type: 'projectReport',
+      co: assessments.projectReport.co || ''
+    })
+  }
 
   return all
 }

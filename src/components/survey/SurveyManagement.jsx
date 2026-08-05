@@ -18,10 +18,48 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
   const [responsesCount, setResponsesCount] = useState(0)
   const [hasCustomQuestions, setHasCustomQuestions] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const refreshResponsesCount = async (targetSurveyId, silent = true) => {
+    const sId = targetSurveyId || survey?._id
+    if (!sId) return
+    if (!silent) setIsRefreshing(true)
+    try {
+      const analytics = await apiService.getSurveyAnalytics(sId)
+      setResponsesCount(analytics.responses?.length || 0)
+    } catch (err) {
+      console.error("Failed to refresh survey response count:", err)
+    } finally {
+      if (!silent) setIsRefreshing(false)
+    }
+  }
 
   useEffect(() => {
     loadSurvey()
   }, [offeringId])
+
+  useEffect(() => {
+    if (!survey?._id) return
+
+    // 3-second live background polling
+    const interval = setInterval(() => {
+      refreshResponsesCount(survey._id, true)
+    }, 3000)
+
+    // Re-fetch instantly when returning to browser tab
+    const handleFocus = () => {
+      refreshResponsesCount(survey._id, true)
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleFocus)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleFocus)
+    }
+  }, [survey?._id])
 
   const DEFAULT_COUNT = 26
 
@@ -350,9 +388,20 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             <h3 className="text-sm font-semibold text-gray-800">
               Public Link Sharing Panel
             </h3>
-            <span className="text-[11px] px-3 py-1 rounded-full font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {responsesCount} Response{responsesCount !== 1 ? 's' : ''} Received
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] px-3 py-1 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                {responsesCount} Response{responsesCount !== 1 ? 's' : ''} Received
+              </span>
+              <button
+                onClick={() => refreshResponsesCount(survey._id, false)}
+                disabled={isRefreshing}
+                title="Refresh Live Responses Now"
+                className="p-1.5 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg border border-gray-200 shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center"
+              >
+                <RotateCcw size={14} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+            </div>
           </div>
 
           <p className="text-xs text-gray-500">

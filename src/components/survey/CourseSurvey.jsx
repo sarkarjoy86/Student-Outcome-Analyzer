@@ -101,6 +101,7 @@ export default function CourseSurvey({ offering }) {
         surveyId ? (
           <SurveyAnalysis 
             surveyId={surveyId} 
+            offering={offering}
             onBack={() => setSubTab('management')} 
           />
         ) : (

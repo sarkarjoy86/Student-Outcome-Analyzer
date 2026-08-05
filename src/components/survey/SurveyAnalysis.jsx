@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Table,
   Database,
+  RotateCcw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -57,21 +58,138 @@ const RATING_COLORS_SEC5 = {
 const BROWN_BAR_COLOR = '#b45309';
 
 const SCALE_POINTS = [5, 4, 3, 2, 1];
+
+// Custom XAxis Tick component to render multi-line question text under bar charts
+const CustomQuestionTick = (props) => {
+  const { x, y, payload, data } = props;
+  const item = data?.find((d) => d.qCode === payload.value);
+  const qCode = payload.value;
+  const rawText = item?.cleanText || item?.fullText || item?.label || '';
+
+  // Ensure label format starts with Q<N>.
+  const fullText = rawText.startsWith(qCode) ? rawText : `${qCode}. ${rawText}`;
+
+  // Split text into words and group into lines of ~25 chars
+  const words = fullText.split(/\s+/);
+  const lines = [];
+  let currentLine = '';
+
+  words.forEach((w) => {
+    if ((currentLine + ' ' + w).trim().length <= 25) {
+      currentLine = (currentLine + ' ' + w).trim();
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = w;
+    }
+  });
+  if (currentLine) lines.push(currentLine);
+
+  let displayLines = lines.slice(0, 5);
+  if (lines.length > 5) {
+    displayLines[4] = displayLines[4].replace(/[.,;]?$/, '') + '...';
+  }
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text textAnchor="middle" fill="#374151" fontSize={9.5} fontWeight={600}>
+        {displayLines.map((line, idx) => (
+          <tspan key={idx} x={0} dy={idx === 0 ? 10 : 12}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+};
+// Custom XAxis Category Tick for Section 6 Open-Ended Bar Charts
+const CustomCategoryTick = (props) => {
+  const { x, y, payload, data } = props;
+  const item = data?.find((d) => d.category === payload.value);
+  const rawText = item?.fullCategory || payload.value || '';
+
+  const words = rawText.split(/\s+/);
+  const lines = [];
+  let currentLine = '';
+
+  words.forEach((w) => {
+    if ((currentLine + ' ' + w).trim().length <= 18) {
+      currentLine = (currentLine + ' ' + w).trim();
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = w;
+    }
+  });
+  if (currentLine) lines.push(currentLine);
+
+  let displayLines = lines.slice(0, 2);
+  if (lines.length > 2) {
+    displayLines[1] = displayLines[1].replace(/[.,;]?$/, '') + '...';
+  }
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text textAnchor="middle" fill="#374151" fontSize={9.5} fontWeight={600}>
+        {displayLines.map((line, idx) => (
+          <tspan key={idx} x={0} dy={idx === 0 ? 12 : 11}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+};
+
 const RATING_LABELS = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree'];
 
-export default function SurveyAnalysis({ surveyId, onBack }) {
+export default function SurveyAnalysis({ surveyId, offering: activeOffering, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResponse, setSelectedResponse] = useState(null);
 
-  // Accordion toggle states (collapsed by default to keep page compact)
   const [showQuestionGrid, setShowQuestionGrid] = useState(false);
   const [showResponsesDb, setShowResponsesDb] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedSecName, setSelectedSecName] = useState(null);
+
+  const silentRefreshAnalytics = async (silent = true) => {
+    if (!surveyId) return;
+    if (!silent) setIsRefreshing(true);
+    try {
+      const res = await apiService.getSurveyAnalytics(surveyId);
+      setData(res);
+    } catch (err) {
+      console.error('Failed to silently refresh survey analytics:', err);
+    } finally {
+      if (!silent) setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     loadAnalytics();
+  }, [surveyId]);
+
+  useEffect(() => {
+    if (!surveyId) return;
+
+    // 3-second live background polling
+    const interval = setInterval(() => {
+      silentRefreshAnalytics(true);
+    }, 3000);
+
+    const handleFocus = () => {
+      silentRefreshAnalytics(true);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
   }, [surveyId]);
 
   const loadAnalytics = async () => {
@@ -106,15 +224,22 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
     );
   }
 
-  const { survey, responses, totalStudents } = data;
-  const offering = survey.courseOfferingId;
-  const course = offering?.course;
-  const teacher = offering?.teacher;
-  const semester = offering?.semester;
+  const { survey, responses, totalStudents, sectionStats = [] } = data;
+  const offering = activeOffering || survey.courseOfferingId;
+  const course = offering?.course || survey.courseOfferingId?.course;
+  const teacher = offering?.teacher || survey.courseOfferingId?.teacher;
+  const semester = offering?.semester || survey.courseOfferingId?.semester;
 
   const totalResponses = responses.length;
   const responseRate = totalStudents > 0 ? ((totalResponses / totalStudents) * 100).toFixed(1) : '0.0';
   const pendingResponses = Math.max(0, totalStudents - totalResponses);
+
+  // Match section stats against active teacher offering
+  const activeSection = selectedSecName || offering?.section;
+  const currentSecStats = sectionStats.find(s => 
+    (s.offeringId && offering?._id && s.offeringId.toString() === offering._id.toString()) ||
+    (s.section && activeSection && s.section.toLowerCase() === activeSection.toLowerCase())
+  ) || sectionStats.find(s => s.isCurrentSection) || (sectionStats.length > 0 ? sectionStats[0] : null);
 
   // Map-safe comment getter helper
   const getCommentVal = (resp, key) => {
@@ -202,6 +327,7 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
       const shortText = q.text.length > 25 ? q.text.substring(0, 25) + '...' : q.text;
       return {
         qCode,
+        cleanText: q.text,
         label: `${qCode}. ${shortText}`,
         fullText: `${qCode}. ${q.text}`,
         1: q.dist[1] || 0,
@@ -221,6 +347,7 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
       const shortText = q.text.length > 20 ? q.text.substring(0, 20) + '...' : q.text;
       return {
         qCode,
+        cleanText: q.text,
         label: `${qCode}. ${shortText}`,
         fullText: `${qCode}. ${q.text}`,
         '10- Excellent': q.dist[5] || 0,
@@ -277,9 +404,13 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
   const improvedChartData = buildOpenEndedFrequencyData(improvedComments);
   const additionalChartData = buildOpenEndedFrequencyData(additionalComments);
 
-  const renderCustomBarTopLabel = (props, totalRespCount) => {
+  const renderCustomBarTopLabel = (props, totalRespCount, barCount = 0) => {
     const { x, y, width, value } = props;
     if (!value || value === 0) return null;
+
+    // Suppress label collisions if there are many bars (> 15) with count === 1
+    if (barCount > 15 && value === 1) return null;
+
     const pct = totalRespCount > 0 ? ((value / totalRespCount) * 100).toFixed(1) : '0.0';
     return (
       <text
@@ -414,9 +545,23 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h2 className="text-xl font-extrabold text-gray-900">Student Course Survey Analysis & Report</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-extrabold text-gray-900">Student Course Survey Analysis & Report</h2>
+              <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full border border-emerald-200 text-[11px] font-bold shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Live Sync Active
+              </span>
+              <button
+                onClick={() => silentRefreshAnalytics(false)}
+                disabled={isRefreshing}
+                title="Refresh Live Data Now"
+                className="p-1 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg border border-gray-200 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center"
+              >
+                <RotateCcw size={14} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+            </div>
             <p className="text-xs text-green-800 font-bold uppercase tracking-wider mt-0.5">
-              {course?.courseCode} • {course?.courseName} • Section {offering?.section} • ({totalResponses} Submissions)
+              {course?.courseCode} • {course?.courseName} • SECTION {offering?.section} • ({totalResponses} SUBMISSIONS)
             </p>
           </div>
         </div>
@@ -442,7 +587,14 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
       {/* Executive Summary Stats */}
       <div className="no-print grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-          <p className="text-xs font-bold text-gray-500 uppercase">Submissions</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-gray-500 uppercase">Submissions</p>
+            {currentSecStats && sectionStats.length > 1 && (
+              <span className="text-[11.5px] font-extrabold px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80 shadow-2xs">
+                Sec {currentSecStats.section}: {currentSecStats.submittedCount}/{currentSecStats.totalStudents}
+              </span>
+            )}
+          </div>
           <p className="text-2xl font-black text-gray-900 mt-1">{totalResponses} <span className="text-xs text-gray-400">/ {totalStudents}</span></p>
           <p className="text-xs font-bold text-emerald-700 mt-1">{responseRate}% Response Rate</p>
         </div>
@@ -460,7 +612,14 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
         </div>
 
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-          <p className="text-xs font-bold text-gray-500 uppercase">Pending Feedback</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-gray-500 uppercase">Pending Feedback</p>
+            {currentSecStats && sectionStats.length > 1 && (
+              <span className="text-[11.5px] font-extrabold px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200/80 shadow-2xs">
+                Sec {currentSecStats.section}: {currentSecStats.pendingCount} Pending
+              </span>
+            )}
+          </div>
           <p className="text-2xl font-black text-amber-500 mt-1">{pendingResponses}</p>
           <p className="text-xs font-bold text-gray-500 mt-1">Students Yet to Submit</p>
         </div>
@@ -560,23 +719,46 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             </button>
           </div>
 
-          <div className="h-72 w-full pt-2">
+          {/* Section 1 Rating Legend Header */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold pt-1 pb-1">
+            <span className="flex items-center gap-1.5 text-blue-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-blue-600 inline-block"></span>
+              1- Strongly Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-red-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-red-600 inline-block"></span>
+              2- Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-500 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              3- Neutral
+            </span>
+            <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>
+              4- Agree
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-purple-600 inline-block"></span>
+              5- Strongly Agree
+            </span>
+          </div>
+
+          <div className="h-[350px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sec1Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+              <BarChart data={sec1Data} margin={{ top: 15, right: 20, left: 0, bottom: 65 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <XAxis dataKey="qCode" interval={0} tick={<CustomQuestionTick data={sec1Data} />} height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <Tooltip
                   formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
                   labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
                 />
-                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
-                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1- Strongly Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2- Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3- Neutral" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4- Agree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5- Strongly Agree" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -602,23 +784,46 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             </button>
           </div>
 
-          <div className="h-72 w-full pt-2">
+          {/* Section 2 Rating Legend Header */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold pt-1 pb-1">
+            <span className="flex items-center gap-1.5 text-blue-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-blue-600 inline-block"></span>
+              1- Strongly Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-red-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-red-600 inline-block"></span>
+              2- Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-500 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              3- Neutral
+            </span>
+            <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>
+              4- Agree
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-purple-600 inline-block"></span>
+              5- Strongly Agree
+            </span>
+          </div>
+
+          <div className="h-[350px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sec2Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+              <BarChart data={sec2Data} margin={{ top: 15, right: 20, left: 0, bottom: 65 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <XAxis dataKey="qCode" interval={0} tick={<CustomQuestionTick data={sec2Data} />} height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <Tooltip
                   formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
                   labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
                 />
-                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
-                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1- Strongly Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2- Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3- Neutral" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4- Agree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5- Strongly Agree" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -644,23 +849,46 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             </button>
           </div>
 
-          <div className="h-72 w-full pt-2">
+          {/* Section 3 Rating Legend Header */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold pt-1 pb-1">
+            <span className="flex items-center gap-1.5 text-blue-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-blue-600 inline-block"></span>
+              1- Strongly Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-red-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-red-600 inline-block"></span>
+              2- Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-500 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              3- Neutral
+            </span>
+            <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>
+              4- Agree
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-purple-600 inline-block"></span>
+              5- Strongly Agree
+            </span>
+          </div>
+
+          <div className="h-[350px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sec3Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+              <BarChart data={sec3Data} margin={{ top: 15, right: 20, left: 0, bottom: 65 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <XAxis dataKey="qCode" interval={0} tick={<CustomQuestionTick data={sec3Data} />} height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <Tooltip
                   formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
                   labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
                 />
-                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
-                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1- Strongly Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2- Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3- Neutral" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4- Agree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5- Strongly Agree" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -686,23 +914,46 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             </button>
           </div>
 
-          <div className="h-72 w-full pt-2">
+          {/* Section 4 Rating Legend Header */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold pt-1 pb-1">
+            <span className="flex items-center gap-1.5 text-blue-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-blue-600 inline-block"></span>
+              1- Strongly Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-red-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-red-600 inline-block"></span>
+              2- Disagree
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-500 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              3- Neutral
+            </span>
+            <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>
+              4- Agree
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-purple-600 inline-block"></span>
+              5- Strongly Agree
+            </span>
+          </div>
+
+          <div className="h-[350px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sec4Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+              <BarChart data={sec4Data} margin={{ top: 15, right: 20, left: 0, bottom: 65 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <XAxis dataKey="qCode" interval={0} tick={<CustomQuestionTick data={sec4Data} />} height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <Tooltip
                   formatter={(val, name) => [`${val} students`, RATING_LABELS[5 - Number(name)] || `Rating ${name}`]}
                   labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
                 />
-                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
-                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="1" fill={RATING_COLORS_1_5[1]} name="1- Strongly Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="2" fill={RATING_COLORS_1_5[2]} name="2- Disagree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="3" fill={RATING_COLORS_1_5[3]} name="3- Neutral" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="4" fill={RATING_COLORS_1_5[4]} name="4- Agree" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="5" fill={RATING_COLORS_1_5[5]} name="5- Strongly Agree" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -726,18 +977,41 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
             </button>
           </div>
 
-          <div className="h-72 w-full pt-2">
+          {/* Section 5 Rating Legend Header */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-bold pt-1 pb-1">
+            <span className="flex items-center gap-1.5 text-blue-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-blue-600 inline-block"></span>
+              10- Excellent
+            </span>
+            <span className="flex items-center gap-1.5 text-red-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-red-600 inline-block"></span>
+              08- Very Good
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-500 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block"></span>
+              06- Good
+            </span>
+            <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-emerald-600 inline-block"></span>
+              04- Average
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 font-extrabold">
+              <span className="w-3 h-3 rounded-xs bg-purple-600 inline-block"></span>
+              02- Below Average
+            </span>
+          </div>
+
+          <div className="h-[350px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sec5Data} margin={{ top: 20, right: 20, left: 0, bottom: 25 }}>
+              <BarChart data={sec5Data} margin={{ top: 15, right: 20, left: 0, bottom: 65 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                <XAxis dataKey="qCode" tick={{ fontSize: 11, fontWeight: 700, fill: '#374151' }} />
+                <XAxis dataKey="qCode" interval={0} tick={<CustomQuestionTick data={sec5Data} />} height={70} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <Tooltip
                   formatter={(val, name) => [`${val} students`, name]}
                   labelFormatter={(label, items) => items?.[0]?.payload?.fullText || label}
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}
                 />
-                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: '10px', fontSize: '11px', fontWeight: 700 }} />
                 <Bar dataKey="10- Excellent" fill={RATING_COLORS_SEC5['10- Excellent']} name="10- Excellent" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="08- Very Good" fill={RATING_COLORS_SEC5['08- Very Good']} name="08- Very Good" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="06- Good" fill={RATING_COLORS_SEC5['06- Good']} name="06- Good" radius={[3, 3, 0, 0]} />
@@ -774,18 +1048,18 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
               </button>
             </div>
 
-            <div className="h-64 w-full pt-4">
+            <div className="h-72 w-full pt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={learnedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                <BarChart data={learnedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 45 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <XAxis dataKey="category" interval={0} tick={<CustomCategoryTick data={learnedChartData} />} height={45} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                   <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
                   <Bar
                     dataKey="count"
                     fill={BROWN_BAR_COLOR}
                     radius={[4, 4, 0, 0]}
-                    label={(props) => renderCustomBarTopLabel(props, learnedComments.length)}
+                    label={(props) => renderCustomBarTopLabel(props, learnedComments.length, learnedChartData.length)}
                   />
                 </BarChart>
               </ResponsiveContainer>
@@ -810,18 +1084,18 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
               </button>
             </div>
 
-            <div className="h-64 w-full pt-4">
+            <div className="h-72 w-full pt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={improvedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                <BarChart data={improvedChartData} margin={{ top: 25, right: 20, left: 0, bottom: 45 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <XAxis dataKey="category" interval={0} tick={<CustomCategoryTick data={improvedChartData} />} height={45} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                   <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
                   <Bar
                     dataKey="count"
                     fill={BROWN_BAR_COLOR}
                     radius={[4, 4, 0, 0]}
-                    label={(props) => renderCustomBarTopLabel(props, improvedComments.length)}
+                    label={(props) => renderCustomBarTopLabel(props, improvedComments.length, improvedChartData.length)}
                   />
                 </BarChart>
               </ResponsiveContainer>
@@ -846,18 +1120,18 @@ export default function SurveyAnalysis({ surveyId, onBack }) {
               </button>
             </div>
 
-            <div className="h-64 w-full pt-4">
+            <div className="h-72 w-full pt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={additionalChartData} margin={{ top: 25, right: 20, left: 0, bottom: 40 }}>
+                <BarChart data={additionalChartData} margin={{ top: 25, right: 20, left: 0, bottom: 45 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="category" tick={{ fontSize: 10, fontWeight: 700, fill: '#4b5563' }} interval={0} angle={-15} textAnchor="end" />
+                  <XAxis dataKey="category" interval={0} tick={<CustomCategoryTick data={additionalChartData} />} height={45} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
                   <Tooltip labelFormatter={(l, items) => items?.[0]?.payload?.fullCategory || l} />
                   <Bar
                     dataKey="count"
                     fill={BROWN_BAR_COLOR}
                     radius={[4, 4, 0, 0]}
-                    label={(props) => renderCustomBarTopLabel(props, additionalComments.length)}
+                    label={(props) => renderCustomBarTopLabel(props, additionalComments.length, additionalChartData.length)}
                   />
                 </BarChart>
               </ResponsiveContainer>
