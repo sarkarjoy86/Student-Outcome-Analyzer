@@ -57,6 +57,28 @@ async function getCombinedSurvey(surveyDoc) {
     coMapping: q.coMapping,
     order: q.order
   }))]
+
+  try {
+    const CourseOfferingModel = mongoose.model('CourseOffering');
+    const primaryOffering = surveyDoc.courseOfferingId;
+    if (primaryOffering) {
+      const courseId = primaryOffering.course?._id || primaryOffering.course;
+      const batchId = primaryOffering.batch?._id || primaryOffering.batch;
+      const teacherId = primaryOffering.teacher?._id || primaryOffering.teacher;
+      const semesterId = primaryOffering.semester?._id || primaryOffering.semester;
+
+      if (courseId && batchId && teacherId) {
+        const sisterFilter = { course: courseId, batch: batchId, teacher: teacherId };
+        if (semesterId) sisterFilter.semester = semesterId;
+        const sisterOfferings = await CourseOfferingModel.find(sisterFilter).select('section');
+        const sections = Array.from(new Set(sisterOfferings.map(s => s.section).filter(Boolean))).sort();
+        survey.allSections = sections;
+      }
+    }
+  } catch (err) {
+    console.warn('[SurveyRoutes] Could not resolve sister sections:', err.message);
+  }
+
   return survey
 }
 

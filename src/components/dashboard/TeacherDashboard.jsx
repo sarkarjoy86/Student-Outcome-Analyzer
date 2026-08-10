@@ -1714,10 +1714,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                       <span className="px-3 py-1 bg-emerald-100/80 text-emerald-950 border border-emerald-300/80 text-xs font-medium rounded-lg shadow-xs">
                         {offering.course?.courseCode}
                       </span>
-                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium rounded-lg flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-                        Active Session
-                      </span>
+                      {offering.semester?.status === 'completed' || offering.semester?.status === 'inactive' ? (
+                        <span className="px-2.5 py-1 bg-red-50 text-red-700 border border-red-200 text-xs font-medium rounded-lg flex items-center gap-1.5 shadow-xs">
+                          <span className="w-2 h-2 rounded-full bg-red-600"></span>
+                          Completed Session
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium rounded-lg flex items-center gap-1.5 shadow-xs">
+                          <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                          Active Session
+                        </span>
+                      )}
                     </div>
                   </div>
 

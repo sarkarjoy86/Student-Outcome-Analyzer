@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { apiService } from '../../services/apiService'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -13,7 +14,7 @@ import {
   PasteCleanup,
   Count
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle } from 'lucide-react'
 import mammoth from 'mammoth'
 import html2canvas from 'html2canvas'
 
@@ -107,6 +108,47 @@ function formatAiTextToHtml(text = '') {
   })
 
   return htmlBlocks.join('')
+}
+
+// Helper: Render modals via Portal targeting active fullscreen element (HTML5, Custom Fullscreen, or Syncfusion RTE) or document.body
+function ModalPortal({ children }) {
+  const getPortalContainer = () => {
+    if (typeof document === 'undefined') return null
+    if (document.fullscreenElement) return document.fullscreenElement
+    const customFullscreen = document.querySelector('.fixed.w-screen.h-screen, .fixed.w-screen, .e-rte-fullscreen, .e-richtexteditor.e-full-screen, .e-rte-full-screen')
+    if (customFullscreen) return customFullscreen
+    return document.body
+  }
+
+  const [target, setTarget] = useState(() => getPortalContainer() || (typeof document !== 'undefined' ? document.body : null))
+
+  useEffect(() => {
+    const updateTarget = () => {
+      setTarget(getPortalContainer() || document.body)
+    }
+    updateTarget()
+
+    const observer = new MutationObserver(updateTarget)
+    if (typeof document !== 'undefined' && document.body) {
+      observer.observe(document.body, { attributes: true, subtree: true, childList: true, attributeFilter: ['class'] })
+    }
+
+    document.addEventListener('fullscreenchange', updateTarget)
+    document.addEventListener('webkitfullscreenchange', updateTarget)
+    document.addEventListener('mozfullscreenchange', updateTarget)
+    document.addEventListener('MSFullscreenChange', updateTarget)
+
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('fullscreenchange', updateTarget)
+      document.removeEventListener('webkitfullscreenchange', updateTarget)
+      document.removeEventListener('mozfullscreenchange', updateTarget)
+      document.removeEventListener('MSFullscreenChange', updateTarget)
+    }
+  }, [])
+
+  if (!target) return null
+  return createPortal(children, target)
 }
 
 // Helper: Compute positions for Graph & Tree layouts (Tree Hierarchical, Map, Circle, or Custom Dragged)
@@ -368,7 +410,7 @@ function parseExamPaperStructureFromDom(tableEl) {
     // or the first direct cell has colspan="4" and contains PART text
     const firstCellColspan = parseInt(tds[0].getAttribute('colspan') || '1')
     if (tds.length === 1 && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
-      const partName = tds[0].textContent.trim() || 'PART A'
+      const partName = tds[0].textContent.trim()
       currentPart = { name: partName, questions: [] }
       parts.push(currentPart)
       currentQ = null
@@ -376,17 +418,19 @@ function parseExamPaperStructureFromDom(tableEl) {
     }
 
     // 2. Question Data Row (4 direct columns: Q#, Sub-Q, Content, Marks)
-    if (tds.length === 4) {
+    // 2. Question Data Row (3 direct columns when subCount === 0 with colspan="2", or 4 direct columns)
+    if (tds.length === 3 || tds.length === 4) {
+      const is3Col = tds.length === 3
       const col0Text = tds[0].textContent.trim()
-      const col1Text = tds[1].textContent.trim()
-      const col2Html = tds[2].innerHTML.trim()
-      const col3Text = tds[3].textContent.trim()
+      const col1Text = is3Col ? '' : tds[1].textContent.trim()
+      const col2Html = is3Col ? tds[1].innerHTML.trim() : tds[2].innerHTML.trim()
+      const col3Text = is3Col ? tds[2].textContent.trim() : tds[3].textContent.trim()
 
       const clean0 = col0Text.replace(/[\s\xa0]/g, '')
       const clean1 = col1Text.replace(/[\s\xa0]/g, '')
 
-      // A valid question/sub-question row MUST have a sub-question label (e.g. "a.", "b.") in column 1
-      const isSubQLabel = /^[a-z]\.?$/i.test(clean1)
+      // A valid question/sub-question row MUST have a sub-question label (e.g. "a.", "b.") in column 1 or be 3-col
+      const isSubQLabel = !is3Col && /^[a-z]\.?$/i.test(clean1)
       const isQNumber = /^\d+\.?$/.test(clean0)
 
       // Skip spacing rows (no Q number and no sub-Q label)
@@ -402,11 +446,11 @@ function parseExamPaperStructureFromDom(tableEl) {
       if (isQNumber) {
         // New Question e.g. "1."
         if (!currentPart) {
-          currentPart = { name: 'PART A', questions: [] }
+          currentPart = { name: '', questions: [] }
           parts.push(currentPart)
         }
         currentQ = {
-          subCount: 1,
+          subCount: is3Col ? 0 : 1,
           marks: [markVal],
           blooms: [bloomVal],
           contents: [col2Html || '&nbsp;']
@@ -414,7 +458,7 @@ function parseExamPaperStructureFromDom(tableEl) {
         currentPart.questions.push(currentQ)
       } else if (currentQ && isSubQLabel) {
         // Additional sub-question row e.g. "b."
-        currentQ.subCount++
+        currentQ.subCount = (currentQ.subCount || 0) + 1
         currentQ.marks.push(markVal)
         currentQ.blooms.push(bloomVal)
         currentQ.contents.push(col2Html || '&nbsp;')
@@ -451,7 +495,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
     }
 
     part.questions.forEach((q) => {
-      const subCount = q.subCount || 1
+      const isNoSubQ = q.subCount === 0
+      const effectiveSubCount = isNoSubQ ? 1 : (q.subCount || 1)
       const subLabels = 'abcdefghijklmnopqrstuvwxyz'
 
       // Get mapped CO for this question from Question-wise CO Mapping state
@@ -459,10 +504,10 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
         ? questionsList[globalQNum - 1].co
         : ''
 
-      for (let s = 0; s < subCount; s++) {
+      for (let s = 0; s < effectiveSubCount; s++) {
         const isFirst = s === 0
         const qLabel = isFirst ? `${globalQNum}.` : ''
-        const subLabel = subCount > 1 ? `${subLabels[s]}.` : ''
+        const subLabel = isNoSubQ ? '' : (effectiveSubCount > 1 ? `${subLabels[s]}.` : '')
         const mark = q.marks && q.marks[s] !== undefined ? q.marks[s] : ''
         const markDisplay = mark !== '' ? `[${mark}]` : ''
         const subBloom = q.blooms && q.blooms[s] ? q.blooms[s] : ''
@@ -500,15 +545,39 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
         // Question content row — height provides writing space
         html += `<tr>`
         html += `<td style="${bd}${qW}${vt}${pad}font-weight:bold;">${qLabel}</td>`
-        html += `<td style="${bd}${sW}${vt}${pad}">${subLabel}</td>`
-        html += `<td style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
-        html += `<td style="${bd}${mW}${vt}${pad}text-align:center;">${markDisplay}</td>`
+        if (isNoSubQ) {
+          // Merge Sub-Q column into Content column (colspan="2") to remove empty Sub-Q column space!
+          html += `<td colspan="2" style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
+        } else {
+          html += `<td style="${bd}${sW}${vt}${pad}">${subLabel}</td>`
+          html += `<td style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
+        }
+        html += `<td style="${bd}${mW}${vt}${pad}text-align:center;font-weight:bold;">${markDisplay}</td>`
         html += `</tr>`
 
-        // Blank spacing row(s) after each question / sub-question
-        const spaceCount = q.spaceRows !== undefined ? parseInt(q.spaceRows) : 1
+        const isLastSubQ = s === effectiveSubCount - 1
+
+        // Blank spacing row(s):
+        // If it's the last sub-question of the question, use qSpaceRows (Question to Question spacing).
+        // If it's an intermediate sub-question (between a. and b.), use subSpaceRows (Sub-Question spacing).
+        const defaultSpace = q.spaceRows !== undefined ? parseInt(q.spaceRows) : 1
+        let subSpace = defaultSpace
+        if (Array.isArray(q.subSpaceRows)) {
+          subSpace = q.subSpaceRows[s] !== undefined ? parseInt(q.subSpaceRows[s]) : defaultSpace
+        } else if (q.subSpaceRows !== undefined) {
+          subSpace = parseInt(q.subSpaceRows)
+        }
+
+        const spaceCount = isLastSubQ
+          ? (q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : defaultSpace)
+          : subSpace
+
         for (let sp = 0; sp < spaceCount; sp++) {
-          html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+          if (isNoSubQ) {
+            html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td colspan="2" style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+          } else {
+            html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+          }
         }
       }
 
@@ -545,6 +614,30 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [uploadingCount, setUploadingCount] = useState(0)
   const [showBlobWarning, setShowBlobWarning] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Handle Fullscreen Toggle with 100% Content Preservation
+  const handleToggleFullscreen = useCallback(() => {
+    if (rteRef.current) {
+      try {
+        const liveContent = rteRef.current.value || ''
+        setEditorValue(liveContent)
+      } catch (e) {}
+    }
+    setIsFullscreen(prev => !prev)
+  }, [])
+
+  // Listen for Escape key to exit fullscreen smoothly and preserve content
+  useEffect(() => {
+    if (!isFullscreen) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleToggleFullscreen()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFullscreen, handleToggleFullscreen])
   const [showAiMenu, setShowAiMenu] = useState(false)
   const [aiMenuPosition, setAiMenuPosition] = useState({ top: 0, left: 0 })
   const [aiProcessing, setAiProcessing] = useState(false)
@@ -604,6 +697,140 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     }
     setRestoredPaperDraftInfo(null)
     loadPaperData()
+  }
+
+  // Question Similarity Checker States & Handler
+  const [similarityResults, setSimilarityResults] = useState(null)
+  const [similarityLoading, setSimilarityLoading] = useState(false)
+  const [similarityError, setSimilarityError] = useState('')
+  const [expandedArchiveId, setExpandedArchiveId] = useState(null)
+  const [comparisonModalData, setComparisonModalData] = useState(null)
+  const [similarityFilterTab, setSimilarityFilterTab] = useState('current')
+
+  const handleRunSimilarityCheck = async () => {
+    setSimilarityLoading(true)
+    setSimilarityError('')
+    setSimilarityResults(null)
+    try {
+      const currentContent = rteRef.current ? rteRef.current.value : editorValue
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = currentContent || ''
+      const currentPlainText = (tempDiv.textContent || tempDiv.innerText || '').trim()
+
+      if (!currentPlainText || currentPlainText.length < 15) {
+        setSimilarityError('Please write some question content in the paper editor first before running the similarity check.')
+        setSimilarityLoading(false)
+        return
+      }
+
+      const courseId = offering?.course?._id || offering?.course
+      const qBankRes = await apiService.getQuestionBank(courseId)
+      const papers = qBankRes.papers || []
+
+      const curOfferingId = String(offering?._id || offering?.id || '')
+      const curAssessmentId = String(assessment?._id || '')
+      const curAssessmentName = (assessment?.name || '').toLowerCase().trim()
+      const curSection = (offering?.section || '').toLowerCase().trim()
+      const curSemesterId = String(offering?.semester?._id || offering?.semester || '')
+
+      // Classify assessment types
+      const examTypeKeywords = ['ct', 'class test', 'mid', 'midterm', 'mid term', 'final', 'final exam', 'quiz', 'test', 'exam', 'viva']
+      const isExamType = (name) => {
+        const lower = (name || '').toLowerCase().trim()
+        return examTypeKeywords.some(kw => lower.includes(kw))
+      }
+      const currentIsExamType = isExamType(curAssessmentName)
+
+      const availableArchives = papers.filter(p => {
+        if (!p.content || p.content.trim().length < 10) return false
+
+        const pOfferingId = String(p.courseOffering?._id || p.courseOffering || '')
+        const pAssessmentId = String(p.assessment?._id || p.assessment || '')
+        const pAssessmentName = (p.assessment?.name || '').toLowerCase().trim()
+        const pSection = (p.courseOffering?.section || '').toLowerCase().trim()
+        const pSemesterId = String(p.courseOffering?.semester?._id || p.courseOffering?.semester || '')
+
+        // 1. Skip by ID match (exact same offering + assessment)
+        if (pOfferingId === curOfferingId && pAssessmentId === curAssessmentId) return false
+
+        // 2. Skip by name + semester + section match (same assessment name in same semester & section = same paper)
+        if (pAssessmentName === curAssessmentName && pSemesterId === curSemesterId && pSection === curSection) return false
+
+        // 3. Skip if content is identical to what's currently in the editor (same paper saved previously)
+        const div = document.createElement('div')
+        div.innerHTML = p.content || ''
+        const pText = (div.textContent || div.innerText || '').trim()
+        if (pText === currentPlainText) return false
+
+        // 4. Type-based filtering
+        if (currentIsExamType) {
+          // Current is exam-type (CT, Mid, Final, Quiz) → only compare with other exam-type archives
+          return isExamType(pAssessmentName)
+        } else {
+          // Current is non-exam (Assignment, Presentation, Project Report) → only compare with same assessment type
+          return pAssessmentName === curAssessmentName
+        }
+      })
+
+      if (availableArchives.length === 0) {
+        setSimilarityResults({
+          maxSimilarity: 0,
+          totalArchivesCompared: 0,
+          results: [],
+          message: 'No previous archived question papers found for this course.'
+        })
+        setSimilarityLoading(false)
+        return
+      }
+
+      const curSem = offering?.semester
+      const curSemId = String(curSem?._id || curSem || '')
+      const curSemName = (curSem?.semesterName || '').toLowerCase().trim()
+      const curSemYear = String(curSem?.academicYear || offering?.academicYear || '').toLowerCase().trim()
+
+      const archivedPayload = availableArchives.map(p => {
+        const div = document.createElement('div')
+        div.innerHTML = p.content || ''
+        const text = (div.textContent || div.innerText || '').trim()
+        const sem = p.courseOffering?.semester
+        const pSemId = String(sem?._id || sem || '')
+        const semName = sem ? (sem.semesterName || '') : ''
+        const semYear = sem ? (sem.academicYear || p.courseOffering?.academicYear || '') : ''
+        const fullSem = semYear ? `${semName} (${semYear})` : semName
+
+        const isCurrentSemester = Boolean(
+          (pSemId && curSemId && pSemId === curSemId) ||
+          (semName && curSemName && semName.toLowerCase().trim() === curSemName &&
+           semYear && curSemYear && String(semYear).toLowerCase().trim() === curSemYear)
+        )
+
+        return {
+          id: p._id,
+          assessmentName: p.assessment?.name || 'Assessment Paper',
+          semester: fullSem || 'Previous Semester',
+          section: p.courseOffering?.section || 'A',
+          batch: p.courseOffering?.batch?.name || '',
+          isCurrentSemester,
+          text
+        }
+      })
+
+      const res = await apiService.checkQuestionSimilarity({
+        currentPaperText: currentPlainText,
+        archivedPapers: archivedPayload
+      })
+
+      if (res.success) {
+        setSimilarityResults(res)
+      } else {
+        setSimilarityError(res.message || 'Failed to analyze similarity.')
+      }
+    } catch (err) {
+      console.error('Similarity check error:', err)
+      setSimilarityError(err.message || 'Error occurred while running similarity check.')
+    } finally {
+      setSimilarityLoading(false)
+    }
   }
 
   // AI Creation Tools States (Enhanced)
@@ -869,8 +1096,66 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     }
   }
 
+  // Helper: Smart Hint Label for Equation & Matrix Badges in RTE Editor
+  const getEquationBadgeHint = (latexStr, promptStr = '') => {
+    if (!latexStr || !latexStr.trim()) return '📐 Equation'
+
+    const trimmedLatex = latexStr.trim()
+
+    // 1. Matrix Detection & Dimension Extraction
+    const matrixMatch = trimmedLatex.match(/\\begin\{(?:b|p|v|V|B|array|matrix)\}([\s\S]*?)\\end\{(?:b|p|v|V|B|array|matrix)\}/)
+    if (matrixMatch && matrixMatch[1]) {
+      const inner = matrixMatch[1].trim()
+      const rows = inner.split(/\\\\/).map(r => r.trim()).filter(Boolean)
+      const rowCount = rows.length || 1
+      const colCount = rows[0] ? rows[0].split(/&/).length : 1
+      return `📊 Matrix (${rowCount}×${colCount})`
+    }
+
+    // 2. If user provided a descriptive prompt/name
+    if (promptStr && promptStr.trim()) {
+      const cleanPrompt = promptStr.trim()
+      const shortPrompt = cleanPrompt.length > 32 ? cleanPrompt.substring(0, 29) + '...' : cleanPrompt
+      return `🧮 ${shortPrompt}`
+    }
+
+    // 3. Clean LaTeX commands into readable math symbols
+    let cleanHint = trimmedLatex
+      .replace(/\\mathbf\{([^}]+)\}/g, '$1')
+      .replace(/\\mathit\{([^}]+)\}/g, '$1')
+      .replace(/\\mathrm\{([^}]+)\}/g, '$1')
+      .replace(/\\text\{([^}]+)\}/g, '$1')
+      .replace(/\\hat\{([^}]+)\}/g, '$1̂')
+      .replace(/\\vec\{([^}]+)\}/g, '$1⃗')
+      .replace(/\\bar\{([^}]+)\}/g, '$1̄')
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1/$2)')
+      .replace(/\\left|\\right/g, '')
+      .replace(/\\theta/g, 'θ')
+      .replace(/\\eta/g, 'η')
+      .replace(/\\nabla/g, '∇')
+      .replace(/\\sum/g, '∑')
+      .replace(/\\int/g, '∫')
+      .replace(/\\alpha/g, 'α')
+      .replace(/\\beta/g, 'β')
+      .replace(/\\gamma/g, 'γ')
+      .replace(/\\lambda/g, 'λ')
+      .replace(/\\sigma/g, 'σ')
+      .replace(/\\infty/g, '∞')
+      .replace(/\\pm/g, '±')
+      .replace(/\\times/g, '×')
+      .replace(/\\cdot/g, '·')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (cleanHint.length > 32) {
+      cleanHint = cleanHint.substring(0, 29) + '...'
+    }
+
+    return `🧮 Equation: ${cleanHint}`
+  }
+
   // Equation Modal Handlers
-  const handleOpenEquationModal = (existingLatex = '', element = null) => {
+  const handleOpenEquationModal = (existingLatex = '', element = null, existingPrompt = '') => {
     // Save the current cursor/selection position BEFORE the modal steals focus
     try {
       const sel = window.getSelection()
@@ -884,6 +1169,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     if (element) {
       setEditingEquationElement(element)
       setAiEquationLatex(existingLatex || 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}')
+      if (existingPrompt) setAiEquationPrompt(existingPrompt)
     } else {
       setEditingEquationElement(null)
       setAiEquationLatex('x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}')
@@ -953,9 +1239,12 @@ Equation description: "${aiEquationPrompt}"`
     const editor = rteRef.current
     if (!editor) return
 
-    const renderedKaTeX = renderEquationHtml(aiEquationLatex)
     const encodedLatex = encodeURIComponent(aiEquationLatex)
-    const wrapperHtml = `<span class="math-equation-wrapper" data-latex="${encodedLatex}" contenteditable="false" style="display: inline-block; padding: 2px 6px; margin: 0 2px; border: 1px dashed #93c5fd; border-radius: 4px; cursor: pointer; vertical-align: middle; background-color: #f0f9ff;" title="Click to edit equation">${renderedKaTeX}</span>`
+    const encodedPrompt = encodeURIComponent(aiEquationPrompt || '')
+    const badgeHint = getEquationBadgeHint(aiEquationLatex, aiEquationPrompt)
+    const escapedHint = badgeHint.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    // The editor shows a clean clickable badge; print/PDF reads data-latex and converts to a high-res image
+    const wrapperHtml = `<span class="math-equation-wrapper" data-latex="${encodedLatex}" data-prompt="${encodedPrompt}" contenteditable="false" title="Click to edit equation"><span class="math-eq-badge"><code>${escapedHint}</code></span><span class="math-eq-print-content" style="display:none;"></span></span>`
 
     if (editingEquationElement) {
       // Replace existing equation in editor DOM
@@ -1289,8 +1578,10 @@ Equation description: "${aiEquationPrompt}"`
         e.preventDefault()
         e.stopPropagation()
         const encoded = target.getAttribute('data-latex') || ''
+        const encodedPrompt = target.getAttribute('data-prompt') || ''
         const latex = encoded ? decodeURIComponent(encoded) : ''
-        handleOpenEquationModal(latex, target)
+        const prompt = encodedPrompt ? decodeURIComponent(encodedPrompt) : ''
+        handleOpenEquationModal(latex, target, prompt)
       }
     }
 
@@ -1696,43 +1987,21 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   const savePaper = async () => {
-    // 1. Check if an image is currently uploading
-    if (uploadingCount > 0) {
-      alert('One or more images are still temporary. Please wait until image uploads complete.')
-      return
-    }
-
-    // 2. Parse editor HTML and check for unfinished temporary file uploads (blob:)
-    const currentContent = rteRef.current ? rteRef.current.value : editorValue
-    const tempDiv = document.createElement('div')
-    tempDiv.innerHTML = currentContent || ''
-    const imgs = tempDiv.querySelectorAll('img')
-    let hasTemporaryImages = false
-    let offendingSrc = ''
-    for (let img of imgs) {
-      const src = img.getAttribute('src') || ''
-      // Only block blob: URLs (unfinished file uploads). Vector SVG graph diagrams and data URLs are fully valid!
-      if (src.startsWith('blob:')) {
-        hasTemporaryImages = true
-        offendingSrc = src.substring(0, 60) + '...'
-        break
-      }
-    }
-    if (hasTemporaryImages) {
-      alert(`One or more images are still uploading (${offendingSrc}). Please wait until image uploads complete.`)
-      return
-    }
-
-    // Validate max marks allocation sum
-    const totalAllocated = questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)
-    if (questions.length > 0 && totalAllocated !== assessment.maxMarks) {
-      if (!window.confirm(`Warning: The total allocated marks for all questions is ${totalAllocated}, but the assessment's total is ${assessment.maxMarks}. Do you want to save anyway?`)) {
-        return
-      }
-    }
-
     setSaving(true)
     try {
+      // 1. Process and upload any pasted base64/blob images to Cloudinary
+      const currentRawContent = rteRef.current ? rteRef.current.value : editorValue
+      const cleanContent = await processAndUploadHtmlImages(currentRawContent)
+
+      // Validate max marks allocation sum
+      const totalAllocated = questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)
+      if (questions.length > 0 && totalAllocated !== assessment.maxMarks) {
+        if (!window.confirm(`Warning: The total allocated marks for all questions is ${totalAllocated}, but the assessment's total is ${assessment.maxMarks}. Do you want to save anyway?`)) {
+          setSaving(false)
+          return
+        }
+      }
+
       const validCOs = Array.from(new Set(
         questions
           .map(q => q.co)
@@ -1740,7 +2009,7 @@ Equation description: "${aiEquationPrompt}"`
       ))
       const aggregatedCO = validCOs.join(', ')
 
-      // 1. Update Assessment fields (examDuration, deadline, numQuestions, level, term, co, status)
+      // 2. Update Assessment fields (examDuration, deadline, numQuestions, level, term, co, status)
       await apiService.updateAssessment(assessment._id, {
         examDuration,
         deadline,
@@ -1751,9 +2020,9 @@ Equation description: "${aiEquationPrompt}"`
         status: validCOs.length > 0 ? 'Published' : assessment.status
       })
 
-      // 2. Save Question Paper content and metadata questions (including bloom levels)
+      // 3. Save Question Paper content and metadata questions (including bloom levels)
       await apiService.saveQuestionPaper(assessment._id, {
-        content: currentContent,
+        content: cleanContent,
         questions: questions.map(q => ({
           questionNumber: q.questionNumber,
           maxMarks: q.maxMarks,
@@ -2226,6 +2495,9 @@ Equation description: "${aiEquationPrompt}"`
         position: relative;
         z-index: 1;
       }
+      .math-eq-badge {
+        display: none !important;
+      }
       .math-print-img {
         display: inline-block !important;
         vertical-align: middle !important;
@@ -2462,15 +2734,90 @@ Equation description: "${aiEquationPrompt}"`
     const courseCode = (offering?.course?.courseCode || 'COURSE').replace(/[^a-zA-Z0-9]/g, '');
     const assessmentName = (assessment?.name || 'ASSESSMENT').replace(/[^a-zA-Z0-9]/g, '');
     const year = offering?.academicYear || new Date().getFullYear();
-    
-    // Count existing img tags in current editor content
     const currentHtml = rteRef.current ? rteRef.current.value : editorValue;
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = currentHtml || '';
     const imgCount = tempDiv.querySelectorAll('img').length;
-    
     return `${courseCode}_${assessmentName}_Q${imgCount + currentUploading + 1}_${year}`;
   };
+
+  const uploadBase64ImageToCloudinary = async (base64Data, filenamePrefix = 'pasted') => {
+    try {
+      const token = localStorage.getItem('obe-auth-token')
+      const filename = getNextImageName(0) + `_${filenamePrefix}`
+      const res = await fetch(`${API_BASE}/api/upload/image`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'x-filename': filename
+        },
+        body: JSON.stringify({ base64: base64Data, filename })
+      })
+
+      const data = await res.json()
+      if (data && (data.secureUrl || data.url)) {
+        return data.secureUrl || data.url
+      }
+      return null
+    } catch (err) {
+      console.error('Error uploading base64 image to Cloudinary:', err)
+      return null
+    }
+  }
+
+  const processAndUploadHtmlImages = async (rawHtml) => {
+    if (!rawHtml || (!rawHtml.includes('data:image/') && !rawHtml.includes('blob:'))) {
+      return rawHtml
+    }
+
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = rawHtml
+
+    const base64Imgs = Array.from(tempDiv.querySelectorAll('img')).filter(img => {
+      const src = img.getAttribute('src') || ''
+      return src.startsWith('data:image/') || src.startsWith('blob:')
+    })
+
+    if (base64Imgs.length === 0) return rawHtml
+
+    setUploadStatus(`Uploading ${base64Imgs.length} pasted image(s) to Cloudinary...`)
+
+    for (let i = 0; i < base64Imgs.length; i++) {
+      const img = base64Imgs[i]
+      const src = img.getAttribute('src') || ''
+
+      if (src.startsWith('data:image/')) {
+        const cloudUrl = await uploadBase64ImageToCloudinary(src, `pasted_${i + 1}`)
+        if (cloudUrl) {
+          img.setAttribute('src', cloudUrl)
+        }
+      } else if (src.startsWith('blob:')) {
+        try {
+          const blobRes = await fetch(src)
+          const blob = await blobRes.blob()
+          const reader = new FileReader()
+          const base64Data = await new Promise((resolve) => {
+            reader.onloadend = () => resolve(reader.result)
+            reader.readAsDataURL(blob)
+          })
+          if (base64Data) {
+            const cloudUrl = await uploadBase64ImageToCloudinary(base64Data, `blob_${i + 1}`)
+            if (cloudUrl) {
+              img.setAttribute('src', cloudUrl)
+            }
+          }
+        } catch (e) {
+          console.warn('Could not read blob image:', e)
+        }
+      }
+    }
+
+    setUploadStatus('✓ All pasted images uploaded to Cloudinary.')
+    setTimeout(() => setUploadStatus(''), 3000)
+
+    return tempDiv.innerHTML
+  }
 
   const onImageUploading = (args) => {
     // Count existing img tags in current editor content
@@ -2557,24 +2904,11 @@ Equation description: "${aiEquationPrompt}"`
     const nextCount = uploadingCountRef.current
     setUploadingCount(nextCount)
     if (nextCount === 0) {
-      setUploadStatus('❌ Upload failed.')
+      setUploadStatus('⚠️ Image ready for auto-upload on save.')
       setTimeout(() => setUploadStatus(''), 3000)
     }
 
-    console.error('Image upload failed:', args)
-    let message = 'Image upload failed. Please try again.'
-    try {
-      if (args.e && args.e.currentTarget && args.e.currentTarget.response) {
-        const response = JSON.parse(args.e.currentTarget.response)
-        if (response && response.message) {
-          message = `Upload failed: ${response.message}`
-          if (response.error) {
-            message += `\n\nDetails: ${response.error}`
-          }
-        }
-      }
-    } catch (e) {}
-    alert(message)
+    console.warn('Syncfusion uploader fallback note:', args)
   }
 
   const onDialogOpen = (args) => {
@@ -2960,23 +3294,31 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
   }
 
   const handlePaperStructureSetSubCount = (partIdx, qIdx, count) => {
-    const newCount = Math.max(1, Math.min(6, parseInt(count) || 1))
+    const parsed = parseInt(count)
+    const newCount = isNaN(parsed) ? 0 : Math.max(0, Math.min(10, parsed))
     setPaperStructureParts(prev => prev.map((part, i) => {
       if (i !== partIdx) return part
       return {
         ...part,
         questions: part.questions.map((q, j) => {
           if (j !== qIdx) return q
+          const effectiveCount = newCount === 0 ? 1 : newCount
           // Preserve existing marks
-          const newMarks = Array(newCount).fill(10)
-          if (q.marks) q.marks.forEach((m, k) => { if (k < newCount) newMarks[k] = m })
+          const newMarks = Array(effectiveCount).fill(10)
+          if (q.marks) q.marks.forEach((m, k) => { if (k < effectiveCount) newMarks[k] = m })
           // Preserve existing typed content
-          const newContents = Array(newCount).fill('&nbsp;')
-          if (q.contents) q.contents.forEach((c, k) => { if (k < newCount) newContents[k] = c })
+          const newContents = Array(effectiveCount).fill('&nbsp;')
+          if (q.contents) q.contents.forEach((c, k) => { if (k < effectiveCount) newContents[k] = c })
           // Preserve existing blooms
-          const newBlooms = Array(newCount).fill('')
-          if (q.blooms) q.blooms.forEach((b, k) => { if (k < newCount) newBlooms[k] = b })
-          return { ...q, subCount: newCount, marks: newMarks, contents: newContents, blooms: newBlooms }
+          const newBlooms = Array(effectiveCount).fill('')
+          if (q.blooms) q.blooms.forEach((b, k) => { if (k < effectiveCount) newBlooms[k] = b })
+          // Preserve existing sub-question spacings
+          const defaultSubSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 1) : (q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+          const newSubSpaces = Array(effectiveCount).fill(defaultSubSpace)
+          if (Array.isArray(q.subSpaceRows)) {
+            q.subSpaceRows.forEach((sp, k) => { if (k < effectiveCount) newSubSpaces[k] = sp })
+          }
+          return { ...q, subCount: newCount, marks: newMarks, contents: newContents, blooms: newBlooms, subSpaceRows: newSubSpaces }
         })
       }
     }))
@@ -3015,6 +3357,65 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     }))
   }
 
+  const handlePaperStructureSetIndividualSubSpaceRows = (partIdx, qIdx, subIdx, rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount || 1
+          const currentArr = Array.isArray(q.subSpaceRows)
+            ? [...q.subSpaceRows]
+            : Array(count).fill(q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+          currentArr[subIdx] = newRows
+          return { ...q, subSpaceRows: currentArr }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetSubSpaceRows = (partIdx, qIdx, rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount || 1
+          return { ...q, subSpaceRows: Array(count).fill(newRows) }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetGlobalSubSpaceRows = (rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map(part => ({
+      ...part,
+      questions: part.questions.map(q => ({
+        ...q,
+        subSpaceRows: Array(q.subCount || 1).fill(newRows)
+      }))
+    })))
+  }
+
+  const handlePaperStructureSetQSpaceRows = (partIdx, qIdx, rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          return { ...q, qSpaceRows: newRows }
+        })
+      }
+    }))
+  }
+
   const handlePaperStructureSetSpaceRows = (partIdx, qIdx, rowsCount) => {
     const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
     setPaperStructureParts(prev => prev.map((part, i) => {
@@ -3023,7 +3424,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         ...part,
         questions: part.questions.map((q, j) => {
           if (j !== qIdx) return q
-          return { ...q, spaceRows: newRows }
+          const count = q.subCount || 1
+          return { ...q, spaceRows: newRows, subSpaceRows: Array(count).fill(newRows), qSpaceRows: newRows }
         })
       }
     }))
@@ -3033,7 +3435,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
     setPaperStructureParts(prev => prev.map(part => ({
       ...part,
-      questions: part.questions.map(q => ({ ...q, spaceRows: newRows }))
+      questions: part.questions.map(q => ({ ...q, spaceRows: newRows, subSpaceRows: Array(q.subCount || 1).fill(newRows), qSpaceRows: newRows }))
     })))
   }
 
@@ -3450,9 +3852,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       },
       '|',
       {
-        tooltipText: 'Fullscreen Editor (MS Word View)',
+        tooltipText: 'Fullscreen Editor (Toggle view)',
         template: '<button class="e-tbar-btn e-control e-btn e-lib" id="fullscreen-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg></button>',
-        click: () => setIsFullscreen(true)
+        click: handleToggleFullscreen
       },
       '|',
       {
@@ -3478,6 +3880,344 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       </div>
     )
   }
+
+  const renderSimilarityCheckerCard = (inFullscreen = false) => (
+    <div className={`bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 ${inFullscreen ? 'flex flex-col h-full overflow-hidden' : ''}`}>
+      <div className="flex items-center justify-between border-b pb-3 font-sans shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200/80 shadow-xs">
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <h3 className="text-lg font-extrabold text-gray-800">Question Similarity Checker</h3>
+            <p className="text-[11px] text-gray-500 font-medium">AI-powered originality analysis against archived papers</p>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-xs text-gray-600 font-medium leading-relaxed shrink-0">
+        Compare your current question paper with all archived question papers for this course across semesters, batches, and sections to check for repetitive questions or high content overlap.
+      </p>
+
+      {/* Run Check Action Button */}
+      <button
+        type="button"
+        onClick={handleRunSimilarityCheck}
+        disabled={similarityLoading}
+        className="w-full bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-800 hover:to-teal-900 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+      >
+        {similarityLoading ? (
+          <>
+            <Loader2 size={16} className="animate-spin text-emerald-200" />
+            <span>Analyzing Similarity with AI...</span>
+          </>
+        ) : (
+          <>
+            <Sparkles size={16} className="text-emerald-300" />
+            <span>{similarityResults ? 'Re-run Similarity Check' : 'Run Similarity Check'}</span>
+          </>
+        )}
+      </button>
+
+      {/* Error Message */}
+      {similarityError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2 animate-fadeIn shrink-0">
+          <AlertCircle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+          <span>{similarityError}</span>
+        </div>
+      )}
+
+      {/* Results Display Area */}
+      {similarityResults && (
+        <div className={`space-y-4 pt-1 animate-fadeIn ${inFullscreen ? 'flex-1 min-h-0 overflow-y-auto pr-1' : ''}`}>
+          {similarityResults.message ? (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs font-semibold text-amber-900 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <span>{similarityResults.message}</span>
+            </div>
+          ) : (() => {
+            const filteredList = (similarityResults.results || []).filter(item => item.overallSimilarity > 0 || (item.matchedQuestions && item.matchedQuestions.length > 0))
+            const currentSemList = filteredList.filter(item => item.isCurrentSemester)
+            const olderSemList = filteredList.filter(item => !item.isCurrentSemester)
+
+            const allResults = similarityResults.results || []
+            const totalCurrentCompared = allResults.filter(item => item.isCurrentSemester).length
+            const totalPreviousCompared = allResults.filter(item => !item.isCurrentSemester).length
+
+            // Priority logic for summary card:
+            // 1. If previous semester matches exist -> prioritize Previous Semesters
+            // 2. If no previous semester matches -> fall back to Current Semester
+            const hasPreviousMatches = olderSemList.length > 0
+            const primarySummaryList = hasPreviousMatches ? olderSemList : (currentSemList.length > 0 ? currentSemList : filteredList)
+            const summaryMaxSimilarity = primarySummaryList.length > 0
+              ? Math.max(...primarySummaryList.map(item => item.overallSimilarity))
+              : 0
+            const summaryCategoryLabel = hasPreviousMatches
+              ? 'Previous Semesters'
+              : (currentSemList.length > 0 ? 'Current Semester' : 'Overall')
+            const summaryMatchCount = primarySummaryList.length
+            const summaryTotalCompared = hasPreviousMatches ? totalPreviousCompared : (currentSemList.length > 0 ? totalCurrentCompared : similarityResults.totalArchivesCompared)
+
+            // Active list for current tab selection (defaulting to 'current' or 'previous')
+            const displayedList = similarityFilterTab === 'previous'
+              ? olderSemList
+              : currentSemList
+
+            if (filteredList.length === 0) {
+              return (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2 animate-fadeIn shadow-xs">
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto border border-emerald-300 shadow-2xs">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <h4 className="text-xs font-extrabold text-emerald-950 uppercase tracking-wider">🎉 High Originality — No Content Overlap Found</h4>
+                  <p className="text-xs text-emerald-800 font-semibold leading-relaxed">
+                    No similar questions were found across all <strong>{similarityResults.totalArchivesCompared} archived question papers</strong> for this course! Your question paper is 100% unique.
+                  </p>
+                </div>
+              )
+            }
+
+            return (
+              <>
+                {/* Overall Summary Card (Prioritizes Previous Semesters First) */}
+                <div className="p-4 rounded-xl border space-y-2.5 bg-slate-50/80 border-slate-200 shrink-0 shadow-2xs">
+                  <div className="flex items-center justify-between flex-wrap gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">Highest Similarity</span>
+                      <span className="text-[9px] font-extrabold text-slate-700 bg-slate-200/80 px-1.5 py-0.5 rounded border border-slate-300">
+                        {hasPreviousMatches ? 'Prioritized: Prev Semesters' : 'Current Semester'}
+                      </span>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-black border ${
+                      summaryMaxSimilarity > 60
+                        ? 'bg-rose-100 text-rose-900 border-rose-300'
+                        : summaryMaxSimilarity > 30
+                        ? 'bg-amber-100 text-amber-900 border-amber-300'
+                        : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                    }`}>
+                      {summaryMaxSimilarity}% Overlap
+                    </span>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        summaryMaxSimilarity > 60
+                          ? 'bg-rose-600'
+                          : summaryMaxSimilarity > 30
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-600'
+                      }`}
+                      style={{ width: `${Math.max(5, summaryMaxSimilarity)}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-gray-600 font-semibold pt-0.5 flex-wrap gap-1">
+                    <span>
+                      Found similarity in <strong>{summaryMatchCount}</strong> of <strong>{summaryTotalCompared}</strong> {summaryCategoryLabel.toLowerCase()} paper{summaryTotalCompared === 1 ? '' : 's'}
+                    </span>
+                    {summaryMaxSimilarity <= 25 ? (
+                      <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                        <CheckCircle2 size={12} /> Low Overlap
+                      </span>
+                    ) : summaryMaxSimilarity <= 60 ? (
+                      <span className="text-amber-700 font-extrabold flex items-center gap-1">
+                        <AlertTriangle size={12} /> Moderate Overlap
+                      </span>
+                    ) : (
+                      <span className="text-rose-700 font-extrabold flex items-center gap-1">
+                        <AlertCircle size={12} /> High Overlap Risk
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Semester Filter Tabs (2-Tab View: Current Semester vs Previous Semesters) */}
+                <div className="bg-slate-100 p-1 rounded-xl border border-slate-200/80 flex items-center gap-1 text-[11px] font-extrabold shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSimilarityFilterTab('current')}
+                    className={`flex-1 py-1.5 px-2 rounded-lg transition-all text-center cursor-pointer ${
+                      similarityFilterTab === 'current'
+                        ? 'bg-white text-emerald-900 shadow-xs border border-slate-200 font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Current Semester ({currentSemList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimilarityFilterTab('previous')}
+                    className={`flex-1 py-1.5 px-2 rounded-lg transition-all text-center cursor-pointer ${
+                      similarityFilterTab === 'previous'
+                        ? 'bg-white text-emerald-900 shadow-xs border border-slate-200 font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Previous Semesters ({olderSemList.length})
+                  </button>
+                </div>
+
+                {/* Archived Papers Breakdown List */}
+                <div className={`space-y-2.5 pr-1 ${inFullscreen ? '' : 'max-h-[400px] overflow-y-auto'}`}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                      Matched Archived Papers ({displayedList.length})
+                    </p>
+                    <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {similarityFilterTab === 'previous' ? 'Previous Semesters Only' : 'Current Semester Only'}
+                    </span>
+                  </div>
+
+                  {displayedList.length === 0 ? (
+                    <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-500 font-semibold">
+                      No matching question similarity found in {similarityFilterTab === 'previous' ? 'previous semesters' : 'current semester'}.
+                    </div>
+                  ) : (
+                    displayedList.map((item) => {
+                      const isExpanded = expandedArchiveId === item.archiveId || displayedList.length === 1
+                    return (
+                      <div
+                        key={item.archiveId}
+                        className="border rounded-xl bg-white shadow-2xs overflow-hidden transition-all border-gray-200 hover:border-emerald-300"
+                      >
+                        {/* Archive Item Header */}
+                        <div
+                          onClick={() => setExpandedArchiveId(isExpanded ? null : item.archiveId)}
+                          className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                        >
+                          <div className="space-y-0.5 min-w-0 pr-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-xs text-slate-800">{item.assessmentName}</span>
+                              <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-bold border border-slate-200">
+                                {item.semester}
+                              </span>
+                              {item.section && (
+                                <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold border border-indigo-200">
+                                  Sec {item.section}
+                                </span>
+                              )}
+                            </div>
+                            {item.summary && (
+                              <p className="text-[11px] text-gray-500 truncate font-medium">{item.summary}</p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-xs font-black px-2 py-0.5 rounded-lg border ${
+                              item.overallSimilarity > 60
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : item.overallSimilarity > 30
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}>
+                              {item.overallSimilarity}%
+                            </span>
+                            {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                          </div>
+                        </div>
+
+                        {/* Expanded Details */}
+                        {isExpanded && (
+                          <div className="p-3 bg-slate-50/50 border-t border-gray-150 space-y-3 text-xs">
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">AI Summary Verdict</span>
+                              <p className="text-gray-700 font-semibold leading-relaxed bg-white p-2.5 rounded-lg border border-gray-200 text-[11px]">
+                                {item.summary || 'Content overlap detected.'}
+                              </p>
+                            </div>
+
+                            {item.matchedQuestions && item.matchedQuestions.length > 0 && (
+                              <div className="space-y-2.5">
+                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Matched Question Breakdown</span>
+                                {item.matchedQuestions.map((match, mIdx) => (
+                                  <div key={mIdx} className="bg-white p-3 rounded-xl border border-gray-200 space-y-2.5 shadow-2xs">
+                                    {/* Pair Header & Score */}
+                                    <div className="flex items-center justify-between border-b pb-1.5 border-gray-100">
+                                      <span className="text-[11px] font-extrabold text-slate-800 flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                        Match Pair #{mIdx + 1}
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                                          {match.similarity}% similar
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setComparisonModalData({
+                                              currentQ: match.currentQ,
+                                              archivedQ: match.archivedQ,
+                                              explanation: match.explanation,
+                                              similarity: match.similarity,
+                                              archiveInfo: `${item.assessmentName} — ${item.semester} (Sec ${item.section})`
+                                            })
+                                          }}
+                                          className="text-[10px] font-extrabold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                          title="Inspect full text side-by-side"
+                                        >
+                                          <Maximize2 size={11} /> Compare Side-by-Side
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Horizontal Side-by-Side Comparison Grid */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                      {/* Left Column: Current Question */}
+                                      <div className="bg-emerald-50/50 p-2.5 rounded-lg border border-emerald-200/80 space-y-1">
+                                        <div className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span> Current Paper
+                                        </div>
+                                        <p className="text-slate-800 font-semibold text-[11px] leading-snug">
+                                          {match.currentQ}
+                                        </p>
+                                      </div>
+
+                                      {/* Right Column: Archived Question */}
+                                      <div className="bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-200/80 space-y-1">
+                                        <div className="text-[10px] font-extrabold text-indigo-800 uppercase tracking-wider flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span> Archived Paper
+                                        </div>
+                                        <p className="text-slate-800 font-semibold text-[11px] leading-snug">
+                                          {match.archivedQ}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    {/* Explanation */}
+                                    {match.explanation && (
+                                      <div className="bg-slate-50 p-2 rounded-lg text-[10px] text-gray-600 font-medium italic border border-slate-200">
+                                        💡 <strong>AI Analysis:</strong> {match.explanation}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }))}
+                </div>
+
+                {/* Clear / Dismiss Action */}
+                <button
+                  type="button"
+                  onClick={() => setSimilarityResults(null)}
+                  className="w-full text-xs font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 py-1.5 rounded-lg transition-colors cursor-pointer text-center shrink-0"
+                >
+                  Clear Results
+                </button>
+              </>
+            )
+          })()}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -3568,9 +4308,19 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       )}
 
       {error && (
-        <div className="p-4 rounded-xl flex items-center gap-3 bg-red-50 text-red-700 border border-red-200 shadow-sm font-medium">
-          <AlertCircle size={20} />
-          {error}
+        <div className="p-4 rounded-xl flex items-center justify-between gap-3 bg-rose-50 text-rose-800 border border-rose-200 shadow-sm font-semibold animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <AlertCircle size={20} className="shrink-0 text-rose-600" />
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadPaperData}
+            className="px-3 py-1.5 bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 shadow-2xs cursor-pointer"
+          >
+            <RefreshCw size={13} className="text-rose-600" />
+            <span>Retry</span>
+          </button>
         </div>
       )}
 
@@ -3774,17 +4524,37 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             />
           </div>
 
-          {/* Syncfusion Editor */}
-          <div 
-            className={isFullscreen 
-              ? 'fixed inset-0 z-[9999] flex flex-col' 
-              : 'bg-white rounded-2xl shadow-md border border-gray-150 p-4'
-            }
-            style={isFullscreen ? { background: '#d6d6d6' } : {}}
-          >
-            {/* Fullscreen Top Bar */}
-            {isFullscreen && (
-              <div className="bg-gray-800 text-white px-6 py-3 flex items-center justify-between shadow-lg shrink-0">
+          {/* Syncfusion Editor (Inline Normal View) */}
+          {!isFullscreen && (
+            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-4">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Question Paper Content</h3>
+              <RichTextEditorComponent
+                ref={rteRef}
+                value={editorValue}
+                change={(e) => { if (e && e.value !== undefined) setEditorValue(e.value) }}
+                actionBegin={onActionBegin}
+                toolbarSettings={toolbarSettings}
+                quickToolbarSettings={quickToolbarSettings}
+                insertImageSettings={insertImageSettings}
+                imageUploading={onImageUploading}
+                imageUploadSuccess={onImageUploadSuccess}
+                imageUploadFailed={onImageUploadFailed}
+                dialogOpen={onDialogOpen}
+                height={780}
+                showCharCount={true}
+                maxLength={50000}
+                pasteCleanupSettings={pasteCleanupConfig}
+              >
+                <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, PasteCleanup, Count]} />
+              </RichTextEditorComponent>
+            </div>
+          )}
+
+          {/* Fullscreen Overlay - Portaled directly to document.body for guaranteed zero top gap & visible status bar */}
+          {isFullscreen && createPortal(
+            <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen z-[999999] flex flex-col bg-[#d6d6d6] overflow-hidden select-none">
+              {/* Fullscreen Top Bar */}
+              <div className="bg-gray-800 text-white px-6 py-2 flex items-center justify-between shadow-lg shrink-0 h-[48px] z-10">
                 <div className="flex items-center gap-3">
                   <span className="text-lg">📄</span>
                   <div>
@@ -3793,59 +4563,64 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={savePaper} disabled={saving || uploadingCount > 0} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50">
+                  <button onClick={savePaper} disabled={saving || uploadingCount > 0} className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50">
                     <Save size={14} /> Save
                   </button>
-                  <button onClick={handleExportWord} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all">
+                  <button onClick={handleExportWord} className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all">
                     <FileDown size={14} /> Word
                   </button>
-                  <button onClick={handlePrint} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all">
+                  <button onClick={handlePrint} className="flex items-center gap-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-all">
                     <Printer size={14} /> Print/PDF
                   </button>
-                  <div className="w-px h-6 bg-gray-600 mx-1"></div>
-                  <button onClick={() => setIsFullscreen(false)} className="p-1.5 hover:bg-gray-700 rounded-lg text-gray-300 hover:text-white transition-all" title="Exit Fullscreen (ESC)">
+                  <div className="w-px h-5 bg-gray-600 mx-1"></div>
+                  <button onClick={handleToggleFullscreen} className="p-1 hover:bg-gray-700 rounded-lg text-gray-300 hover:text-white transition-all" title="Exit Fullscreen (ESC)">
                     <X size={18} />
                   </button>
                 </div>
               </div>
-            )}
 
-            {/* Editor Content Area */}
-            <div className={isFullscreen ? 'flex-1 overflow-auto flex justify-center py-8 px-4' : ''}>
-              <div className={isFullscreen ? 'w-full max-w-[900px] bg-white shadow-2xl rounded-sm' : ''}>
-                {!isFullscreen && <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Question Paper Content</h3>}
-                <RichTextEditorComponent
-                  ref={rteRef}
-                  value={editorValue}
-                  actionBegin={onActionBegin}
-                  toolbarSettings={toolbarSettings}
-                  quickToolbarSettings={quickToolbarSettings}
-                  insertImageSettings={insertImageSettings}
-                  imageUploading={onImageUploading}
-                  imageUploadSuccess={onImageUploadSuccess}
-                  imageUploadFailed={onImageUploadFailed}
-                  dialogOpen={onDialogOpen}
-                  height={isFullscreen ? 'calc(100vh - 180px)' : 500}
-                  showCharCount={true}
-                  maxLength={50000}
-                  pasteCleanupSettings={pasteCleanupConfig}
-                >
-                  <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, PasteCleanup, Count]} />
-                </RichTextEditorComponent>
+              {/* Middle Flex Container (Editor + Similarity Checker) */}
+              <div className="flex-1 min-h-0 overflow-hidden flex justify-center items-stretch gap-6 p-4">
+                {/* Left: Text Editor Container */}
+                <div className="w-full max-w-[880px] bg-white shadow-2xl rounded-sm flex flex-col h-full overflow-hidden shrink-0">
+                  <RichTextEditorComponent
+                    ref={rteRef}
+                    value={editorValue}
+                    change={(e) => { if (e && e.value !== undefined) setEditorValue(e.value) }}
+                    actionBegin={onActionBegin}
+                    toolbarSettings={toolbarSettings}
+                    quickToolbarSettings={quickToolbarSettings}
+                    insertImageSettings={insertImageSettings}
+                    imageUploading={onImageUploading}
+                    imageUploadSuccess={onImageUploadSuccess}
+                    imageUploadFailed={onImageUploadFailed}
+                    dialogOpen={onDialogOpen}
+                    height="100%"
+                    showCharCount={true}
+                    maxLength={50000}
+                    pasteCleanupSettings={pasteCleanupConfig}
+                  >
+                    <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, PasteCleanup, Count]} />
+                  </RichTextEditorComponent>
+                </div>
+
+                {/* Right: Similarity Checker Container (NO outer scrollbar, height matches editor exactly) */}
+                <div className="w-[380px] shrink-0 h-full overflow-hidden">
+                  {renderSimilarityCheckerCard(true)}
+                </div>
               </div>
-            </div>
 
-            {/* Fullscreen Status Bar */}
-            {isFullscreen && (
-              <div className="bg-gray-700 text-gray-300 px-6 py-2 text-xs flex justify-between items-center shrink-0">
+              {/* Fullscreen Bottom Status Bar - ALWAYS VISIBLE AT BOTTOM */}
+              <div className="bg-gray-700 text-gray-300 px-6 py-2 text-xs flex justify-between items-center shrink-0 border-t border-gray-600 h-[36px] z-10">
                 <span>Press <kbd className="px-1.5 py-0.5 bg-gray-600 rounded text-gray-200 font-mono text-[10px]">ESC</kbd> to exit fullscreen</span>
-                <span><kbd className="px-1.5 py-0.5 bg-gray-600 rounded text-gray-200 font-mono text-[10px]">Ctrl+S</kbd> to save</span>
+                <span className="text-gray-400 italic font-medium">A product of Syncfusion modified by the developers</span>
               </div>
-            )}
-          </div>
+            </div>,
+            document.body
+          )}
         </div>
 
-        {/* Metadata Panel (Right side) */}
+        {/* Metadata Panel (Right side in Normal View) */}
         <div className="space-y-6">
           {/* Assessment Settings Card */}
           <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
@@ -3935,7 +4710,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             {questions.length === 0 ? (
               <p className="text-sm text-gray-500 font-semibold text-center py-6">No questions configured. Set the number of questions in assessment settings above.</p>
             ) : (
-              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
+              <div className="space-y-4 max-h-[450px] overflow-y-auto pr-1">
                 {questions.map((q, idx) => (
                   <div key={q.questionNumber} className="border p-4 rounded-xl space-y-3 bg-gray-50/30">
                     <div className="flex justify-between items-center border-b pb-1.5">
@@ -3997,18 +4772,23 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               </div>
             </div>
           </div>
+
+          {/* Question Similarity Checker Card (Normal View Sidebar) */}
+          {renderSimilarityCheckerCard(false)}
         </div>
       </div>
 
       {/* AI Processing Overlay */}
       {aiProcessing && (
-        <div className="fixed inset-0 z-[10000] bg-black/30 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-2xl p-8 flex flex-col items-center gap-4 border">
-            <Loader2 className="animate-spin text-emerald-600" size={36} />
-            <p className="text-gray-700 font-bold text-sm">AI is processing your text...</p>
-            <p className="text-gray-400 text-xs">This may take a few seconds</p>
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/30 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 flex flex-col items-center gap-4 border">
+              <Loader2 className="animate-spin text-emerald-600" size={36} />
+              <p className="text-gray-700 font-bold text-sm">AI is processing your text...</p>
+              <p className="text-gray-400 text-xs">This may take a few seconds</p>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* AI Commands Dropdown Menu (System Theme) */}
@@ -4129,1191 +4909,1250 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         const isStructured = aiPreview.suggestedText.includes('\n')
 
         return (
-          <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-              {/* Modal Header (System Theme) */}
-              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                    <Sparkles size={20} className="text-emerald-300" />
+          <ModalPortal>
+            <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+                {/* Modal Header (System Theme) */}
+                <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                      <Sparkles size={20} className="text-emerald-300" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-base leading-tight">AI Revision Review</h3>
+                      <p className="text-xs text-emerald-200">{aiPreview.commandLabel}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-extrabold text-base leading-tight">AI Revision Review</h3>
-                    <p className="text-xs text-emerald-200">{aiPreview.commandLabel}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleRejectAiSuggestion}
-                  className="p-1 hover:bg-white/20 rounded-lg transition-colors text-emerald-100 hover:text-white"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Modal Content - Comparison */}
-              <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto bg-gray-50/60">
-                {/* Original Text with Deletion Highlights */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-gray-500">
-                    <span>Original Text</span>
-                    <span className="text-[10px] text-gray-400 font-normal">Original selection</span>
-                  </div>
-                  <div className="p-4 bg-red-50/40 border border-red-200/80 rounded-xl text-sm text-gray-700 leading-relaxed font-sans">
-                    {oldDiff.map((item, idx) => (
-                      item.type === 'del' ? (
-                        <mark key={idx} className="bg-red-100 text-red-800 font-semibold line-through px-1 py-0.5 rounded mx-0.5 border border-red-300">
-                          {item.text}
-                        </mark>
-                      ) : (
-                        <span key={idx}>{item.text}</span>
-                      )
-                    ))}
-                  </div>
+                  <button
+                    onClick={handleRejectAiSuggestion}
+                    className="p-1 hover:bg-white/20 rounded-lg transition-colors text-emerald-100 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
 
-                {/* AI Suggested Text with Word Addition Highlights / Structured HTML */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-800">
-                    <span className="flex items-center gap-1.5">✨ AI Suggested Revision</span>
-                    <span className="text-[10px] text-emerald-600 font-normal">New version</span>
-                  </div>
-                  <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-xl text-sm text-gray-800 leading-relaxed font-sans">
-                    {isStructured ? (
-                      <div
-                        className="prose prose-sm max-w-none text-gray-800 space-y-2"
-                        dangerouslySetInnerHTML={{ __html: formattedHtml }}
-                      />
-                    ) : (
-                      newDiff.map((item, idx) => (
-                        item.type === 'add' ? (
-                          <mark key={idx} className="bg-emerald-100 text-emerald-900 font-semibold px-1 py-0.5 rounded mx-0.5 border border-emerald-300">
+                {/* Modal Content - Comparison */}
+                <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto bg-gray-50/60">
+                  {/* Original Text with Deletion Highlights */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-gray-500">
+                      <span>Original Text</span>
+                      <span className="text-[10px] text-gray-400 font-normal">Original selection</span>
+                    </div>
+                    <div className="p-4 bg-red-50/40 border border-red-200/80 rounded-xl text-sm text-gray-700 leading-relaxed font-sans">
+                      {oldDiff.map((item, idx) => (
+                        item.type === 'del' ? (
+                          <mark key={idx} className="bg-red-100 text-red-800 font-semibold line-through px-1 py-0.5 rounded mx-0.5 border border-red-300">
                             {item.text}
                           </mark>
                         ) : (
                           <span key={idx}>{item.text}</span>
                         )
-                      ))
-                    )}
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* AI Suggested Text with Word Addition Highlights / Structured HTML */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-800">
+                      <span className="flex items-center gap-1.5">✨ AI Suggested Revision</span>
+                      <span className="text-[10px] text-emerald-600 font-normal">New version</span>
+                    </div>
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-xl text-sm text-gray-800 leading-relaxed font-sans">
+                      {isStructured ? (
+                        <div
+                          className="prose prose-sm max-w-none text-gray-800 space-y-2"
+                          dangerouslySetInnerHTML={{ __html: formattedHtml }}
+                        />
+                      ) : (
+                        newDiff.map((item, idx) => (
+                          item.type === 'add' ? (
+                            <mark key={idx} className="bg-emerald-100 text-emerald-900 font-semibold px-1 py-0.5 rounded mx-0.5 border border-emerald-300">
+                              {item.text}
+                            </mark>
+                          ) : (
+                            <span key={idx}>{item.text}</span>
+                          )
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Modal Footer / Action Buttons */}
-              <div className="px-6 py-4 bg-white border-t border-gray-100 flex items-center justify-end gap-3">
-                <button
-                  onClick={handleRejectAiSuggestion}
-                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5"
-                >
-                  <X size={16} /> Reject
-                </button>
-                <button
-                  onClick={handleAcceptAiSuggestion}
-                  className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl font-bold text-xs transition-all shadow-md hover:shadow-lg flex items-center gap-1.5"
-                >
-                  <Check size={16} /> Accept & Replace
-                </button>
+                {/* Modal Footer / Action Buttons */}
+                <div className="px-6 py-4 bg-white border-t border-gray-100 flex items-center justify-end gap-3">
+                  <button
+                    onClick={handleRejectAiSuggestion}
+                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5"
+                  >
+                    <X size={16} /> Reject
+                  </button>
+                  <button
+                    onClick={handleAcceptAiSuggestion}
+                    className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl font-bold text-xs transition-all shadow-md hover:shadow-lg flex items-center gap-1.5"
+                  >
+                    <Check size={16} /> Accept & Replace
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          </ModalPortal>
         )
       })()}
 
       {/* 🎯 Modal 1: Automated Question Generator (Enhanced) */}
-      {/* 🎯 Modal 1: Automated Question Generator (Enhanced) */}
       {showQuestionGenModal && (
-        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                  <Target size={20} className="text-emerald-300" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-base leading-tight">Automated Question Generator</h3>
-                  <p className="text-xs text-emerald-200">Generate OBE exam questions aligned with COs & Bloom's Taxonomy</p>
-                </div>
-              </div>
-              <button onClick={() => setShowQuestionGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
-              <div className="grid grid-cols-4 gap-3">
-                <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Assessment Type</label>
-                  <select
-                    value={questionGenParams.examType}
-                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, examType: e.target.value })}
-                    className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
-                  >
-                    <option value="Class Test (CT)">Class Test (CT)</option>
-                    <option value="Mid Term Exam">Mid Term Exam</option>
-                    <option value="Final Exam">Final Exam</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Target CO</label>
-                  <select
-                    value={questionGenParams.selectedCo}
-                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, selectedCo: e.target.value })}
-                    className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs text-gray-800"
-                  >
-                    <option value="">Any / General CO</option>
-                    {availableCOs.map(co => {
-                      const details = coDetails.find(d => d.code === co)
-                      const descSnippet = details && details.description ? ` (${details.description.substring(0, 32)}${details.description.length > 32 ? '...' : ''})` : ''
-                      return (
-                        <option key={co} value={co}>{co}{descSnippet}</option>
-                      )
-                    })}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Total Marks</label>
-                  <input
-                    type="number"
-                    value={questionGenParams.totalMarks}
-                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, totalMarks: parseInt(e.target.value) || 10 })}
-                    className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Bloom's Taxonomy</label>
-                  <select
-                    value={questionGenParams.bloomLevel}
-                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, bloomLevel: e.target.value })}
-                    className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
-                  >
-                    <option value="C1 - Remember">C1 - Remember (Define, List)</option>
-                    <option value="C2 - Understand">C2 - Understand (Explain, Discuss)</option>
-                    <option value="C3 - Apply">C3 - Apply (Calculate, Solve)</option>
-                    <option value="C4 - Analyze">C4 - Analyze (Compare, Contrast)</option>
-                    <option value="C5 - Evaluate">C5 - Evaluate (Justify, Appraise)</option>
-                    <option value="C6 - Create">C6 - Create (Design, Formulate)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* CO Details & Statement Info Card */}
-              {(() => {
-                const selectedCoObj = coDetails.find(item => item.code === questionGenParams.selectedCo)
-                if (!selectedCoObj || !questionGenParams.selectedCo) return null
-
-                return (
-                  <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
-                    <div className="p-1 bg-emerald-100 text-emerald-800 rounded-lg shrink-0 mt-0.5">
-                      <Sparkles size={14} />
-                    </div>
-                    <div>
-                      <span className="font-extrabold text-emerald-900">{selectedCoObj.code} Details: </span>
-                      <span className="font-medium text-emerald-800">
-                        {selectedCoObj.description || `Course Outcome ${selectedCoObj.code.replace('CO', '')} for ${offering?.course?.name || 'this course'}.`}
-                      </span>
-                    </div>
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <Target size={20} className="text-emerald-300" />
                   </div>
-                )
-              })()}
-
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1">Number of Question Options to Generate</label>
-                <div className="flex gap-3 items-center">
-                  {[1, 2, 3, 4, 5].map(n => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setQuestionGenParams({ ...questionGenParams, numQuestions: n })}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${questionGenParams.numQuestions === n ? 'bg-emerald-700 text-white border-emerald-800 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                    >
-                      Generate {n} Option{n > 1 ? 's' : ''}
-                    </button>
-                  ))}
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">Automated Question Generator</h3>
+                    <p className="text-xs text-emerald-200">Generate OBE exam questions aligned with COs & Bloom's Taxonomy</p>
+                  </div>
                 </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1">Topic / Syllabus Requirements <span className="text-red-500">*</span></label>
-                <textarea
-                  rows="3"
-                  value={questionGenParams.topic}
-                  onChange={(e) => setQuestionGenParams({ ...questionGenParams, topic: e.target.value })}
-                  placeholder="e.g. 0/1 Knapsack problem using Dynamic Programming vs Greedy strategy, recurrence relation, and Big-O time complexity"
-                  className="w-full border border-gray-300 p-3 rounded-xl bg-white font-sans text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1">Optional Reference / Sample Style</label>
-                <textarea
-                  rows="2"
-                  value={questionGenParams.sampleQuestion}
-                  onChange={(e) => setQuestionGenParams({ ...questionGenParams, sampleQuestion: e.target.value })}
-                  placeholder="Paste an example question style if you want AI to mimic its structure..."
-                  className="w-full border border-gray-300 p-2.5 rounded-xl bg-white font-sans text-xs"
-                />
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  onClick={handleGenerateQuestion}
-                  disabled={isGeneratingQuestion}
-                  className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow disabled:opacity-50"
-                >
-                  {isGeneratingQuestion ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                  {isGeneratingQuestion ? 'Generating Questions...' : '✨ Generate Questions with AI'}
+                <button onClick={() => setShowQuestionGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                  <X size={20} />
                 </button>
               </div>
 
-              {/* Generated Question Option Cards & Selector */}
-              {questionGenResults.length > 0 && (
-                <div className="space-y-3 pt-3 border-t border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
-                      <Check size={14} /> Generated Question Options ({questionGenResults.length})
-                    </span>
-                    <span className="text-[11px] text-gray-500 font-semibold">Select an option to insert</span>
+              <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Assessment Type</label>
+                    <select
+                      value={questionGenParams.examType}
+                      onChange={(e) => setQuestionGenParams({ ...questionGenParams, examType: e.target.value })}
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
+                    >
+                      <option value="Class Test (CT)">Class Test (CT)</option>
+                      <option value="Mid Term Exam">Mid Term Exam</option>
+                      <option value="Final Exam">Final Exam</option>
+                    </select>
                   </div>
 
-                  {/* Tabs / Selection Cards */}
-                  <div className="flex gap-2 border-b border-gray-200 pb-2">
-                    {questionGenResults.map((_, idx) => (
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Target CO</label>
+                    <select
+                      value={questionGenParams.selectedCo}
+                      onChange={(e) => setQuestionGenParams({ ...questionGenParams, selectedCo: e.target.value })}
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs text-gray-800"
+                    >
+                      <option value="">Any / General CO</option>
+                      {availableCOs.map(co => {
+                        const details = coDetails.find(d => d.code === co)
+                        const descSnippet = details && details.description ? ` (${details.description.substring(0, 32)}${details.description.length > 32 ? '...' : ''})` : ''
+                        return (
+                          <option key={co} value={co}>{co}{descSnippet}</option>
+                        )
+                      })}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Total Marks</label>
+                    <input
+                      type="number"
+                      value={questionGenParams.totalMarks}
+                      onChange={(e) => setQuestionGenParams({ ...questionGenParams, totalMarks: parseInt(e.target.value) || 10 })}
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Bloom's Taxonomy</label>
+                    <select
+                      value={questionGenParams.bloomLevel}
+                      onChange={(e) => setQuestionGenParams({ ...questionGenParams, bloomLevel: e.target.value })}
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
+                    >
+                      <option value="C1 - Remember">C1 - Remember (Define, List)</option>
+                      <option value="C2 - Understand">C2 - Understand (Explain, Discuss)</option>
+                      <option value="C3 - Apply">C3 - Apply (Calculate, Solve)</option>
+                      <option value="C4 - Analyze">C4 - Analyze (Compare, Contrast)</option>
+                      <option value="C5 - Evaluate">C5 - Evaluate (Justify, Appraise)</option>
+                      <option value="C6 - Create">C6 - Create (Design, Formulate)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* CO Details & Statement Info Card */}
+                {(() => {
+                  const selectedCoObj = coDetails.find(item => item.code === questionGenParams.selectedCo)
+                  if (!selectedCoObj || !questionGenParams.selectedCo) return null
+
+                  return (
+                    <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
+                      <div className="p-1 bg-emerald-100 text-emerald-800 rounded-lg shrink-0 mt-0.5">
+                        <Sparkles size={14} />
+                      </div>
+                      <div>
+                        <span className="font-extrabold text-emerald-900">{selectedCoObj.code} Details: </span>
+                        <span className="font-medium text-emerald-800">
+                          {selectedCoObj.description || `Course Outcome ${selectedCoObj.code.replace('CO', '')} for ${offering?.course?.name || 'this course'}.`}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                <div>
+                  <label className="block font-bold text-gray-700 text-xs mb-1">Number of Question Options to Generate</label>
+                  <div className="flex gap-3 items-center">
+                    {[1, 2, 3, 4, 5].map(n => (
                       <button
-                        key={idx}
-                        onClick={() => setSelectedQuestionIndex(idx)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedQuestionIndex === idx ? 'bg-emerald-800 text-white border-emerald-900 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-emerald-50'}`}
+                        key={n}
+                        type="button"
+                        onClick={() => setQuestionGenParams({ ...questionGenParams, numQuestions: n })}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${questionGenParams.numQuestions === n ? 'bg-emerald-700 text-white border-emerald-800 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
                       >
-                        Option #{idx + 1}
+                        Generate {n} Option{n > 1 ? 's' : ''}
                       </button>
                     ))}
                   </div>
+                </div>
 
-                  {/* Selected Question Card Content */}
-                  <div
-                    className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-gray-800 leading-relaxed font-sans shadow-inner"
-                    dangerouslySetInnerHTML={{ __html: formatAiTextToHtml(questionGenResults[selectedQuestionIndex] || '') }}
+                <div>
+                  <label className="block font-bold text-gray-700 text-xs mb-1">Topic / Syllabus Requirements <span className="text-red-500">*</span></label>
+                  <textarea
+                    rows="3"
+                    value={questionGenParams.topic}
+                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, topic: e.target.value })}
+                    placeholder="e.g. 0/1 Knapsack problem using Dynamic Programming vs Greedy strategy, recurrence relation, and Big-O time complexity"
+                    className="w-full border border-gray-300 p-3 rounded-xl bg-white font-sans text-xs"
                   />
                 </div>
-              )}
-            </div>
 
-            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
-              <button onClick={() => setShowQuestionGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
-                Cancel
-              </button>
-              {questionGenResults.length > 0 && (
-                <button onClick={handleInsertQuestionResult} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                  <Plus size={16} /> Insert Selected Question into Paper
+                <div>
+                  <label className="block font-bold text-gray-700 text-xs mb-1">Optional Reference / Sample Style</label>
+                  <textarea
+                    rows="2"
+                    value={questionGenParams.sampleQuestion}
+                    onChange={(e) => setQuestionGenParams({ ...questionGenParams, sampleQuestion: e.target.value })}
+                    placeholder="Paste an example question style if you want AI to mimic its structure..."
+                    className="w-full border border-gray-300 p-2.5 rounded-xl bg-white font-sans text-xs"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleGenerateQuestion}
+                    disabled={isGeneratingQuestion}
+                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow disabled:opacity-50"
+                  >
+                    {isGeneratingQuestion ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                    {isGeneratingQuestion ? 'Generating Questions...' : '✨ Generate Questions with AI'}
+                  </button>
+                </div>
+
+                {/* Generated Question Option Cards & Selector */}
+                {questionGenResults.length > 0 && (
+                  <div className="space-y-3 pt-3 border-t border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                        <Check size={14} /> Generated Question Options ({questionGenResults.length})
+                      </span>
+                      <span className="text-[11px] text-gray-500 font-semibold">Select an option to insert</span>
+                    </div>
+
+                    {/* Tabs / Selection Cards */}
+                    <div className="flex gap-2 border-b border-gray-200 pb-2">
+                      {questionGenResults.map((_, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setSelectedQuestionIndex(idx)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedQuestionIndex === idx ? 'bg-emerald-800 text-white border-emerald-900 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-emerald-50'}`}
+                        >
+                          Option #{idx + 1}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Selected Question Card Content */}
+                    <div
+                      className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-gray-800 leading-relaxed font-sans shadow-inner"
+                      dangerouslySetInnerHTML={{ __html: formatAiTextToHtml(questionGenResults[selectedQuestionIndex] || '') }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
+                <button onClick={() => setShowQuestionGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
+                  Cancel
                 </button>
-              )}
+                {questionGenResults.length > 0 && (
+                  <button onClick={handleInsertQuestionResult} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
+                    <Plus size={16} /> Insert Selected Question into Paper
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* 🕸️ Modal 2: Automated Graph Diagram Generator (B&W Theme Default + Interactive Drag & Drop) */}
       {showGraphGenModal && (
-        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                  <Share2 size={20} className="text-emerald-300" />
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <Share2 size={20} className="text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">Automated Graph & Tree Generator</h3>
+                    <p className="text-xs text-emerald-200">Create vector SVG trees, maps & weighted graphs for exam papers</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-base leading-tight">Automated Graph & Tree Generator</h3>
-                  <p className="text-xs text-emerald-200">Create vector SVG trees, maps & weighted graphs for exam papers</p>
-                </div>
-              </div>
-              <button onClick={() => setShowGraphGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto bg-gray-50/50 text-sm">
-              {/* Presets */}
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1.5">Quick Academic Presets</label>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => {
-                      setGraphType('tree')
-                      setCustomNodePositions({})
-                      const text = '15-35\n15-9\n15-40\n35-3\n35-6\n40-5\n40-7\n3-1\n3-10\n5-8\n5-4\n5-41'
-                      setGraphEdgesText(text)
-                      setEdgeRows([
-                        { from: '15', to: '35', weight: '' }, { from: '15', to: '9', weight: '' }, { from: '15', to: '40', weight: '' },
-                        { from: '35', to: '3', weight: '' }, { from: '35', to: '6', weight: '' },
-                        { from: '40', to: '5', weight: '' }, { from: '40', to: '7', weight: '' },
-                        { from: '3', to: '1', weight: '' }, { from: '3', to: '10', weight: '' },
-                        { from: '5', to: '8', weight: '' }, { from: '5', to: '4', weight: '' }, { from: '5', to: '41', weight: '' }
-                      ])
-                    }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
-                  >
-                    🌳 Tree (Hierarchical)
-                  </button>
-                  <button
-                    onClick={() => {
-                      setGraphType('map')
-                      setCustomNodePositions({})
-                      const text = 'ORADEA-ZERIND: 71\nZERIND-ARAD: 75\nARAD-SIBIU: 140\nSIBIU-FAGARAS: 99\nSIBIU-RIMNICU: 80\nRIMNICU-PITESTI: 97\nPITESTI-BUCHAREST: 101\nBUCHAREST-URZICENI: 85\nURZICENI-VASLUI: 142\nVASLUI-IASI: 92\nIASI-NEAMT: 87'
-                      setGraphEdgesText(text)
-                      setEdgeRows([
-                        { from: 'ORADEA', to: 'ZERIND', weight: '71' }, { from: 'ZERIND', to: 'ARAD', weight: '75' }, { from: 'ARAD', to: 'SIBIU', weight: '140' },
-                        { from: 'SIBIU', to: 'FAGARAS', weight: '99' }, { from: 'SIBIU', to: 'RIMNICU', weight: '80' }, { from: 'RIMNICU', to: 'PITESTI', weight: '97' },
-                        { from: 'PITESTI', to: 'BUCHAREST', weight: '101' }, { from: 'BUCHAREST', to: 'URZICENI', weight: '85' }, { from: 'URZICENI', to: 'VASLUI', weight: '142' },
-                        { from: 'VASLUI', to: 'IASI', weight: '92' }, { from: 'IASI', to: 'NEAMT', weight: '87' }
-                      ])
-                    }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
-                  >
-                    🗺️ Map / Romania Network
-                  </button>
-                  <button
-                    onClick={() => {
-                      setGraphType('directed')
-                      setCustomNodePositions({})
-                      setGraphEdgesText('A-B: 10\nB-C: 15\nC-D: 20\nD-A: 5')
-                      setEdgeRows([{ from: 'A', to: 'B', weight: '10' }, { from: 'B', to: 'C', weight: '15' }, { from: 'C', to: 'D', weight: '20' }, { from: 'D', to: 'A', weight: '5' }])
-                    }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
-                  >
-                    ⚖️ Node Weighted Graph
-                  </button>
-                  <button
-                    onClick={() => {
-                      setGraphType('undirected')
-                      setCustomNodePositions({})
-                      setGraphEdgesText('1-2: 4\n1-3: 2\n2-3: 1\n2-4: 5\n3-4: 8')
-                      setEdgeRows([{ from: '1', to: '2', weight: '4' }, { from: '1', to: '3', weight: '2' }, { from: '2', to: '3', weight: '1' }, { from: '2', to: '4', weight: '5' }, { from: '3', to: '4', weight: '8' }])
-                    }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
-                  >
-                    🕸️ Undirected Network
-                  </button>
-                </div>
+                <button onClick={() => setShowGraphGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                  <X size={20} />
+                </button>
               </div>
 
-              {/* Theme & Direction Controls */}
-              <div className="grid grid-cols-2 gap-3 p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto bg-gray-50/50 text-sm">
+                {/* Presets */}
                 <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Color Theme</label>
-                  <div className="flex gap-2">
+                  <label className="block font-bold text-gray-700 text-xs mb-1.5">Quick Academic Presets</label>
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      type="button"
-                      onClick={() => setGraphTheme('bw')}
-                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${graphTheme === 'bw' ? 'bg-gray-900 text-white border-black shadow' : 'bg-gray-100 text-gray-700 border-gray-300'}`}
+                      onClick={() => {
+                        setGraphType('tree')
+                        setCustomNodePositions({})
+                        const text = '15-35\n15-9\n15-40\n35-3\n35-6\n40-5\n40-7\n3-1\n3-10\n5-8\n5-4\n5-41'
+                        setGraphEdgesText(text)
+                        setEdgeRows([
+                          { from: '15', to: '35', weight: '' }, { from: '15', to: '9', weight: '' }, { from: '15', to: '40', weight: '' },
+                          { from: '35', to: '3', weight: '' }, { from: '35', to: '6', weight: '' },
+                          { from: '40', to: '5', weight: '' }, { from: '40', to: '7', weight: '' },
+                          { from: '3', to: '1', weight: '' }, { from: '3', to: '10', weight: '' },
+                          { from: '5', to: '8', weight: '' }, { from: '5', to: '4', weight: '' }, { from: '5', to: '41', weight: '' }
+                        ])
+                      }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
                     >
-                      🔘 Black & White
+                      🌳 Tree (Hierarchical)
                     </button>
                     <button
-                      type="button"
-                      onClick={() => setGraphTheme('emerald')}
-                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${graphTheme === 'emerald' ? 'bg-emerald-700 text-white border-emerald-800 shadow' : 'bg-gray-100 text-gray-700 border-gray-300'}`}
+                      onClick={() => {
+                        setGraphType('map')
+                        setCustomNodePositions({})
+                        const text = 'ORADEA-ZERIND: 71\nZERIND-ARAD: 75\nARAD-SIBIU: 140\nSIBIU-FAGARAS: 99\nSIBIU-RIMNICU: 80\nRIMNICU-PITESTI: 97\nPITESTI-BUCHAREST: 101\nBUCHAREST-URZICENI: 85\nURZICENI-VASLUI: 142\nVASLUI-IASI: 92\nIASI-NEAMT: 87'
+                        setGraphEdgesText(text)
+                        setEdgeRows([
+                          { from: 'ORADEA', to: 'ZERIND', weight: '71' }, { from: 'ZERIND', to: 'ARAD', weight: '75' }, { from: 'ARAD', to: 'SIBIU', weight: '140' },
+                          { from: 'SIBIU', to: 'FAGARAS', weight: '99' }, { from: 'SIBIU', to: 'RIMNICU', weight: '80' }, { from: 'RIMNICU', to: 'PITESTI', weight: '97' },
+                          { from: 'PITESTI', to: 'BUCHAREST', weight: '101' }, { from: 'BUCHAREST', to: 'URZICENI', weight: '85' }, { from: 'URZICENI', to: 'VASLUI', weight: '142' },
+                          { from: 'VASLUI', to: 'IASI', weight: '92' }, { from: 'IASI', to: 'NEAMT', weight: '87' }
+                        ])
+                      }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
                     >
-                      🎨 Emerald System
+                      🗺️ Map / Romania Network
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGraphType('directed')
+                        setCustomNodePositions({})
+                        setGraphEdgesText('A-B: 10\nB-C: 15\nC-D: 20\nD-A: 5')
+                        setEdgeRows([{ from: 'A', to: 'B', weight: '10' }, { from: 'B', to: 'C', weight: '15' }, { from: 'C', to: 'D', weight: '20' }, { from: 'D', to: 'A', weight: '5' }])
+                      }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                    >
+                      ⚖️ Node Weighted Graph
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGraphType('undirected')
+                        setCustomNodePositions({})
+                        setGraphEdgesText('1-2: 4\n1-3: 2\n2-3: 1\n2-4: 5\n3-4: 8')
+                        setEdgeRows([{ from: '1', to: '2', weight: '4' }, { from: '1', to: '3', weight: '2' }, { from: '2', to: '3', weight: '1' }, { from: '2', to: '4', weight: '5' }, { from: '3', to: '4', weight: '8' }])
+                      }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                    >
+                      🕸️ Undirected Network
                     </button>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Graph / Tree Structure Format</label>
-                  <select
-                    value={graphType}
-                    onChange={(e) => {
-                      setGraphType(e.target.value)
-                      setCustomNodePositions({})
-                    }}
-                    className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
-                  >
-                    <option value="directed">Directed Graph (with Arrows)</option>
-                    <option value="undirected">Undirected Graph (Lines without Arrows)</option>
-                    <option value="tree">Tree Layout (Hierarchical Top-Down)</option>
-                    <option value="map">Map / Network Layout</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Input Mode Selector */}
-              <div className="flex justify-between items-center">
-                <label className="font-bold text-gray-700 text-xs">Graph Edge Connections</label>
-                <div className="flex gap-2 text-xs font-semibold">
-                  <button
-                    onClick={() => setGraphInputMode('form')}
-                    className={`px-2.5 py-1 rounded-md border ${graphInputMode === 'form' ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white text-gray-600'}`}
-                  >
-                    Form Builder
-                  </button>
-                  <button
-                    onClick={() => setGraphInputMode('text')}
-                    className={`px-2.5 py-1 rounded-md border ${graphInputMode === 'text' ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white text-gray-600'}`}
-                  >
-                    Text Input
-                  </button>
-                </div>
-              </div>
-
-              {/* Form-Based Edge Builder */}
-              {graphInputMode === 'form' ? (
-                <div className="space-y-2 bg-white p-3 border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto">
-                  {edgeRows.map((edge, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-xs">
-                      <span className="font-bold text-gray-500 w-4">#{idx + 1}</span>
-                      <span className="font-semibold text-gray-600">From</span>
-                      <input
-                        type="text"
-                        value={edge.from}
-                        onChange={(e) => handleUpdateEdgeRow(idx, 'from', e.target.value)}
-                        placeholder="Node A"
-                        className="w-20 border border-gray-300 p-1.5 rounded-lg text-center font-bold"
-                      />
-                      <span className="text-emerald-700 font-bold">➔</span>
-                      <span className="font-semibold text-gray-600">To</span>
-                      <input
-                        type="text"
-                        value={edge.to}
-                        onChange={(e) => handleUpdateEdgeRow(idx, 'to', e.target.value)}
-                        placeholder="Node B"
-                        className="w-20 border border-gray-300 p-1.5 rounded-lg text-center font-bold"
-                      />
-                      <span className="font-semibold text-gray-600 ml-2">Weight / Cost:</span>
-                      <input
-                        type="text"
-                        value={edge.weight}
-                        onChange={(e) => handleUpdateEdgeRow(idx, 'weight', e.target.value)}
-                        placeholder="e.g. 10"
-                        className="w-24 border border-gray-300 p-1.5 rounded-lg font-semibold"
-                      />
+                {/* Theme & Direction Controls */}
+                <div className="grid grid-cols-2 gap-3 p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Color Theme</label>
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => handleRemoveEdgeRow(idx)}
-                        className="p-1 hover:bg-red-50 text-red-600 rounded-lg transition-colors ml-auto"
+                        type="button"
+                        onClick={() => setGraphTheme('bw')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${graphTheme === 'bw' ? 'bg-gray-900 text-white border-black shadow' : 'bg-gray-100 text-gray-700 border-gray-300'}`}
                       >
-                        <X size={16} />
+                        🔘 Black & White
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGraphTheme('emerald')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold border transition-all ${graphTheme === 'emerald' ? 'bg-emerald-700 text-white border-emerald-800 shadow' : 'bg-gray-100 text-gray-700 border-gray-300'}`}
+                      >
+                        🎨 Emerald System
                       </button>
                     </div>
-                  ))}
-                  <button
-                    onClick={handleAddEdgeRow}
-                    className="w-full py-1.5 border border-dashed border-emerald-300 text-emerald-800 hover:bg-emerald-50 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors mt-2"
-                  >
-                    <Plus size={14} /> Add Edge Connection
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <textarea
-                    rows="3"
-                    value={graphEdgesText}
-                    onChange={(e) => setGraphEdgesText(e.target.value)}
-                    className="w-full border border-gray-300 p-3 rounded-xl bg-white font-mono text-xs"
-                    placeholder="A-B: 10&#10;B-C: 15&#10;A-C: 5"
-                  />
-                </div>
-              )}
-
-              {/* Live Interactive Vector SVG Preview with Click & Drag Node Repositioning */}
-              {(() => {
-                const activeGraphData = parseGraphData(graphEdgesText)
-                const activeGraphPositions = computeGraphLayout(activeGraphData.nodes, activeGraphData.edges, graphType, customNodePositions)
-
-                return (
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-                        Live Vector SVG Preview ({graphTheme === 'bw' ? 'Black & White' : 'System Theme'})
-                      </span>
-                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                        🖱️ Click & drag any node with mouse to restructure
-                      </span>
-                    </div>
-
-                    <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-hidden select-none">
-                      <svg
-                        ref={graphSvgRef}
-                        viewBox="0 0 600 400"
-                        onMouseMove={handleSvgMouseMove}
-                        onMouseUp={handleSvgMouseUp}
-                        onMouseLeave={handleSvgMouseUp}
-                        style={{ maxWidth: '100%', height: 'auto', maxHeight: '340px', cursor: draggingNode ? 'grabbing' : 'default' }}
-                      >
-                        <defs>
-                          <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                            <path d="M 0 0 L 10 5 L 0 10 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
-                          </marker>
-                        </defs>
-
-                        {/* Render Edges */}
-                        {activeGraphData.edges.map((edge, idx) => {
-                          const p1 = activeGraphPositions[edge.from]
-                          const p2 = activeGraphPositions[edge.to]
-                          if (!p1 || !p2) return null
-                          const isDirected = (graphType === 'directed' || graphType === 'directed_tree')
-                          const midX = (p1.x + p2.x) / 2
-                          const midY = (p1.y + p2.y) / 2
-                          const badgeW = Math.max(edge.weight.length * 8 + 10, 22)
-
-                          return (
-                            <g key={idx}>
-                              <line
-                                x1={p1.x}
-                                y1={p1.y}
-                                x2={p2.x}
-                                y2={p2.y}
-                                stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
-                                strokeWidth="2.5"
-                                markerEnd={isDirected ? 'url(#arrowhead-interactive)' : undefined}
-                              />
-                              {edge.weight && (
-                                <g>
-                                  <rect
-                                    x={midX - badgeW / 2}
-                                    y={midY - 10}
-                                    width={badgeW}
-                                    height={18}
-                                    rx="4"
-                                    fill="#ffffff"
-                                    stroke={graphTheme === 'bw' ? '#000000' : '#10b981'}
-                                    strokeWidth="1.5"
-                                  />
-                                  <text
-                                    x={midX}
-                                    y={midY + 3}
-                                    fontSize="11"
-                                    fontWeight="bold"
-                                    fill={graphTheme === 'bw' ? '#000000' : '#047857'}
-                                    textAnchor="middle"
-                                  >
-                                    {edge.weight}
-                                  </text>
-                                </g>
-                              )}
-                            </g>
-                          )
-                        })}
-
-                        {/* Render Nodes (Interactive Drag & Drop) */}
-                        {activeGraphData.nodes.map(node => {
-                          const p = activeGraphPositions[node]
-                          if (!p) return null
-                          const isDragged = draggingNode === node
-                          const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
-
-                          return (
-                            <g
-                              key={node}
-                              onMouseDown={(e) => handleSvgMouseDown(node, e)}
-                              style={{ cursor: draggingNode === node ? 'grabbing' : 'grab' }}
-                            >
-                              <circle
-                                cx={p.x}
-                                cy={p.y}
-                                r={22}
-                                fill={isDragged ? (graphTheme === 'bw' ? '#e5e7eb' : '#d1fae5') : '#ffffff'}
-                                stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
-                                strokeWidth={isDragged ? '3.5' : '2.5'}
-                              />
-                              <text
-                                x={p.x}
-                                y={p.y + 4}
-                                fontSize={fontSize}
-                                fontWeight="extrabold"
-                                fill={graphTheme === 'bw' ? '#000000' : '#065f46'}
-                                textAnchor="middle"
-                                style={{ userSelect: 'none', pointerEvents: 'none' }}
-                              >
-                                {node}
-                              </text>
-                            </g>
-                          )
-                        })}
-                      </svg>
-                    </div>
                   </div>
-                )
-              })()}
-            </div>
 
-            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
-              <button onClick={() => setShowGraphGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
-                Cancel
-              </button>
-              <button onClick={handleInsertGraph} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                <Plus size={16} /> Insert Resizable Graph Diagram into Question Paper
-              </button>
+                  <div>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">Graph / Tree Structure Format</label>
+                    <select
+                      value={graphType}
+                      onChange={(e) => {
+                        setGraphType(e.target.value)
+                        setCustomNodePositions({})
+                      }}
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
+                    >
+                      <option value="directed">Directed Graph (with Arrows)</option>
+                      <option value="undirected">Undirected Graph (Lines without Arrows)</option>
+                      <option value="tree">Tree Layout (Hierarchical Top-Down)</option>
+                      <option value="map">Map / Network Layout</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Input Mode Selector */}
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-gray-700 text-xs">Graph Edge Connections</label>
+                  <div className="flex gap-2 text-xs font-semibold">
+                    <button
+                      onClick={() => setGraphInputMode('form')}
+                      className={`px-2.5 py-1 rounded-md border ${graphInputMode === 'form' ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white text-gray-600'}`}
+                    >
+                      Form Builder
+                    </button>
+                    <button
+                      onClick={() => setGraphInputMode('text')}
+                      className={`px-2.5 py-1 rounded-md border ${graphInputMode === 'text' ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white text-gray-600'}`}
+                    >
+                      Text Input
+                    </button>
+                  </div>
+                </div>
+
+                {/* Form-Based Edge Builder */}
+                {graphInputMode === 'form' ? (
+                  <div className="space-y-2 bg-white p-3 border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto">
+                    {edgeRows.map((edge, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-xs">
+                        <span className="font-bold text-gray-500 w-4">#{idx + 1}</span>
+                        <span className="font-semibold text-gray-600">From</span>
+                        <input
+                          type="text"
+                          value={edge.from}
+                          onChange={(e) => handleUpdateEdgeRow(idx, 'from', e.target.value)}
+                          placeholder="Node A"
+                          className="w-20 border border-gray-300 p-1.5 rounded-lg text-center font-bold"
+                        />
+                        <span className="text-emerald-700 font-bold">➔</span>
+                        <span className="font-semibold text-gray-600">To</span>
+                        <input
+                          type="text"
+                          value={edge.to}
+                          onChange={(e) => handleUpdateEdgeRow(idx, 'to', e.target.value)}
+                          placeholder="Node B"
+                          className="w-20 border border-gray-300 p-1.5 rounded-lg text-center font-bold"
+                        />
+                        <span className="font-semibold text-gray-600 ml-2">Weight / Cost:</span>
+                        <input
+                          type="text"
+                          value={edge.weight}
+                          onChange={(e) => handleUpdateEdgeRow(idx, 'weight', e.target.value)}
+                          placeholder="e.g. 10"
+                          className="w-24 border border-gray-300 p-1.5 rounded-lg font-semibold"
+                        />
+                        <button
+                          onClick={() => handleRemoveEdgeRow(idx)}
+                          className="p-1 hover:bg-red-50 text-red-600 rounded-lg transition-colors ml-auto"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={handleAddEdgeRow}
+                      className="w-full py-1.5 border border-dashed border-emerald-300 text-emerald-800 hover:bg-emerald-50 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors mt-2"
+                    >
+                      <Plus size={14} /> Add Edge Connection
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <textarea
+                      rows="3"
+                      value={graphEdgesText}
+                      onChange={(e) => setGraphEdgesText(e.target.value)}
+                      className="w-full border border-gray-300 p-3 rounded-xl bg-white font-mono text-xs"
+                      placeholder="A-B: 10&#10;B-C: 15&#10;A-C: 5"
+                    />
+                  </div>
+                )}
+
+                {/* Live Interactive Vector SVG Preview with Click & Drag Node Repositioning */}
+                {(() => {
+                  const activeGraphData = parseGraphData(graphEdgesText)
+                  const activeGraphPositions = computeGraphLayout(activeGraphData.nodes, activeGraphData.edges, graphType, customNodePositions)
+
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                          Live Vector SVG Preview ({graphTheme === 'bw' ? 'Black & White' : 'System Theme'})
+                        </span>
+                        <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                          🖱️ Click & drag any node with mouse to restructure
+                        </span>
+                      </div>
+
+                      <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-hidden select-none">
+                        <svg
+                          ref={graphSvgRef}
+                          viewBox="0 0 600 400"
+                          onMouseMove={handleSvgMouseMove}
+                          onMouseUp={handleSvgMouseUp}
+                          onMouseLeave={handleSvgMouseUp}
+                          style={{ maxWidth: '100%', height: 'auto', maxHeight: '340px', cursor: draggingNode ? 'grabbing' : 'default' }}
+                        >
+                          <defs>
+                            <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                              <path d="M 0 0 L 10 5 L 0 10 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
+                            </marker>
+                          </defs>
+
+                          {/* Render Edges */}
+                          {activeGraphData.edges.map((edge, idx) => {
+                            const p1 = activeGraphPositions[edge.from]
+                            const p2 = activeGraphPositions[edge.to]
+                            if (!p1 || !p2) return null
+                            const isDirected = (graphType === 'directed' || graphType === 'directed_tree')
+                            const midX = (p1.x + p2.x) / 2
+                            const midY = (p1.y + p2.y) / 2
+                            const badgeW = Math.max(edge.weight.length * 8 + 10, 22)
+
+                            return (
+                              <g key={idx}>
+                                <line
+                                  x1={p1.x}
+                                  y1={p1.y}
+                                  x2={p2.x}
+                                  y2={p2.y}
+                                  stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
+                                  strokeWidth="2.5"
+                                  markerEnd={isDirected ? 'url(#arrowhead-interactive)' : undefined}
+                                />
+                                {edge.weight && (
+                                  <g>
+                                    <rect
+                                      x={midX - badgeW / 2}
+                                      y={midY - 10}
+                                      width={badgeW}
+                                      height={18}
+                                      rx="4"
+                                      fill="#ffffff"
+                                      stroke={graphTheme === 'bw' ? '#000000' : '#10b981'}
+                                      strokeWidth="1.5"
+                                    />
+                                    <text
+                                      x={midX}
+                                      y={midY + 3}
+                                      fontSize="11"
+                                      fontWeight="bold"
+                                      fill={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                      textAnchor="middle"
+                                    >
+                                      {edge.weight}
+                                    </text>
+                                  </g>
+                                )}
+                              </g>
+                            )
+                          })}
+
+                          {/* Render Nodes (Interactive Drag & Drop) */}
+                          {activeGraphData.nodes.map(node => {
+                            const p = activeGraphPositions[node]
+                            if (!p) return null
+                            const isDragged = draggingNode === node
+                            const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
+
+                            return (
+                              <g
+                                key={node}
+                                onMouseDown={(e) => handleSvgMouseDown(node, e)}
+                                style={{ cursor: draggingNode === node ? 'grabbing' : 'grab' }}
+                              >
+                                <circle
+                                  cx={p.x}
+                                  cy={p.y}
+                                  r={22}
+                                  fill={isDragged ? (graphTheme === 'bw' ? '#e5e7eb' : '#d1fae5') : '#ffffff'}
+                                  stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                  strokeWidth={isDragged ? '3.5' : '2.5'}
+                                />
+                                <text
+                                  x={p.x}
+                                  y={p.y + 4}
+                                  fontSize={fontSize}
+                                  fontWeight="extrabold"
+                                  fill={graphTheme === 'bw' ? '#000000' : '#065f46'}
+                                  textAnchor="middle"
+                                  style={{ userSelect: 'none', pointerEvents: 'none' }}
+                                >
+                                  {node}
+                                </text>
+                              </g>
+                            )
+                          })}
+                        </svg>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
+                <button onClick={() => setShowGraphGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
+                  Cancel
+                </button>
+                <button onClick={handleInsertGraph} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
+                  <Plus size={16} /> Insert Resizable Graph Diagram into Question Paper
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* 📊 Modal 3: Automated Data Table Generator (Direct Grid Data Entry + CSE Academic Presets) */}
       {showTableGenModal && (
-        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                  <Grid size={20} className="text-emerald-300" />
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <Grid size={20} className="text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">Automated Data Table Generator</h3>
+                    <p className="text-xs text-emerald-200">Directly edit table headers & data cells for exam papers</p>
+                  </div>
                 </div>
+                <button onClick={() => setShowTableGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
+                {/* Presets */}
                 <div>
-                  <h3 className="font-extrabold text-base leading-tight">Automated Data Table Generator</h3>
-                  <p className="text-xs text-emerald-200">Directly edit table headers & data cells for exam papers</p>
-                </div>
-              </div>
-              <button onClick={() => setShowTableGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
-              {/* Presets */}
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1.5">CSE Academic Presets</label>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => { setTableGridHeaders(['Item', 'Weight (kg)', 'Profit ($)']); setTableGridRows([['1', '10', '60'], ['2', '20', '100'], ['3', '30', '120']]); }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                  >
-                    🎒 0/1 Knapsack
-                  </button>
-                  <button
-                    onClick={() => { setTableGridHeaders(['Process', 'Arrival Time', 'Burst Time', 'Priority']); setTableGridRows([['P1', '0', '8', '2'], ['P2', '1', '4', '1'], ['P3', '2', '9', '3'], ['P4', '3', '5', '4']]); }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                  >
-                    ⏱️ CPU Scheduling
-                  </button>
-                  <button
-                    onClick={() => { setTableGridHeaders(['A', 'B', 'A AND B', 'A OR B', 'A XOR B']); setTableGridRows([['0', '0', '0', '0', '0'], ['0', '1', '0', '1', '1'], ['1', '0', '0', '1', '1'], ['1', '1', '1', '1', '0']]); }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                  >
-                    🔀 Logic Truth Table
-                  </button>
-                  <button
-                    onClick={() => { setTableGridHeaders(['Page Ref', 'Frame 1', 'Frame 2', 'Frame 3', 'Hit/Miss']); setTableGridRows([['7', '7', '-', '-', 'Miss'], ['0', '7', '0', '-', 'Miss'], ['1', '7', '0', '1', 'Miss'], ['2', '2', '0', '1', 'Miss']]); }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                  >
-                    💾 Page Replacement
-                  </button>
-                  <button
-                    onClick={() => { setTableGridHeaders(['Subnet', 'Network ID', 'Host Range', 'Broadcast ID']); setTableGridRows([['Subnet 1', '192.168.1.0/26', '192.168.1.1 - 192.168.1.62', '192.168.1.63'], ['Subnet 2', '192.168.1.64/26', '192.168.1.65 - 192.168.1.126', '192.168.1.127']]); }}
-                    className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                  >
-                    🌐 Subnetting / IP Table
-                  </button>
-                </div>
-              </div>
-
-              {/* AI Prompt Input */}
-              <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
-                <label className="block font-bold text-emerald-900 text-xs">Or Auto-Generate Table via AI Prompt</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={tableAiPrompt}
-                    onChange={(e) => setTableAiPrompt(e.target.value)}
-                    placeholder="e.g. Process allocation table with 4 processes and memory sizes"
-                    className="flex-1 border border-gray-300 p-2 rounded-lg bg-white text-xs"
-                  />
-                  <button
-                    onClick={handleGenerateTableWithAi}
-                    disabled={isGeneratingTable}
-                    className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-50 shadow"
-                  >
-                    {isGeneratingTable ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-                    AI Generate Grid
-                  </button>
-                </div>
-              </div>
-
-              {/* DIRECT DATA ENTRY TABLE GRID */}
-              <div className="space-y-2 bg-white p-4 border border-gray-200 rounded-xl">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-bold text-xs text-gray-700">Direct Grid Entry (Click cell to edit)</span>
-                  <div className="flex gap-2">
+                  <label className="block font-bold text-gray-700 text-xs mb-1.5">CSE Academic Presets</label>
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={handleAddTableColumn}
-                      className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md font-bold text-xs hover:bg-emerald-100 flex items-center gap-1"
+                      onClick={() => { setTableGridHeaders(['Item', 'Weight (kg)', 'Profit ($)']); setTableGridRows([['1', '10', '60'], ['2', '20', '100'], ['3', '30', '120']]); }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                     >
-                      <Plus size={12} /> Add Column
+                      🎒 0/1 Knapsack
                     </button>
                     <button
-                      onClick={handleAddTableRow}
-                      className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md font-bold text-xs hover:bg-emerald-100 flex items-center gap-1"
+                      onClick={() => { setTableGridHeaders(['Process', 'Arrival Time', 'Burst Time', 'Priority']); setTableGridRows([['P1', '0', '8', '2'], ['P2', '1', '4', '1'], ['P3', '2', '9', '3'], ['P4', '3', '5', '4']]); }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                     >
-                      <Plus size={12} /> Add Row
+                      ⏱️ CPU Scheduling
+                    </button>
+                    <button
+                      onClick={() => { setTableGridHeaders(['A', 'B', 'A AND B', 'A OR B', 'A XOR B']); setTableGridRows([['0', '0', '0', '0', '0'], ['0', '1', '0', '1', '1'], ['1', '0', '0', '1', '1'], ['1', '1', '1', '1', '0']]); }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                    >
+                      🔀 Logic Truth Table
+                    </button>
+                    <button
+                      onClick={() => { setTableGridHeaders(['Page Ref', 'Frame 1', 'Frame 2', 'Frame 3', 'Hit/Miss']); setTableGridRows([['7', '7', '-', '-', 'Miss'], ['0', '7', '0', '-', 'Miss'], ['1', '7', '0', '1', 'Miss'], ['2', '2', '0', '1', 'Miss']]); }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                    >
+                      💾 Page Replacement
+                    </button>
+                    <button
+                      onClick={() => { setTableGridHeaders(['Subnet', 'Network ID', 'Host Range', 'Broadcast ID']); setTableGridRows([['Subnet 1', '192.168.1.0/26', '192.168.1.1 - 192.168.1.62', '192.168.1.63'], ['Subnet 2', '192.168.1.64/26', '192.168.1.65 - 192.168.1.126', '192.168.1.127']]); }}
+                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                    >
+                      🌐 Subnetting / IP Table
                     </button>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-gray-100 border-b border-gray-300">
-                        {tableGridHeaders.map((h, colIdx) => (
-                          <th key={colIdx} className="p-1.5 border border-gray-300 font-bold text-gray-700 bg-gray-200/80">
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="text"
-                                value={h}
-                                onChange={(e) => handleUpdateHeader(colIdx, e.target.value)}
-                                className="w-full bg-white border border-gray-300 p-1 rounded font-bold text-xs text-gray-800"
-                              />
-                              {tableGridHeaders.length > 1 && (
-                                <button onClick={() => handleRemoveTableColumn(colIdx)} className="p-0.5 text-red-500 hover:bg-red-50 rounded">
+                {/* AI Prompt Input */}
+                <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
+                  <label className="block font-bold text-emerald-900 text-xs">Or Auto-Generate Table via AI Prompt</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={tableAiPrompt}
+                      onChange={(e) => setTableAiPrompt(e.target.value)}
+                      placeholder="e.g. Process allocation table with 4 processes and memory sizes"
+                      className="flex-1 border border-gray-300 p-2 rounded-lg bg-white text-xs"
+                    />
+                    <button
+                      onClick={handleGenerateTableWithAi}
+                      disabled={isGeneratingTable}
+                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-50 shadow"
+                    >
+                      {isGeneratingTable ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                      AI Generate Grid
+                    </button>
+                  </div>
+                </div>
+
+                {/* DIRECT DATA ENTRY TABLE GRID */}
+                <div className="space-y-2 bg-white p-4 border border-gray-200 rounded-xl">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-bold text-xs text-gray-700">Direct Grid Entry (Click cell to edit)</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleAddTableColumn}
+                        className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md font-bold text-xs hover:bg-emerald-100 flex items-center gap-1"
+                      >
+                        <Plus size={12} /> Add Column
+                      </button>
+                      <button
+                        onClick={handleAddTableRow}
+                        className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md font-bold text-xs hover:bg-emerald-100 flex items-center gap-1"
+                      >
+                        <Plus size={12} /> Add Row
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gray-100 border-b border-gray-300">
+                          {tableGridHeaders.map((h, colIdx) => (
+                            <th key={colIdx} className="p-1.5 border border-gray-300 font-bold text-gray-700 bg-gray-200/80">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={h}
+                                  onChange={(e) => handleUpdateHeader(colIdx, e.target.value)}
+                                  className="w-full bg-white border border-gray-300 p-1 rounded font-bold text-xs text-gray-800"
+                                />
+                                {tableGridHeaders.length > 1 && (
+                                  <button onClick={() => handleRemoveTableColumn(colIdx)} className="p-0.5 text-red-500 hover:bg-red-50 rounded">
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tableGridRows.map((row, rIdx) => (
+                          <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                            {tableGridHeaders.map((_, cIdx) => (
+                              <td key={cIdx} className="p-1 border border-gray-300">
+                                <input
+                                  type="text"
+                                  value={row[cIdx] || ''}
+                                  onChange={(e) => handleUpdateCell(rIdx, cIdx, e.target.value)}
+                                  className="w-full bg-transparent p-1 rounded font-sans text-xs focus:bg-white focus:border border-emerald-400 outline-none"
+                                />
+                              </td>
+                            ))}
+                            <td className="p-1 text-center w-8">
+                              {tableGridRows.length > 1 && (
+                                <button onClick={() => handleRemoveTableRow(rIdx)} className="p-1 text-red-500 hover:bg-red-50 rounded">
                                   <X size={12} />
                                 </button>
                               )}
-                            </div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tableGridRows.map((row, rIdx) => (
-                        <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                          {tableGridHeaders.map((_, cIdx) => (
-                            <td key={cIdx} className="p-1 border border-gray-300">
-                              <input
-                                type="text"
-                                value={row[cIdx] || ''}
-                                onChange={(e) => handleUpdateCell(rIdx, cIdx, e.target.value)}
-                                className="w-full bg-transparent p-1 rounded font-sans text-xs focus:bg-white focus:border border-emerald-400 outline-none"
-                              />
                             </td>
-                          ))}
-                          <td className="p-1 text-center w-8">
-                            {tableGridRows.length > 1 && (
-                              <button onClick={() => handleRemoveTableRow(rIdx)} className="p-1 text-red-500 hover:bg-red-50 rounded">
-                                <X size={12} />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Live Preview */}
+                <div className="space-y-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Live Styled Table Preview (Editable inside Editor)</span>
+                  <div
+                    className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-x-auto"
+                    dangerouslySetInnerHTML={{ __html: generateTableHtml(tableGridHeaders, tableGridRows) }}
+                  />
                 </div>
               </div>
 
-              {/* Live Preview */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Live Styled Table Preview (Editable inside Editor)</span>
-                <div
-                  className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-x-auto"
-                  dangerouslySetInnerHTML={{ __html: generateTableHtml(tableGridHeaders, tableGridRows) }}
-                />
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
+                <button onClick={() => setShowTableGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
+                  Cancel
+                </button>
+                <button onClick={handleInsertTable} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
+                  <Plus size={16} /> Insert Resizable Table into Question Paper
+                </button>
               </div>
             </div>
-
-            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
-              <button onClick={() => setShowTableGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
-                Cancel
-              </button>
-              <button onClick={handleInsertTable} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                <Plus size={16} /> Insert Resizable Table into Question Paper
-              </button>
-            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* 📋 Exam Paper Structure Builder Modal */}
       {showPaperStructureModal && (
-        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-4xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                  <ClipboardList size={20} className="text-emerald-300" />
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-4xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <ClipboardList size={20} className="text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">
+                      {isEditingExistingTable ? 'Edit Existing Paper Structure' : isMidTerm ? 'Mid Term Paper Structure Builder' : isCT ? 'Class Test (CT) Paper Structure Builder' : 'Term Final Paper Structure Builder'}
+                    </h3>
+                    <p className="text-xs text-emerald-200">
+                      {isEditingExistingTable ? 'Modify structure without losing typed question text' : isMidTerm ? 'Build professional Mid Term exam question paper table layout' : isCT ? 'Build professional Class Test exam paper layout (5M / 10M questions)' : 'Build professional Term Final exam question paper table layout with Parts'}
+                    </p>
+                  </div>
                 </div>
+                <button onClick={() => setShowPaperStructureModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
+                {/* Quick Presets */}
                 <div>
-                  <h3 className="font-extrabold text-base leading-tight">
-                    {isEditingExistingTable ? 'Edit Existing Paper Structure' : isMidTerm ? 'Mid Term Paper Structure Builder' : isCT ? 'Class Test (CT) Paper Structure Builder' : 'Term Final Paper Structure Builder'}
-                  </h3>
-                  <p className="text-xs text-emerald-200">
-                    {isEditingExistingTable ? 'Modify structure without losing typed question text' : isMidTerm ? 'Build professional Mid Term exam question paper table layout' : isCT ? 'Build professional Class Test exam paper layout (5M / 10M questions)' : 'Build professional Term Final exam question paper table layout with Parts'}
+                  <label className="block font-bold text-gray-700 text-xs mb-1.5">
+                    Quick Presets ({isMidTerm ? 'Mid Term' : isCT ? 'Class Test (CT)' : isAssignmentOrReport ? 'Assignment / Report' : 'Term Final'})
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {isCT ? (
+                      <>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📝 2Q × 5 Marks = 10 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 1Q × 10 Marks = 10 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          🧩 1Q × 2 Sub (5M each) = 10 Marks
+                        </button>
+                      </>
+                    ) : isAssignmentOrReport ? (
+                      <>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📝 2Q × 5 Marks = 10 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 1Q × 10 Marks = 10 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📄 3Q × 5 Marks = 15 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 1, marks: [15], blooms: [''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          🎯 1Q × 15 Marks = 15 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          🧩 1Q × 2 Sub (5M each) = 10 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 3, marks: [5, 5, 5], blooms: ['', '', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📚 1Q × 3 Sub (5M each) = 15 Marks
+                        </button>
+                      </>
+                    ) : isMidTerm ? (
+                      <>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📝 3Q × 3 Sub = 90 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 3Q × 2 Sub = 60 Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📄 2Q × 3 Sub = 60 Marks
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: 'PART A', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] },
+                            { name: 'PART B', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📝 3 Credit Final (5Q × 3 Sub = 150 Marks)
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: 'PART A', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] },
+                            { name: 'PART B', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 2 Credit Final (5Q × 2 Sub = 100 Marks)
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Editing Existing Table Banner */}
+                {isEditingExistingTable && (
+                  <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between gap-2 text-blue-900 text-xs font-bold shadow-xs">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-blue-600 shrink-0" />
+                      Editing existing exam paper structure — all typed question content is preserved!
+                    </span>
+                    <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-extrabold">
+                      Preserve Mode Active
+                    </span>
+                  </div>
+                )}
+
+                {/* Tip about Clear Borders */}
+                <div className="px-3 py-2 bg-amber-50/80 border border-amber-200 rounded-lg flex items-start gap-2">
+                  <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    <strong>Tip:</strong> After inserting and typing your questions, click on the table → use the <strong>"Clear Borders"</strong> button in the table toolbar to hide borders for a professional exam paper look.
                   </p>
                 </div>
-              </div>
-              <button onClick={() => setShowPaperStructureModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-4 max-h-[72vh] overflow-y-auto bg-gray-50/50 text-sm">
-              {/* Quick Presets */}
-              <div>
-                <label className="block font-bold text-gray-700 text-xs mb-1.5">
-                  Quick Presets ({isMidTerm ? 'Mid Term' : isCT ? 'Class Test (CT)' : isAssignmentOrReport ? 'Assignment / Report' : 'Term Final'})
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {isCT ? (
-                    <>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📝 2Q × 5 Marks = 10 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📋 1Q × 10 Marks = 10 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        🧩 1Q × 2 Sub (5M each) = 10 Marks
-                      </button>
-                    </>
-                  ) : isAssignmentOrReport ? (
-                    <>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📝 2Q × 5 Marks = 10 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📋 1Q × 10 Marks = 10 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📄 3Q × 5 Marks = 15 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 1, marks: [15], blooms: [''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        🎯 1Q × 15 Marks = 15 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        🧩 1Q × 2 Sub (5M each) = 10 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 3, marks: [5, 5, 5], blooms: ['', '', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📚 1Q × 3 Sub (5M each) = 15 Marks
-                      </button>
-                    </>
-                  ) : isMidTerm ? (
-                    <>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📝 3Q × 3 Sub = 90 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📋 3Q × 2 Sub = 60 Marks
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📄 2Q × 3 Sub = 60 Marks
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: 'PART A', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] },
-                          { name: 'PART B', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📝 3 Credit Final (5Q × 3 Sub = 150 Marks)
-                      </button>
-                      <button
-                        onClick={() => setPaperStructureParts([
-                          { name: 'PART A', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] },
-                          { name: 'PART B', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
-                        ])}
-                        className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                      >
-                        📋 2 Credit Final (5Q × 2 Sub = 100 Marks)
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Editing Existing Table Banner */}
-              {isEditingExistingTable && (
-                <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between gap-2 text-blue-900 text-xs font-bold shadow-xs">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-blue-600 shrink-0" />
-                    Editing existing exam paper structure — all typed question content is preserved!
-                  </span>
-                  <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-extrabold">
-                    Preserve Mode Active
-                  </span>
-                </div>
-              )}
-
-              {/* Tip about Clear Borders */}
-              <div className="px-3 py-2 bg-amber-50/80 border border-amber-200 rounded-lg flex items-start gap-2">
-                <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-amber-800 leading-relaxed">
-                  <strong>Tip:</strong> After inserting and typing your questions, click on the table → use the <strong>"Clear Borders"</strong> button in the table toolbar to hide borders for a professional exam paper look.
-                </p>
-              </div>
-
-              {/* Spacing Rows Formatting Control */}
-              <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-extrabold text-emerald-800">Format Spacing:</span>
-                  <span className="text-[11px] text-gray-500 font-medium">Add blank spacing rows between questions for custom paper formatting</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-gray-400 font-medium mr-1">Set All:</span>
-                  {[0, 1, 2, 3, 4, 5].map(n => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => handlePaperStructureSetGlobalSpaceRows(n)}
-                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-extrabold transition shadow-2xs"
-                      title={`Set ${n} spacing row(s) between all questions`}
-                    >
-                      {n} {n === 1 ? 'Row' : 'Rows'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Parts Configuration */}
-              {paperStructureParts.map((part, partIdx) => (
-                <div key={partIdx} className="bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
-                  {!isNoParts && (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={part.name}
-                          onChange={(e) => handlePaperStructureRenamePart(partIdx, e.target.value)}
-                          className="font-extrabold text-emerald-800 text-sm bg-transparent border-b border-dashed border-emerald-300 focus:border-emerald-600 outline-none px-1 py-0.5 w-28"
-                        />
-                        <span className="text-xs text-gray-400 font-medium">
-                          ({part.questions.length} question{part.questions.length !== 1 ? 's' : ''})
-                        </span>
-                      </div>
-                      {paperStructureParts.length > 1 && (
-                        <button
-                          onClick={() => handlePaperStructureRemovePart(partIdx)}
-                          className="flex items-center gap-1 px-2 py-1 text-red-500 hover:bg-red-50 rounded-lg text-xs font-bold"
-                        >
-                          <X size={14} /> Remove Part
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Questions within this part */}
-                  <div className="space-y-2">
-                    {part.questions.map((q, qIdx) => {
-                      let displayQNum = qIdx + 1
-                      for (let p = 0; p < partIdx; p++) {
-                        displayQNum += paperStructureParts[p].questions.length
-                      }
-                      return (
-                        <div key={qIdx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-bold text-gray-700">Question {displayQNum}</span>
-                            {part.questions.length > 1 && (
-                              <button
-                                onClick={() => handlePaperStructureRemoveQuestion(partIdx, qIdx)}
-                                className="flex items-center gap-0.5 px-1.5 py-0.5 text-red-500 hover:bg-red-50 rounded text-[11px] font-bold"
-                              >
-                                <Minus size={12} /> Remove
-                              </button>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-4 flex-wrap">
-                            <div className="flex items-center gap-1.5">
-                              <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Sub-Qs:</label>
-                              <select
-                                value={q.subCount}
-                                onChange={(e) => handlePaperStructureSetSubCount(partIdx, qIdx, e.target.value)}
-                                className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white font-bold w-14"
-                              >
-                                {[1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n}</option>)}
-                              </select>
-                            </div>
-                            <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
-                              <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Spacing Rows:</label>
-                              <select
-                                value={q.spaceRows !== undefined ? q.spaceRows : 1}
-                                onChange={(e) => handlePaperStructureSetSpaceRows(partIdx, qIdx, e.target.value)}
-                                className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-emerald-50 font-extrabold text-emerald-800 cursor-pointer outline-none focus:border-emerald-500"
-                              >
-                                {[0, 1, 2, 3, 4, 5, 6].map(n => (
-                                  <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {q.marks.map((m, sIdx) => {
-                                const subLetter = String.fromCharCode(97 + sIdx)
-                                const currentBloom = q.blooms && q.blooms[sIdx] ? q.blooms[sIdx] : ''
-                                return (
-                                  <div key={sIdx} className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 shadow-2xs">
-                                    {q.subCount > 1 && <span className="text-xs font-extrabold text-emerald-800">{subLetter}.</span>}
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[11px] text-gray-400 font-medium">Marks:</span>
-                                      <input
-                                        type="number"
-                                        value={m}
-                                        onChange={(e) => handlePaperStructureSetMark(partIdx, qIdx, sIdx, e.target.value)}
-                                        className="border border-gray-300 rounded px-1 py-0.5 text-xs w-12 text-center font-bold focus:border-emerald-500 outline-none"
-                                        min="0"
-                                        max={assessment.maxMarks || 200}
-                                      />
-                                    </div>
-                                    <div className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2">
-                                      <span className="text-[11px] text-gray-400 font-medium">Bloom:</span>
-                                      <select
-                                        value={currentBloom}
-                                        onChange={(e) => handlePaperStructureSetBloom(partIdx, qIdx, sIdx, e.target.value)}
-                                        className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-gray-50 font-bold text-emerald-800 focus:border-emerald-500 outline-none cursor-pointer"
-                                      >
-                                        <option value="">—</option>
-                                        {BLOOM_OPTIONS.map(b => (
-                                          <option key={b} value={b}>{b}</option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                {/* Spacing Rows Formatting Control */}
+                <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-extrabold text-emerald-800">Format Spacing:</span>
+                    <span className="text-[11px] text-gray-500 font-medium">Add blank spacing rows between questions & sub-questions</span>
                   </div>
-
-                  <button
-                    onClick={() => handlePaperStructureAddQuestion(partIdx)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100"
-                  >
-                    <Plus size={14} /> Add Question
-                  </button>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-gray-500 font-bold">Sub-Q Space:</span>
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => handlePaperStructureSetGlobalSubSpaceRows(n)}
+                          className="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded text-[11px] font-bold transition"
+                          title={`Set ${n} spacing row(s) between sub-questions`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 border-l border-gray-200 pl-2">
+                      <span className="text-[11px] text-emerald-800 font-extrabold">Q-to-Q Space:</span>
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => handlePaperStructureSetGlobalSpaceRows(n)}
+                          className="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-extrabold transition shadow-2xs"
+                          title={`Set ${n} spacing row(s) between main questions`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              ))}
 
-              {/* Add Part Button (Final Exams Only) */}
-              {!isNoParts && (
+                {/* Parts Configuration */}
+                {paperStructureParts.map((part, partIdx) => (
+                  <div key={partIdx} className="bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
+                    {!isNoParts && (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={part.name}
+                            onChange={(e) => handlePaperStructureRenamePart(partIdx, e.target.value)}
+                            className="font-extrabold text-emerald-800 text-sm bg-transparent border-b border-dashed border-emerald-300 focus:border-emerald-600 outline-none px-1 py-0.5 w-28"
+                          />
+                          <span className="text-xs text-gray-400 font-medium">
+                            ({part.questions.length} question{part.questions.length !== 1 ? 's' : ''})
+                          </span>
+                        </div>
+                        {paperStructureParts.length > 1 && (
+                          <button
+                            onClick={() => handlePaperStructureRemovePart(partIdx)}
+                            className="flex items-center gap-1 px-2 py-1 text-red-500 hover:bg-red-50 rounded-lg text-xs font-bold"
+                          >
+                            <X size={14} /> Remove Part
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Questions within this part */}
+                    <div className="space-y-2">
+                      {part.questions.map((q, qIdx) => {
+                        let displayQNum = qIdx + 1
+                        for (let p = 0; p < partIdx; p++) {
+                          displayQNum += paperStructureParts[p].questions.length
+                        }
+                        return (
+                          <div key={qIdx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-gray-700">Question {displayQNum}</span>
+                              {part.questions.length > 1 && (
+                                <button
+                                  onClick={() => handlePaperStructureRemoveQuestion(partIdx, qIdx)}
+                                  className="flex items-center gap-0.5 px-1.5 py-0.5 text-red-500 hover:bg-red-50 rounded text-[11px] font-bold"
+                                >
+                                  <Minus size={12} /> Remove
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 flex-wrap">
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Sub-Qs:</label>
+                                <select
+                                  value={q.subCount}
+                                  onChange={(e) => handlePaperStructureSetSubCount(partIdx, qIdx, e.target.value)}
+                                  className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white font-bold w-14"
+                                >
+                                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                                </select>
+                              </div>
+                              {q.subCount > 1 && (
+                                <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
+                                  <label className="text-xs text-gray-500 font-medium whitespace-nowrap">All Sub-Q Spacing:</label>
+                                  <select
+                                    value={Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 1) : (q.subSpaceRows !== undefined ? q.subSpaceRows : (q.spaceRows !== undefined ? q.spaceRows : 1))}
+                                    onChange={(e) => handlePaperStructureSetSubSpaceRows(partIdx, qIdx, e.target.value)}
+                                    className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white font-bold text-gray-700 cursor-pointer outline-none focus:border-emerald-500"
+                                  >
+                                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                      <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
+                                <label className="text-xs text-emerald-800 font-extrabold whitespace-nowrap">Q-to-Q Spacing:</label>
+                                <select
+                                  value={q.qSpaceRows !== undefined ? q.qSpaceRows : (q.spaceRows !== undefined ? q.spaceRows : 1)}
+                                  onChange={(e) => handlePaperStructureSetQSpaceRows(partIdx, qIdx, e.target.value)}
+                                  className="border border-emerald-300 rounded-lg px-2 py-1 text-xs bg-emerald-50 font-extrabold text-emerald-900 cursor-pointer outline-none focus:border-emerald-500 shadow-2xs"
+                                >
+                                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                    <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {q.marks.map((m, sIdx) => {
+                                  const subLetter = String.fromCharCode(97 + sIdx)
+                                  const currentBloom = q.blooms && q.blooms[sIdx] ? q.blooms[sIdx] : ''
+                                  const subSpaceVal = Array.isArray(q.subSpaceRows)
+                                    ? (q.subSpaceRows[sIdx] !== undefined ? q.subSpaceRows[sIdx] : 1)
+                                    : (q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+
+                                  return (
+                                    <div key={sIdx} className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 shadow-2xs">
+                                      {q.subCount > 1 && <span className="text-xs font-extrabold text-emerald-800">{subLetter}.</span>}
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[11px] text-gray-400 font-medium">Marks:</span>
+                                        <input
+                                          type="number"
+                                          value={m}
+                                          onChange={(e) => handlePaperStructureSetMark(partIdx, qIdx, sIdx, e.target.value)}
+                                          className="border border-gray-300 rounded px-1 py-0.5 text-xs w-12 text-center font-bold focus:border-emerald-500 outline-none"
+                                          min="0"
+                                          max={assessment.maxMarks || 200}
+                                        />
+                                      </div>
+                                      <div className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2">
+                                        <span className="text-[11px] text-gray-400 font-medium">Bloom:</span>
+                                        <select
+                                          value={currentBloom}
+                                          onChange={(e) => handlePaperStructureSetBloom(partIdx, qIdx, sIdx, e.target.value)}
+                                          className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-gray-50 font-bold text-emerald-800 focus:border-emerald-500 outline-none cursor-pointer"
+                                        >
+                                          <option value="">—</option>
+                                          {BLOOM_OPTIONS.map(b => (
+                                            <option key={b} value={b}>{b}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      {/* Per Sub-Q Spacing option after this specific Sub-Q */}
+                                      {q.subCount > 1 && sIdx < q.marks.length - 1 && (
+                                        <div className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2">
+                                          <span className="text-[11px] text-gray-500 font-bold">Space after {subLetter}.:</span>
+                                          <select
+                                            value={subSpaceVal}
+                                            onChange={(e) => handlePaperStructureSetIndividualSubSpaceRows(partIdx, qIdx, sIdx, e.target.value)}
+                                            className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white font-bold text-gray-700 focus:border-emerald-500 outline-none cursor-pointer"
+                                            title={`Set blank spacing row(s) after sub-question ${subLetter}.`}
+                                          >
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                              <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <button
+                      onClick={() => handlePaperStructureAddQuestion(partIdx)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100"
+                    >
+                      <Plus size={14} /> Add Question
+                    </button>
+                  </div>
+                ))}
+
+                {/* Add Part Button (Final Exams Only) */}
+                {!isNoParts && (
+                  <button
+                    onClick={handlePaperStructureAddPart}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 w-full justify-center"
+                  >
+                    <Plus size={16} /> Add New Part
+                  </button>
+                )}
+
+                {/* Total Marks Summary */}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl">
+                  <span className="text-xs font-bold text-emerald-800">Total Marks</span>
+                  <span className="text-base font-extrabold text-emerald-700">
+                    {paperStructureParts.reduce((sum, p) => sum + p.questions.reduce((qs, q) => qs + q.marks.reduce((ms, m) => ms + (parseInt(m) || 0), 0), 0), 0)}
+                  </span>
+                </div>
+
+                {/* Live Preview */}
+                <div className="space-y-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Live Table Preview (Exact format that will be inserted)</span>
+                  <div
+                    className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner overflow-x-auto"
+                    dangerouslySetInnerHTML={{ __html: generateExamPaperStructureHtml(paperStructureParts, questions) }}
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5 flex-shrink-0">
                 <button
-                  onClick={handlePaperStructureAddPart}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 w-full justify-center"
+                  onClick={() => setShowPaperStructureModal(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs"
                 >
-                  <Plus size={16} /> Add New Part
+                  Cancel
                 </button>
-              )}
-
-              {/* Total Marks Summary */}
-              <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl">
-                <span className="text-xs font-bold text-emerald-800">Total Marks</span>
-                <span className="text-base font-extrabold text-emerald-700">
-                  {paperStructureParts.reduce((sum, p) => sum + p.questions.reduce((qs, q) => qs + q.marks.reduce((ms, m) => ms + (parseInt(m) || 0), 0), 0), 0)}
-                </span>
+                <button
+                  onClick={handleInsertPaperStructure}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow"
+                >
+                  <Plus size={16} /> {isEditingExistingTable ? 'Update Paper Structure (Preserve Text)' : 'Insert Paper Structure into Question Paper'}
+                </button>
               </div>
-
-              {/* Live Preview */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Live Table Preview (Exact format that will be inserted)</span>
-                <div
-                  className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner overflow-x-auto"
-                  dangerouslySetInnerHTML={{ __html: generateExamPaperStructureHtml(paperStructureParts, questions) }}
-                />
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5 flex-shrink-0">
-              <button
-                onClick={() => setShowPaperStructureModal(false)}
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleInsertPaperStructure}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow"
-              >
-                <Plus size={16} /> {isEditingExistingTable ? 'Update Paper Structure (Preserve Text)' : 'Insert Paper Structure into Question Paper'}
-              </button>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
-
-
 
       {/* 🧮 Upgraded Mathematical Equation Creator (Interactive AI + Presets + Symbols) */}
       {(showEquationModal || showAiEquationModal) && (
-        <div className="fixed inset-0 z-[10002] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-5xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
-                  <Sparkles size={20} className="text-emerald-200" />
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-5xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <Sparkles size={20} className="text-emerald-200" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">
+                      {editingEquationElement ? 'Edit Mathematical Equation' : 'Mathematical Equation Creator'}
+                    </h3>
+                    <p className="text-xs text-emerald-100">Create equations with AI, presets, or manual LaTeX — Math · ML · Signal · Image Processing</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-base leading-tight">
-                    {editingEquationElement ? 'Edit Mathematical Equation' : 'Mathematical Equation Creator'}
-                  </h3>
-                  <p className="text-xs text-emerald-100">Create equations with AI, presets, or manual LaTeX — Math · ML · Signal · Image Processing</p>
-                </div>
+                <button onClick={() => { setShowEquationModal(false); setShowAiEquationModal(false); }} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                  <X size={20} />
+                </button>
               </div>
-              <button onClick={() => { setShowEquationModal(false); setShowAiEquationModal(false); }} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50 text-sm">
 
@@ -5932,9 +6771,104 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             </div>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
 
       {/* Table, Multi-level List & Equation Alignment CSS */}
+      {/* Side-by-Side Question Comparison Inspection Modal (Portaled to document.body for guaranteed top visibility) */}
+      {comparisonModalData && createPortal(
+        <div className="fixed inset-0 z-[1000005] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn font-sans">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-800 to-teal-800 text-white p-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-white/10 rounded-lg backdrop-blur-md">
+                  <ShieldCheck size={20} className="text-emerald-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base tracking-tight">Question Similarity Inspection</h3>
+                  <p className="text-xs text-emerald-200 font-medium">Comparing against {comparisonModalData.archiveInfo}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setComparisonModalData(null)}
+                className="p-1.5 hover:bg-white/10 rounded-lg text-white/80 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body: Side-by-Side Columns */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* Score Banner */}
+              <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                <span className="text-xs font-bold text-slate-700">Semantic Content Overlap</span>
+                <span className={`px-3 py-1 rounded-full text-xs font-black border ${
+                  comparisonModalData.similarity > 60
+                    ? 'bg-rose-100 text-rose-900 border-rose-300'
+                    : comparisonModalData.similarity > 30
+                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                    : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                }`}>
+                  {comparisonModalData.similarity}% Match
+                </span>
+              </div>
+
+              {/* Side-by-Side Columns */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Current Question Column */}
+                <div className="border border-emerald-200 rounded-xl p-4 space-y-3 bg-emerald-50/20 shadow-2xs">
+                  <div className="flex items-center justify-between border-b pb-2 border-emerald-200">
+                    <span className="font-extrabold text-xs text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600"></span> Current Draft Question
+                    </span>
+                  </div>
+                  <div className="text-xs font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed">
+                    {comparisonModalData.currentQ}
+                  </div>
+                </div>
+
+                {/* Archived Question Column */}
+                <div className="border border-indigo-200 rounded-xl p-4 space-y-3 bg-indigo-50/20 shadow-2xs">
+                  <div className="flex items-center justify-between border-b pb-2 border-indigo-200">
+                    <span className="font-extrabold text-xs text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-indigo-600"></span> Archived Question ({comparisonModalData.archiveInfo})
+                    </span>
+                  </div>
+                  <div className="text-xs font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed">
+                    {comparisonModalData.archivedQ}
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Explanation Box */}
+              {comparisonModalData.explanation && (
+                <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5">
+                  <div className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
+                    <Sparkles size={15} className="text-amber-600" />
+                    AI Concept Analysis & Teacher Guidance
+                  </div>
+                  <p className="text-xs text-slate-700 font-medium leading-relaxed">
+                    {comparisonModalData.explanation}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setComparisonModalData(null)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Close Inspection
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       <style>{`
         @counter-style lower-alpha-bracket {
           system: alphabetic;
@@ -6076,26 +7010,73 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           margin-bottom: 4px;
         }
 
-        /* Mathematical Equation Styling */
+        /* Mathematical Equation Styling — Editor Badge View */
         .math-equation-wrapper {
           display: inline-flex !important;
           align-items: center !important;
           vertical-align: middle !important;
-          padding: 3px 8px !important;
-          margin: 4px 4px !important;
+          padding: 0 !important;
+          margin: 2px 3px !important;
           line-height: normal !important;
-          border: 1px dashed #93c5fd !important;
-          border-radius: 6px !important;
-          background-color: #f0f9ff !important;
+          border: none !important;
+          border-radius: 8px !important;
+          background-color: transparent !important;
           cursor: pointer;
           transition: all 0.15s ease;
           position: relative;
           z-index: 1;
         }
-        .math-equation-wrapper:hover {
-          border-color: #2563eb !important;
-          background-color: #e0f2fe !important;
-          box-shadow: 0 1px 4px rgba(37, 99, 235, 0.2);
+
+        /* The clickable badge shown in the RTE editor */
+        .math-eq-badge {
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 4px;
+          padding: 4px 12px 4px 8px !important;
+          border: 1.5px solid #93c5fd !important;
+          border-radius: 8px !important;
+          background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 50%, #ecfeff 100%) !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          color: #1e40af !important;
+          cursor: pointer !important;
+          transition: all 0.15s ease !important;
+          line-height: 1.4 !important;
+          vertical-align: middle !important;
+          white-space: nowrap !important;
+          max-width: 360px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+        .math-eq-badge code {
+          font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace !important;
+          font-size: 11px !important;
+          font-weight: 500 !important;
+          color: #1e3a5f !important;
+          background: rgba(59, 130, 246, 0.08) !important;
+          padding: 1px 5px !important;
+          border-radius: 4px !important;
+          max-width: 280px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+          display: inline-block !important;
+          vertical-align: middle !important;
+        }
+        .math-equation-wrapper:hover .math-eq-badge {
+          border-color: #3b82f6 !important;
+          background: linear-gradient(135deg, #dbeafe 0%, #e0f2fe 50%, #cffafe 100%) !important;
+          box-shadow: 0 2px 8px rgba(59, 130, 246, 0.18) !important;
+          transform: translateY(-1px);
+        }
+        .math-equation-wrapper:hover .math-eq-badge code {
+          color: #1e40af !important;
+          background: rgba(59, 130, 246, 0.14) !important;
+        }
+
+        /* Hide print content in editor view */
+        .math-eq-print-content {
+          display: none !important;
         }
 
         /* Prevent Syncfusion Editor line-height paragraph styles from inflating equation spacing */

@@ -234,6 +234,30 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
   const responseRate = totalStudents > 0 ? ((totalResponses / totalStudents) * 100).toFixed(1) : '0.0';
   const pendingResponses = Math.max(0, totalStudents - totalResponses);
 
+  const allSecs = survey?.allSections || offering?.allSections || []
+  let formattedSectionText = `Section-${offering?.section || 'A'}`
+  if (Array.isArray(allSecs) && allSecs.length > 1) {
+    const cleanList = Array.from(new Set(allSecs.map(s => (s || '').replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()))).filter(Boolean)
+    if (cleanList.length === 2) {
+      formattedSectionText = `Section ${cleanList[0]} and ${cleanList[1]}`
+    } else if (cleanList.length > 2) {
+      const last = cleanList.pop()
+      formattedSectionText = `Section ${cleanList.join(', ')} and ${last}`
+    }
+  } else if ((offering?.section || '').includes(',') || (offering?.section || '').includes('&') || (offering?.section || '').toLowerCase().includes('and')) {
+    const parts = (offering.section).split(/[,&/]|and/i).map(s => s.replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()).filter(Boolean)
+    const cleanParts = Array.from(new Set(parts))
+    if (cleanParts.length === 2) {
+      formattedSectionText = `Section ${cleanParts[0]} and ${cleanParts[1]}`
+    } else if (cleanParts.length > 2) {
+      const last = cleanParts.pop()
+      formattedSectionText = `Section ${cleanParts.join(', ')} and ${last}`
+    }
+  } else {
+    const singleSec = (offering?.section || 'A').replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()
+    formattedSectionText = `Section-${singleSec || 'A'}`
+  }
+
   // Match section stats against active teacher offering
   const activeSection = selectedSecName || offering?.section;
   const currentSecStats = sectionStats.find(s => 
@@ -492,7 +516,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
       <table>
         <tr><td><b>Course:</b></td><td>${course?.courseCode} — ${course?.courseName}</td></tr>
         <tr><td><b>Instructor:</b></td><td>${teacher?.fullName || 'N/A'}</td></tr>
-        <tr><td><b>Batch & Section:</b></td><td>Batch ${offering?.batch?.name} • Section ${offering?.section}</td></tr>
+        <tr><td><b>Batch & Section:</b></td><td>Batch ${offering?.batch?.name} • ${formattedSectionText}</td></tr>
       </table>
       <h2>II. Executive Summary</h2>
       <div class="summary-box">

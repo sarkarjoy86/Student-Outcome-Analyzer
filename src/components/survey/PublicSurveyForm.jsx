@@ -79,6 +79,36 @@ export default function PublicSurveyForm({ evaluationId, onBackToHome }) {
     return tDate > dDate
   }, [survey])
 
+  // Helper to format section text (e.g. "Section A and B" if common across multiple sections, or "Section-A")
+  const formattedSectionText = useMemo(() => {
+    const offering = survey?.courseOfferingId
+    const allSecs = survey?.allSections || offering?.allSections || []
+    if (Array.isArray(allSecs) && allSecs.length > 1) {
+      const cleanList = Array.from(new Set(allSecs.map(s => (s || '').replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()))).filter(Boolean)
+      if (cleanList.length === 2) {
+        return `Section ${cleanList[0]} and ${cleanList[1]}`
+      } else if (cleanList.length > 2) {
+        const last = cleanList.pop()
+        return `Section ${cleanList.join(', ')} and ${last}`
+      }
+    }
+
+    const rawSec = offering?.section || survey?.courseOfferingId?.section || ''
+    if (rawSec.includes(',') || rawSec.includes('&') || rawSec.includes('/') || rawSec.toLowerCase().includes('and')) {
+      const parts = rawSec.split(/[,&/]|and/i).map(s => s.replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()).filter(Boolean)
+      const cleanParts = Array.from(new Set(parts))
+      if (cleanParts.length === 2) {
+        return `Section ${cleanParts[0]} and ${cleanParts[1]}`
+      } else if (cleanParts.length > 2) {
+        const last = cleanParts.pop()
+        return `Section ${cleanParts.join(', ')} and ${last}`
+      }
+    }
+
+    const singleSec = (rawSec || 'A').replace(/^(section|sec)[\s-_]*/i, '').trim().toUpperCase()
+    return `Section-${singleSec || 'A'}`
+  }, [survey])
+
   const validate = () => {
     const errs = {}
 
@@ -321,7 +351,7 @@ export default function PublicSurveyForm({ evaluationId, onBackToHome }) {
           <div className="space-y-1.5 pt-3.5 text-xs text-gray-950 border-t border-gray-150 leading-relaxed font-bold">
             <p>Instructor Name: <span className="text-gray-900 font-extrabold">{teacher?.fullName || 'N/A'}</span></p>
             <p>Course Title: <span className="text-gray-900 font-extrabold">{course?.courseName || 'N/A'}</span></p>
-            <p>Course Code: <span className="text-gray-900 font-extrabold">{course?.courseCode}, Section-{offering?.section}</span></p>
+            <p>Course Code: <span className="text-gray-900 font-extrabold">{course?.courseCode}, {formattedSectionText}</span></p>
             <p>Batch: <span className="text-gray-900 font-extrabold">{offering?.batch?.name ? offering.batch.name.replace(/^batch\s*/i, '') : 'N/A'}</span></p>
           </div>
         </div>

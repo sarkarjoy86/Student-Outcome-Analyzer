@@ -116,8 +116,10 @@ async function fetchWithDefaults(url, options = {}) {
 async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.message || "API request failed.");
+    const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `API request failed (HTTP ${response.status}).`;
+    const error = new Error(errorMsg);
     error.response = data;
+    error.status = response.status;
     throw error;
   }
   if (response._cachedUrl && !response._isCached) {
@@ -530,6 +532,14 @@ export const apiService = {
     const res = await fetchWithDefaults(`${API_BASE}/api/teacher/question-bank/${id}/duplicate`, {
       method: "POST",
       body: JSON.stringify({ targetCourseOfferingId }),
+    });
+    return handleResponse(res);
+  },
+
+  async checkQuestionSimilarity(payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/ai/similarity-check`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
     return handleResponse(res);
   },

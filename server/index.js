@@ -40,7 +40,8 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 app.get("/api/health", (_req, res) => {
@@ -59,6 +60,13 @@ app.use("/api/ai", aiRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ message: "Not Found" });
+});
+
+// Global error handler — catches body parsing errors, uncaught route errors, etc.
+app.use((err, _req, res, _next) => {
+  console.error('[Global Error Handler]:', err.type || '', err.message);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ success: false, message: err.message || 'Internal Server Error' });
 });
 
 app.listen(PORT, () => {
