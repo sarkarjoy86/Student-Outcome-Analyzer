@@ -14,7 +14,7 @@ import {
   PasteCleanup,
   Count
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Trash2 } from 'lucide-react'
 import mammoth from 'mammoth'
 import html2canvas from 'html2canvas'
 
@@ -108,6 +108,66 @@ function formatAiTextToHtml(text = '') {
   })
 
   return htmlBlocks.join('')
+}
+
+// Helper: Intelligently distribute total exam marks across generated questions
+function calculateQuestionMarkDistribution(totalMarks, numQuestions) {
+  const marks = Math.max(1, parseInt(totalMarks) || 10)
+  const count = Math.max(1, Math.min(5, parseInt(numQuestions) || 1))
+  const base = Math.floor(marks / count)
+  const remainder = marks % count
+  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0))
+}
+
+// Helper: Bloom's Taxonomy Cognitive Hierarchy & Pedagogical Action Verbs
+const BLOOM_TAXONOMY_MAP = {
+  'C1': {
+    level: 'C1',
+    name: 'Remember',
+    verbs: ['Define', 'List', 'State', 'Identify', 'Recall', 'Name', 'Outline'],
+    cognitiveExpectation: 'Tests direct memory and factual recall of definitions, terminology, formulas, and foundational principles.',
+    promptDirective: 'Ask direct definition, syntax, or identification questions without requiring analytical elaboration.'
+  },
+  'C2': {
+    level: 'C2',
+    name: 'Understand',
+    verbs: ['Explain', 'Describe', 'Discuss', 'Distinguish', 'Summarize', 'Interpret', 'Illustrate'],
+    cognitiveExpectation: 'Tests comprehension of concepts, internal mechanisms, and explaining why algorithms/methods work in own words.',
+    promptDirective: 'Require students to explain principles, interpret workflows, or describe step-by-step executions.'
+  },
+  'C3': {
+    level: 'C3',
+    name: 'Apply',
+    verbs: ['Calculate', 'Solve', 'Implement', 'Demonstrate', 'Trace', 'Execute', 'Construct'],
+    cognitiveExpectation: 'Tests practical problem-solving: applying formulas, algorithms, or code to concrete inputs/data.',
+    promptDirective: 'Provide specific input values, step-by-step trace tasks, code implementation exercises, or numerical calculations.'
+  },
+  'C4': {
+    level: 'C4',
+    name: 'Analyze',
+    verbs: ['Analyze', 'Compare', 'Contrast', 'Differentiate', 'Deconstruct', 'Examine', 'Trade-off Analysis'],
+    cognitiveExpectation: 'Tests breaking down systems, comparing approaches, diagnosing bottlenecks, and evaluating trade-offs (e.g. time/space complexity, edge cases).',
+    promptDirective: 'Require rigorous comparative analysis (e.g. Approach A vs Approach B), time/space complexity derivations, or boundary case diagnosis.'
+  },
+  'C5': {
+    level: 'C5',
+    name: 'Evaluate',
+    verbs: ['Evaluate', 'Justify', 'Critique', 'Appraise', 'Defend', 'Prioritize', 'Validate'],
+    cognitiveExpectation: 'Tests critical judgment, defending technical decisions, and evaluating against strict performance criteria.',
+    promptDirective: 'Ask students to critique a design or algorithm, justify the optimal choice under strict trade-offs, or validate correctness.'
+  },
+  'C6': {
+    level: 'C6',
+    name: 'Create',
+    verbs: ['Design', 'Formulate', 'Develop', 'Architect', 'Synthesize', 'Devise'],
+    cognitiveExpectation: 'Tests synthesis: designing an end-to-end architecture, novel algorithm, or comprehensive solution from requirements.',
+    promptDirective: 'Provide real-world engineering constraints and require designing an innovative algorithm, architecture, or modular framework.'
+  }
+}
+
+function getBloomInfo(bloomLevelStr) {
+  const code = (bloomLevelStr || '').substring(0, 2).toUpperCase()
+  return BLOOM_TAXONOMY_MAP[code] || BLOOM_TAXONOMY_MAP['C4']
 }
 
 // Helper: Render modals via Portal targeting active fullscreen element (HTML5, Custom Fullscreen, or Syncfusion RTE) or document.body
@@ -846,7 +906,50 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   })
   const [questionGenResults, setQuestionGenResults] = useState([]) // Array of generated questions
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0)
+  const [selectedQuestionIndices, setSelectedQuestionIndices] = useState([0]) // Multi-selection array
   const [isGeneratingQuestion, setIsGeneratingQuestion] = useState(false)
+
+  // Cache key for persisting generated questions and form inputs until explicitly cleared
+  const QP_GEN_CACHE_KEY = `obe_qp_ai_gen_${offering?._id || 'global'}`
+
+  // Restore cached question generator state on load
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(QP_GEN_CACHE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (parsed.params) {
+          setQuestionGenParams(prev => ({ ...prev, ...parsed.params }))
+        }
+        if (Array.isArray(parsed.results) && parsed.results.length > 0) {
+          setQuestionGenResults(parsed.results)
+          if (Array.isArray(parsed.selectedIndices) && parsed.selectedIndices.length > 0) {
+            setSelectedQuestionIndices(parsed.selectedIndices)
+          } else {
+            setSelectedQuestionIndices(parsed.results.map((_, i) => i))
+          }
+          setSelectedQuestionIndex(0)
+        }
+      }
+    } catch (e) {
+      console.warn('Could not restore question generator cache:', e)
+    }
+  }, [offering?._id])
+
+  // Sync question generator state to localStorage so closing/re-opening/page revisit preserves it
+  useEffect(() => {
+    try {
+      if (questionGenResults.length > 0 || (questionGenParams.topic && questionGenParams.topic.trim())) {
+        localStorage.setItem(QP_GEN_CACHE_KEY, JSON.stringify({
+          params: questionGenParams,
+          results: questionGenResults,
+          selectedIndices: selectedQuestionIndices
+        }))
+      }
+    } catch (e) {
+      console.warn('Could not save question generator cache:', e)
+    }
+  }, [questionGenResults, questionGenParams, selectedQuestionIndices, offering?._id])
 
   // Header Customization State (Editable Header Info & Notes)
   const [showEditHeaderModal, setShowEditHeaderModal] = useState(false)
@@ -1765,7 +1868,22 @@ Equation description: "${aiEquationPrompt}"`
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+
+    const editorDoc = rteRef.current?.contentModule?.getDocument()
+    if (editorDoc) {
+      try {
+        editorDoc.addEventListener('mousedown', handleClickOutside)
+      } catch (err) {}
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      if (editorDoc) {
+        try {
+          editorDoc.removeEventListener('mousedown', handleClickOutside)
+        } catch (err) {}
+      }
+    }
   }, [showAiMenu])
 
   const loadPaperData = async () => {
@@ -2940,11 +3058,13 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   // AI Commands handler
-  const handleAiButtonClick = () => {
-    const btn = document.getElementById('ai-commands-btn')
+  const handleAiButtonClick = (e) => {
+    const btn = e?.currentTarget || e?.target?.closest('#ai-commands-btn') || document.getElementById('ai-commands-btn')
     if (btn) {
       const rect = btn.getBoundingClientRect()
-      setAiMenuPosition({ top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - 260) })
+      const menuWidth = 260
+      const left = Math.max(10, Math.min(rect.left, window.innerWidth - menuWidth))
+      setAiMenuPosition({ top: rect.bottom + 4, left })
     }
     setShowAiMenu(prev => !prev)
   }
@@ -3053,32 +3173,106 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   // --- AI Creation Tools Handlers (Enhanced) ---
+  const handleClearQuestionGen = () => {
+    if (window.confirm('Clear all generated questions and reset the generator?')) {
+      setQuestionGenResults([])
+      setSelectedQuestionIndices([])
+      setSelectedQuestionIndex(0)
+      setQuestionGenParams(prev => ({
+        ...prev,
+        topic: '',
+        sampleQuestion: ''
+      }))
+      try {
+        localStorage.removeItem(QP_GEN_CACHE_KEY)
+      } catch (e) {}
+    }
+  }
+
+  const toggleQuestionSelection = (index) => {
+    setSelectedQuestionIndices(prev => {
+      if (prev.includes(index)) {
+        return prev.filter(i => i !== index)
+      } else {
+        return [...prev, index].sort((a, b) => a - b)
+      }
+    })
+  }
+
+  const selectAllQuestions = () => {
+    setSelectedQuestionIndices(questionGenResults.map((_, i) => i))
+  }
+
+  const deselectAllQuestions = () => {
+    setSelectedQuestionIndices([])
+  }
+
   const handleGenerateQuestion = async () => {
     if (!questionGenParams.topic) {
       alert('Please enter a topic or syllabus description.')
       return
     }
     setIsGeneratingQuestion(true)
-    setQuestionGenResults([])
 
+    const markDist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenParams.numQuestions)
+    const count = markDist.length
+
+    const bloomInfo = getBloomInfo(questionGenParams.bloomLevel)
     const selectedCoObj = coDetails.find(item => item.code === questionGenParams.selectedCo)
-    const coInfo = selectedCoObj && selectedCoObj.code && selectedCoObj.code !== 'NONE'
-      ? `Target Course Outcome (CO): ${selectedCoObj.code}${selectedCoObj.description ? ` - "${selectedCoObj.description}"` : ''}.
-CRITICAL CO MANDATE: The generated question MUST explicitly target, test, and assess the capabilities described in this Course Outcome (${selectedCoObj.code}).`
-      : (questionGenParams.selectedCo && questionGenParams.selectedCo !== 'NONE'
-          ? `Target Course Outcome (CO): ${questionGenParams.selectedCo}. The question MUST directly align with this Course Outcome.`
-          : '')
+    const targetCoCode = selectedCoObj?.code || questionGenParams.selectedCo || 'CO'
+    const coDescription = selectedCoObj?.description || (offering?.course?.name ? `Course Outcome for ${offering.course.name}` : '')
 
-    const prompt = `Generate ${questionGenParams.numQuestions || 1} distinct university exam question option(s) for assessment '${questionGenParams.examType}', course '${offering?.course?.name || ''}', total marks ${questionGenParams.totalMarks}, Bloom's taxonomy level '${questionGenParams.bloomLevel}'.
-${coInfo}
-Topic/Syllabus: '${questionGenParams.topic}'.
-${questionGenParams.sampleQuestion ? `Reference style: '${questionGenParams.sampleQuestion}'` : ''}
+    const markBreakdownText = markDist.map((m, idx) => {
+      const qName = count <= 2 ? `Question ${String.fromCharCode(65 + idx)}` : `Question ${idx + 1}`
+      return `${qName}: ${m} Marks`
+    }).join(', ')
 
-STRICT INSTRUCTIONS:
-1. If generating multiple questions, separate each distinct question option with the EXACT delimiter "===QUESTION_BREAK===".
-2. Format each question with sub-parts (a), (b) and mark distributions [X Marks] totaling ${questionGenParams.totalMarks}.
-3. Ensure every question option strictly reflects the Target Course Outcome (${questionGenParams.selectedCo || 'General'}) and Bloom's level '${questionGenParams.bloomLevel}'.
-4. Return clean, professional text without conversational intro.`
+    const prompt = `You are a distinguished university professor and Outcome-Based Education (OBE) accreditation expert designing an official exam question paper.
+
+EXAMINATION CONTEXT:
+- Course: ${offering?.course?.name || offering?.course?.code || 'University Course'}
+- Assessment: ${questionGenParams.examType}
+- Total Allocated Marks: ${questionGenParams.totalMarks} Marks
+- Question Count: Exactly ${count} question(s)
+- Mark Allocation: ${markBreakdownText} (Total = ${questionGenParams.totalMarks} Marks)
+- Topic / Syllabus Description: ${questionGenParams.topic}
+${questionGenParams.sampleQuestion ? `- Reference Style / Format Pattern: "${questionGenParams.sampleQuestion}"` : ''}
+
+========================================================================
+MANDATORY OBE CRITERION 1: BLOOM'S TAXONOMY LEVEL [${bloomInfo.level} - ${bloomInfo.name}]
+========================================================================
+Every question MUST strictly target Bloom's Cognitive Level ${bloomInfo.level} (${bloomInfo.name}):
+- Cognitive Demand: ${bloomInfo.cognitiveExpectation}
+- Mandatory Action Verbs: You MUST incorporate pedagogical action verbs from this list: ${bloomInfo.verbs.join(', ')}.
+- Pedagogical Directive: ${bloomInfo.promptDirective}
+- COGNITIVE RIGOR CONSTRAINT: ${bloomInfo.level === 'C1' || bloomInfo.level === 'C2' ? 'Keep questions focused on definitions, conceptual explanations, or principles.' : `DO NOT write simple "Define X" or "What is Y" recall questions. The questions MUST demand genuine ${bloomInfo.name.toLowerCase()} depth matching ${bloomInfo.level}.`}
+
+========================================================================
+MANDATORY OBE CRITERION 2: TARGET COURSE OUTCOME (${targetCoCode})
+========================================================================
+${selectedCoObj && selectedCoObj.code && selectedCoObj.code !== 'NONE' ? `Target Course Outcome: ${targetCoCode}
+Competency Statement: "${coDescription}"
+- Direct Assessment Mandate: The question scenario, problem statement, and expected solution MUST directly test, assess, and evaluate the specific skill, knowledge area, and competency described in ${targetCoCode}.
+- Students answering these questions must directly demonstrate attainment of ${targetCoCode}.` : `Course Outcome Context: Align all questions with the core learning outcomes of ${offering?.course?.name || 'this course'}.`}
+
+========================================================================
+EXAMINATION STRUCTURE & OBE TAGGING:
+========================================================================
+1. Generate EXACTLY ${count} separate question(s) dividing ${questionGenParams.totalMarks} marks (${markBreakdownText}).
+2. Tagging Format:
+   Each question MUST start with an explicit OBE header including Question Label, CO tag, Bloom tag, and Mark allocation.
+   Examples:
+   - If 1 question: "Question 1 [${targetCoCode}, ${bloomInfo.level}] [${markDist[0]} Marks]"
+   - If 2 questions:
+     "Question A [${targetCoCode}, ${bloomInfo.level}] [${markDist[0]} Marks]"
+     "Question B [${targetCoCode}, ${bloomInfo.level}] [${markDist[1]} Marks]"
+   - If 3+ questions:
+     "Question 1 [${targetCoCode}, ${bloomInfo.level}] [${markDist[0]} Marks]"
+     ...
+3. If a question is worth 6 or more marks, divide it into sub-parts (e.g. (a) [X Marks] [${targetCoCode}, ${bloomInfo.level}] and (b) [Y Marks] [${targetCoCode}, ${bloomInfo.level}]) using appropriate Bloom action verbs.
+4. Delimiter: Separate each distinct question with the EXACT line:
+===QUESTION_BREAK===
+5. Output ONLY the finalized exam questions ready for the question paper. Do NOT include conversational preambles or code fences.`
 
     try {
       const token = localStorage.getItem('obe-auth-token')
@@ -3089,12 +3283,26 @@ STRICT INSTRUCTIONS:
       })
       const data = await response.json()
       if (data.success && data.content) {
-        const questionsArray = data.content
+        let questionsArray = data.content
           .split(/===QUESTION_BREAK===/i)
           .map(q => q.trim())
           .filter(Boolean)
-        setQuestionGenResults(questionsArray.length > 0 ? questionsArray : [data.content])
+
+        if (questionsArray.length < count && count > 1) {
+          const fallbackSplit = data.content
+            .split(/\n(?=(?:Question\s+[B-Z\d]+|Q[2-9]+|\b\d+\.\s+[A-Z]))/i)
+            .map(q => q.trim())
+            .filter(Boolean)
+          if (fallbackSplit.length === count) {
+            questionsArray = fallbackSplit
+          }
+        }
+
+        const finalQuestions = questionsArray.length > 0 ? questionsArray : [data.content]
+        setQuestionGenResults(finalQuestions)
         setSelectedQuestionIndex(0)
+        // Select all generated questions by default so user can easily insert both/all or toggle
+        setSelectedQuestionIndices(finalQuestions.map((_, i) => i))
       } else {
         alert(data.message || 'Question generation failed.')
       }
@@ -3106,17 +3314,28 @@ STRICT INSTRUCTIONS:
   }
 
   const handleInsertQuestionResult = () => {
-    const selectedText = questionGenResults[selectedQuestionIndex]
-    if (!selectedText || !rteRef.current) return
+    const indicesToInsert = selectedQuestionIndices.length > 0
+      ? [...selectedQuestionIndices].sort((a, b) => a - b)
+      : [selectedQuestionIndex]
+
+    const toInsertTexts = indicesToInsert
+      .map(i => questionGenResults[i])
+      .filter(Boolean)
+
+    if (toInsertTexts.length === 0 || !rteRef.current) return
     const editor = rteRef.current
     editor.focusIn()
     if (editor.formatter && typeof editor.formatter.saveData === 'function') {
       editor.formatter.saveData()
     }
-    const htmlToInsert = formatAiTextToHtml(selectedText)
+
+    const htmlToInsert = toInsertTexts
+      .map(text => formatAiTextToHtml(text))
+      .join('<p style="clear: both;"><br></p>')
+
     editor.executeCommand('insertHTML', htmlToInsert)
+    // NOTE: Keep questionGenResults intact! Do NOT clear so user can reopen modal and see them until clicking clean/clear!
     setShowQuestionGenModal(false)
-    setQuestionGenResults([])
   }
 
   // Edge Form Sync Handlers
@@ -4793,113 +5012,115 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
       {/* AI Commands Dropdown Menu (System Theme) */}
       {showAiMenu && (
-        <div
-          className="ai-command-menu fixed z-[10001] bg-white rounded-xl shadow-2xl border border-emerald-200/80 p-1.5 w-[240px] font-sans text-xs animate-in fade-in duration-150"
-          style={{ top: aiMenuPosition.top, left: aiMenuPosition.left }}
-        >
-          {/* Menu Header Bar */}
-          <div className="bg-gradient-to-r from-emerald-800 to-teal-800 text-white font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-lg flex items-center justify-between shadow-sm mb-1.5">
-            <span className="flex items-center gap-1.5">
-              <Sparkles size={12} className="text-emerald-300" />
-              AI ASSISTANT
-            </span>
-            <span className="text-[9px] text-emerald-200/90 font-normal">OBE TOOLS</span>
-          </div>
-
-          {/* AI CREATION TOOLS (NEW) */}
-          <div className="px-2 py-1 text-[9px] font-bold text-emerald-800 uppercase tracking-wider">AI Creation Tools</div>
-          <button
-            onClick={() => { setShowAiMenu(false); setShowQuestionGenModal(true); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
+        <ModalPortal>
+          <div
+            className="ai-command-menu fixed z-[9999999] bg-white rounded-xl shadow-2xl border border-emerald-200/80 p-1.5 w-[240px] font-sans text-xs animate-in fade-in duration-150"
+            style={{ top: aiMenuPosition.top, left: aiMenuPosition.left }}
           >
-            <span className="text-sm">🎯</span>
-            <span>Automated Question Gen</span>
-          </button>
-          <button
-            onClick={() => { setShowAiMenu(false); setShowTableGenModal(true); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
-          >
-            <span className="text-sm">📊</span>
-            <span>Automated Data Table</span>
-          </button>
+            {/* Menu Header Bar */}
+            <div className="bg-gradient-to-r from-emerald-800 to-teal-800 text-white font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-lg flex items-center justify-between shadow-sm mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <Sparkles size={12} className="text-emerald-300" />
+                AI ASSISTANT
+              </span>
+              <span className="text-[9px] text-emerald-200/90 font-normal">OBE TOOLS</span>
+            </div>
 
-          <div className="border-t border-gray-100 my-1.5"></div>
-
-          {/* Quick Commands */}
-          <div className="px-2 py-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider">Text Refinement (Select text)</div>
-          {[
-            { icon: '✨', label: 'Improve Content', cmd: 'improve' },
-            { icon: '📝', label: 'Shorten', cmd: 'shorten' },
-            { icon: '📖', label: 'Elaborate', cmd: 'elaborate' },
-            { icon: '📋', label: 'Summarize', cmd: 'summarize' },
-            { icon: '✅', label: 'Check Grammar & Spelling', cmd: 'grammar' },
-          ].map(item => (
+            {/* AI CREATION TOOLS (NEW) */}
+            <div className="px-2 py-1 text-[9px] font-bold text-emerald-800 uppercase tracking-wider">AI Creation Tools</div>
             <button
-              key={item.cmd}
-              onClick={() => handleAICommand(item.cmd)}
-              className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left"
+              onClick={() => { setShowAiMenu(false); setShowQuestionGenModal(true); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
             >
-              <span className="text-sm">{item.icon}</span>
-              <span>{item.label}</span>
+              <span className="text-sm">🎯</span>
+              <span>Automated Question Gen</span>
             </button>
-          ))}
+            <button
+              onClick={() => { setShowAiMenu(false); setShowTableGenModal(true); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
+            >
+              <span className="text-sm">📊</span>
+              <span>Automated Data Table</span>
+            </button>
 
-          <div className="border-t border-gray-100 my-1"></div>
+            <div className="border-t border-gray-100 my-1.5"></div>
 
-          {/* Change Tone submenu */}
-          <div className="group relative">
-            <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
-              <div className="flex items-center gap-2.5">
-                <span className="text-sm">🎭</span>
-                <span>Change Tone</span>
+            {/* Quick Commands */}
+            <div className="px-2 py-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider">Text Refinement (Select text)</div>
+            {[
+              { icon: '✨', label: 'Improve Content', cmd: 'improve' },
+              { icon: '📝', label: 'Shorten', cmd: 'shorten' },
+              { icon: '📖', label: 'Elaborate', cmd: 'elaborate' },
+              { icon: '📋', label: 'Summarize', cmd: 'summarize' },
+              { icon: '✅', label: 'Check Grammar & Spelling', cmd: 'grammar' },
+            ].map(item => (
+              <button
+                key={item.cmd}
+                onClick={() => handleAICommand(item.cmd)}
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left"
+              >
+                <span className="text-sm">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+
+            <div className="border-t border-gray-100 my-1"></div>
+
+            {/* Change Tone submenu */}
+            <div className="group relative">
+              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-sm">🎭</span>
+                  <span>Change Tone</span>
+                </div>
+                <ChevronRight size={14} className="text-emerald-600/70" />
+              </button>
+              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
+                {['Academic', 'Formal', 'Professional', 'Casual', 'Friendly'].map(tone => (
+                  <button key={tone} onClick={() => handleAICommand('tone', tone)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
+                    {tone}
+                  </button>
+                ))}
               </div>
-              <ChevronRight size={14} className="text-emerald-600/70" />
-            </button>
-            <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
-              {['Academic', 'Formal', 'Professional', 'Casual', 'Friendly'].map(tone => (
-                <button key={tone} onClick={() => handleAICommand('tone', tone)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                  {tone}
-                </button>
-              ))}
+            </div>
+
+            {/* Change Style submenu */}
+            <div className="group relative">
+              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-sm">🎨</span>
+                  <span>Change Style</span>
+                </div>
+                <ChevronRight size={14} className="text-emerald-600/70" />
+              </button>
+              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
+                {['Formal', 'Informal', 'Concise', 'Detailed'].map(style => (
+                  <button key={style} onClick={() => handleAICommand('style', style)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
+                    {style}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Translate submenu (Restricted to Bengali & English) */}
+            <div className="group relative">
+              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-sm">🌐</span>
+                  <span>Translate</span>
+                </div>
+                <ChevronRight size={14} className="text-emerald-600/70" />
+              </button>
+              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[150px] hidden group-hover:block animate-in fade-in duration-150">
+                {['Bengali', 'English'].map(lang => (
+                  <button key={lang} onClick={() => handleAICommand('translate', lang)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
+                    {lang}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-
-          {/* Change Style submenu */}
-          <div className="group relative">
-            <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
-              <div className="flex items-center gap-2.5">
-                <span className="text-sm">🎨</span>
-                <span>Change Style</span>
-              </div>
-              <ChevronRight size={14} className="text-emerald-600/70" />
-            </button>
-            <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
-              {['Formal', 'Informal', 'Concise', 'Detailed'].map(style => (
-                <button key={style} onClick={() => handleAICommand('style', style)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                  {style}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Translate submenu (Restricted to Bengali & English) */}
-          <div className="group relative">
-            <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
-              <div className="flex items-center gap-2.5">
-                <span className="text-sm">🌐</span>
-                <span>Translate</span>
-              </div>
-              <ChevronRight size={14} className="text-emerald-600/70" />
-            </button>
-            <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[150px] hidden group-hover:block animate-in fade-in duration-150">
-              {['Bengali', 'English'].map(lang => (
-                <button key={lang} onClick={() => handleAICommand('translate', lang)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                  {lang}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* AI Revision Preview & Approval Modal */}
@@ -5080,39 +5301,103 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
                 </div>
 
-                {/* CO Details & Statement Info Card */}
+                {/* OBE Alignment Live Card: Shows both Target CO and Bloom's Taxonomy Details */}
                 {(() => {
                   const selectedCoObj = coDetails.find(item => item.code === questionGenParams.selectedCo)
-                  if (!selectedCoObj || !questionGenParams.selectedCo) return null
+                  const bloomInfo = getBloomInfo(questionGenParams.bloomLevel)
 
                   return (
-                    <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
-                      <div className="p-1 bg-emerald-100 text-emerald-800 rounded-lg shrink-0 mt-0.5">
-                        <Sparkles size={14} />
-                      </div>
-                      <div>
-                        <span className="font-extrabold text-emerald-900">{selectedCoObj.code} Details: </span>
-                        <span className="font-medium text-emerald-800">
-                          {selectedCoObj.description || `Course Outcome ${selectedCoObj.code.replace('CO', '')} for ${offering?.course?.name || 'this course'}.`}
+                    <div className="p-3.5 bg-gradient-to-r from-emerald-50 via-teal-50 to-green-50 border border-emerald-200 rounded-xl text-xs space-y-2 shadow-sm animate-in fade-in duration-200">
+                      <div className="flex items-center justify-between border-b border-emerald-200/60 pb-1.5">
+                        <span className="font-extrabold text-emerald-900 flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-emerald-700" />
+                          OBE Alignment Live Verification
                         </span>
+                        <div className="flex items-center gap-2">
+                          <span className="bg-emerald-200/80 text-emerald-950 font-bold px-2 py-0.5 rounded text-[10px]">
+                            CO: {questionGenParams.selectedCo || 'General'}
+                          </span>
+                          <span className="bg-teal-200/80 text-teal-950 font-bold px-2 py-0.5 rounded text-[10px]">
+                            Bloom: {bloomInfo.level} ({bloomInfo.name})
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-emerald-950">
+                        <div className="bg-white/80 p-2 rounded-lg border border-emerald-200/70">
+                          <div className="font-bold text-[11px] text-emerald-900 mb-0.5 flex items-center gap-1">
+                            <Target size={12} className="text-emerald-600" />
+                            Target CO Competency:
+                          </div>
+                          <div className="text-[11px] text-emerald-800 leading-snug">
+                            {selectedCoObj?.description || (questionGenParams.selectedCo ? `Aligns directly with ${questionGenParams.selectedCo} for ${offering?.course?.name || 'this course'}.` : 'General Course Outcome alignment across the course curriculum.')}
+                          </div>
+                        </div>
+
+                        <div className="bg-white/80 p-2 rounded-lg border border-teal-200/70">
+                          <div className="font-bold text-[11px] text-teal-900 mb-0.5 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-600"></span>
+                            Bloom Cognitive Depth & Verbs:
+                          </div>
+                          <div className="text-[11px] text-teal-800 leading-snug">
+                            <span className="font-semibold text-teal-900">Required Verbs: </span>
+                            {bloomInfo.verbs.slice(0, 5).join(', ')}.
+                            <div className="text-[10px] text-gray-500 mt-0.5">
+                              {bloomInfo.cognitiveExpectation}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )
                 })()}
 
                 <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1">Number of Question Options to Generate</label>
-                  <div className="flex gap-3 items-center">
-                    {[1, 2, 3, 4, 5].map(n => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setQuestionGenParams({ ...questionGenParams, numQuestions: n })}
-                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${questionGenParams.numQuestions === n ? 'bg-emerald-700 text-white border-emerald-800 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                      >
-                        Generate {n} Option{n > 1 ? 's' : ''}
-                      </button>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block font-bold text-gray-700 text-xs">
+                      Number of Questions to Generate (Splits {questionGenParams.totalMarks} Total Marks)
+                    </label>
+                    <span className="text-[11px] text-emerald-800 font-bold bg-emerald-100/70 px-2 py-0.5 rounded">
+                      Intelligent Mark Split
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[1, 2, 3, 4, 5].map(n => {
+                      const dist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, n)
+                      const isSelected = questionGenParams.numQuestions === n
+                      const allEqual = dist.every(m => m === dist[0])
+                      const markLabel = allEqual ? `${dist[0]}M each` : `${dist.join('M+')}`
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => setQuestionGenParams({ ...questionGenParams, numQuestions: n })}
+                          className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-400/30'
+                              : 'bg-white text-gray-700 border-gray-300 hover:bg-emerald-50 hover:border-emerald-300'
+                          }`}
+                        >
+                          <span className="text-xs">{n === 1 ? '1 Question' : `${n} Questions`}</span>
+                          <span className={`text-[10px] mt-0.5 font-semibold ${isSelected ? 'text-emerald-200' : 'text-emerald-700'}`}>
+                            ({markLabel})
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  
+                  {/* Live Allocation Preview */}
+                  <div className="mt-2 text-[11px] text-emerald-950 bg-emerald-50/90 px-3 py-1.5 rounded-lg border border-emerald-200 flex flex-wrap items-center gap-1.5 font-medium shadow-xs">
+                    <span className="font-bold text-emerald-800">⚡ Split Breakdown:</span>
+                    {calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenParams.numQuestions).map((m, i) => (
+                      <span key={i} className="bg-white px-2 py-0.5 rounded border border-emerald-300 font-bold text-emerald-800 shadow-xs">
+                        {questionGenParams.numQuestions <= 2 ? `Question ${String.fromCharCode(65 + i)}` : `Q${i + 1}`}: {m} Marks
+                      </span>
                     ))}
+                    <span className="text-gray-500 font-semibold ml-auto">
+                      = {questionGenParams.totalMarks} Total Marks
+                    </span>
                   </div>
                 </div>
 
@@ -5142,54 +5427,214 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   <button
                     onClick={handleGenerateQuestion}
                     disabled={isGeneratingQuestion}
-                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow disabled:opacity-50"
+                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow disabled:opacity-50 cursor-pointer"
                   >
                     {isGeneratingQuestion ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
                     {isGeneratingQuestion ? 'Generating Questions...' : '✨ Generate Questions with AI'}
                   </button>
                 </div>
 
-                {/* Generated Question Option Cards & Selector */}
+                {/* Generated Question Option Cards & Multi-Selector */}
                 {questionGenResults.length > 0 && (
                   <div className="space-y-3 pt-3 border-t border-gray-200">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
-                        <Check size={14} /> Generated Question Options ({questionGenResults.length})
-                      </span>
-                      <span className="text-[11px] text-gray-500 font-semibold">Select an option to insert</span>
-                    </div>
-
-                    {/* Tabs / Selection Cards */}
-                    <div className="flex gap-2 border-b border-gray-200 pb-2">
-                      {questionGenResults.map((_, idx) => (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                          <Check size={14} /> Generated Questions ({questionGenResults.length})
+                        </span>
+                        <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                          {selectedQuestionIndices.length} of {questionGenResults.length} selected
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
                         <button
-                          key={idx}
-                          onClick={() => setSelectedQuestionIndex(idx)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedQuestionIndex === idx ? 'bg-emerald-800 text-white border-emerald-900 shadow' : 'bg-white text-gray-700 border-gray-300 hover:bg-emerald-50'}`}
+                          type="button"
+                          onClick={selectAllQuestions}
+                          className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 hover:underline cursor-pointer"
                         >
-                          Option #{idx + 1}
+                          Select All
                         </button>
-                      ))}
+                        <span className="text-gray-300">|</span>
+                        <button
+                          type="button"
+                          onClick={deselectAllQuestions}
+                          className="text-[11px] font-bold text-gray-500 hover:text-gray-700 hover:underline cursor-pointer"
+                        >
+                          Deselect All
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Selected Question Card Content */}
-                    <div
-                      className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-gray-800 leading-relaxed font-sans shadow-inner"
-                      dangerouslySetInnerHTML={{ __html: formatAiTextToHtml(questionGenResults[selectedQuestionIndex] || '') }}
-                    />
+                    {/* Tabs / Selection Cards with Checkbox */}
+                    <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2.5">
+                      {questionGenResults.map((_, idx) => {
+                        const markDist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenResults.length)
+                        const isChecked = selectedQuestionIndices.includes(idx)
+                        const isCurrentTab = selectedQuestionIndex === idx
+                        const qLabel = questionGenResults.length <= 2 ? `Question ${String.fromCharCode(65 + idx)}` : `Question ${idx + 1}`
+                        const qMarks = markDist[idx] || Math.round(questionGenParams.totalMarks / questionGenResults.length)
+
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => setSelectedQuestionIndex(idx)}
+                            className={`cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all select-none ${
+                              isCurrentTab
+                                ? 'bg-emerald-800 text-white border-emerald-900 shadow-sm ring-2 ring-emerald-400/30'
+                                : isChecked
+                                  ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
+                                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                toggleQuestionSelection(idx)
+                              }}
+                              className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                            />
+                            <span>{qLabel}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                              isCurrentTab ? 'bg-white/20 text-white' : 'bg-emerald-200/60 text-emerald-900'
+                            }`}>
+                              {qMarks}M
+                            </span>
+                          </div>
+                        )
+                      })}
+
+                      {/* Multi-question preview option if more than 1 question is selected */}
+                      {selectedQuestionIndices.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedQuestionIndex(-1)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                            selectedQuestionIndex === -1
+                              ? 'bg-teal-800 text-white border-teal-900 shadow-sm ring-2 ring-teal-400/30'
+                              : 'bg-teal-50 text-teal-900 border-teal-200 hover:bg-teal-100'
+                          }`}
+                        >
+                          👁️ Preview All Selected ({selectedQuestionIndices.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Content Display: All Selected or Single Question */}
+                    {selectedQuestionIndex === -1 ? (
+                      <div className="space-y-3 max-h-[36vh] overflow-y-auto pr-1">
+                        {selectedQuestionIndices.sort((a, b) => a - b).map(idx => {
+                          const markDist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenResults.length)
+                          const qLabel = questionGenResults.length <= 2 ? `Question ${String.fromCharCode(65 + idx)}` : `Question ${idx + 1}`
+                          const qMarks = markDist[idx] || Math.round(questionGenParams.totalMarks / questionGenResults.length)
+                          return (
+                            <div key={idx} className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-gray-800 leading-relaxed font-sans shadow-inner">
+                              <div className="flex items-center justify-between font-bold text-emerald-900 border-b border-emerald-200/60 pb-1.5 mb-2">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={true}
+                                    onChange={() => toggleQuestionSelection(idx)}
+                                    className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                                  />
+                                  <span>{qLabel}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                    {questionGenParams.selectedCo || 'CO'}
+                                  </span>
+                                  <span className="bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                    {getBloomInfo(questionGenParams.bloomLevel).level}
+                                  </span>
+                                  <span className="bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded text-[10px] font-bold">
+                                    {qMarks} Marks
+                                  </span>
+                                </div>
+                              </div>
+                              <div dangerouslySetInnerHTML={{ __html: formatAiTextToHtml(questionGenResults[idx] || '') }} />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-gray-800 leading-relaxed font-sans shadow-inner max-h-[36vh] overflow-y-auto">
+                        {questionGenResults[selectedQuestionIndex] && (
+                          <div>
+                            <div className="flex items-center justify-between font-bold text-emerald-900 border-b border-emerald-200/60 pb-1.5 mb-2">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedQuestionIndices.includes(selectedQuestionIndex)}
+                                  onChange={() => toggleQuestionSelection(selectedQuestionIndex)}
+                                  className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                                />
+                                <span>{questionGenResults.length <= 2 ? `Question ${String.fromCharCode(65 + selectedQuestionIndex)}` : `Question ${selectedQuestionIndex + 1}`}</span>
+                              </div>
+                              {(() => {
+                                const markDist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenResults.length)
+                                const qMarks = markDist[selectedQuestionIndex] || Math.round(questionGenParams.totalMarks / questionGenResults.length)
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                      {questionGenParams.selectedCo || 'CO'}
+                                    </span>
+                                    <span className="bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                      {getBloomInfo(questionGenParams.bloomLevel).level}
+                                    </span>
+                                    <span className="bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded text-[10px] font-bold">
+                                      {qMarks} Marks
+                                    </span>
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                            <div dangerouslySetInnerHTML={{ __html: formatAiTextToHtml(questionGenResults[selectedQuestionIndex] || '') }} />
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
-                <button onClick={() => setShowQuestionGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
-                  Cancel
-                </button>
-                {questionGenResults.length > 0 && (
-                  <button onClick={handleInsertQuestionResult} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                    <Plus size={16} /> Insert Selected Question into Paper
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex items-center justify-between">
+                <div>
+                  {questionGenResults.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearQuestionGen}
+                      className="px-3.5 py-2 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Clear all generated questions and form inputs"
+                    >
+                      <Trash2 size={15} /> Clean / Clear All
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowQuestionGenModal(false)}
+                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs cursor-pointer"
+                  >
+                    Cancel
                   </button>
-                )}
+                  {questionGenResults.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleInsertQuestionResult}
+                      disabled={selectedQuestionIndices.length === 0}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow transition-all cursor-pointer"
+                    >
+                      <Plus size={16} />
+                      {selectedQuestionIndices.length === 0
+                        ? 'Select Question(s) to Insert'
+                        : selectedQuestionIndices.length === 1
+                          ? `Insert Question ${questionGenResults.length <= 2 ? String.fromCharCode(65 + selectedQuestionIndices[0]) : (selectedQuestionIndices[0] + 1)} into Paper`
+                          : `Insert Selected Questions (${selectedQuestionIndices.length}) into Paper`}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

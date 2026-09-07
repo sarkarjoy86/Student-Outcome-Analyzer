@@ -100,14 +100,30 @@ async function ensureSisterMidFinalInheritance(targetOfferingId) {
 // ACADEMIC SESSION ROUTES
 // ==========================================
 
-// Get all academic sessions
+// Get all academic sessions (including offeringCount usage)
 router.get("/sessions", requireAuth, async (req, res) => {
   try {
-    const sessions = await AcademicSession.find().sort({
-      academicYear: -1,
-      semesterName: 1,
-    });
-    res.status(200).json({ sessions });
+    const sessions = await AcademicSession.find()
+      .sort({
+        academicYear: -1,
+        semesterName: 1,
+      })
+      .lean();
+
+    // Check course offerings count associated with each session
+    const sessionsWithUsage = await Promise.all(
+      sessions.map(async (s) => {
+        const offeringCount = await CourseOffering.countDocuments({
+          semester: s._id,
+        });
+        return {
+          ...s,
+          offeringCount,
+        };
+      })
+    );
+
+    res.status(200).json({ sessions: sessionsWithUsage });
   } catch (error) {
     res
       .status(500)
@@ -125,9 +141,32 @@ router.post("/sessions", requireAuth, async (req, res) => {
         .json({ message: "Semester name and Academic Year are required." });
     }
 
+    const trimmedSemester = semesterName.trim();
+    const parsedYear = parseInt(academicYear, 10);
+
+    // Consistency rule: Check for duplicate semester + academic year
+    const existing = await AcademicSession.findOne({
+      semesterName: { $regex: new RegExp(`^${trimmedSemester}$`, "i") },
+      academicYear: parsedYear,
+    });
+    if (existing) {
+      return res.status(400).json({
+        message: `Academic session "${trimmedSemester} ${parsedYear}" already exists.`,
+      });
+    }
+
+    // Consistency rule: Only ONE active session allowed.
+    // If activating this new session, automatically mark all currently active sessions as completed.
+    if (status === "active") {
+      await AcademicSession.updateMany(
+        { status: "active" },
+        { $set: { status: "completed" } }
+      );
+    }
+
     const session = await AcademicSession.create({
-      semesterName: semesterName.trim(),
-      academicYear: parseInt(academicYear),
+      semesterName: trimmedSemester,
+      academicYear: parsedYear,
       status,
     });
 
@@ -146,9 +185,42 @@ router.put("/sessions/:id", requireAuth, async (req, res) => {
   try {
     const { semesterName, academicYear, status } = req.body;
     const updateData = {};
-    if (semesterName !== undefined) updateData.semesterName = semesterName.trim();
-    if (academicYear !== undefined) updateData.academicYear = parseInt(academicYear);
-    if (status !== undefined) updateData.status = status;
+
+    if (semesterName !== undefined || academicYear !== undefined) {
+      const currentSession = await AcademicSession.findById(req.params.id);
+      if (!currentSession) {
+        return res.status(404).json({ message: "Academic session not found." });
+      }
+      const checkSemester = semesterName !== undefined ? semesterName.trim() : currentSession.semesterName;
+      const checkYear = academicYear !== undefined ? parseInt(academicYear, 10) : currentSession.academicYear;
+
+      // Ensure that updating semester or year doesn't collide with another session
+      const duplicate = await AcademicSession.findOne({
+        _id: { $ne: req.params.id },
+        semesterName: { $regex: new RegExp(`^${checkSemester}$`, "i") },
+        academicYear: checkYear,
+      });
+      if (duplicate) {
+        return res.status(400).json({
+          message: `Academic session "${checkSemester} ${checkYear}" already exists.`,
+        });
+      }
+
+      if (semesterName !== undefined) updateData.semesterName = checkSemester;
+      if (academicYear !== undefined) updateData.academicYear = checkYear;
+    }
+
+    if (status !== undefined) {
+      updateData.status = status;
+      // Consistency rule: Only ONE active session allowed.
+      // If updating this session to active, automatically mark all other active sessions as completed.
+      if (status === "active") {
+        await AcademicSession.updateMany(
+          { _id: { $ne: req.params.id }, status: "active" },
+          { $set: { status: "completed" } }
+        );
+      }
+    }
 
     const session = await AcademicSession.findByIdAndUpdate(
       req.params.id,
@@ -165,6 +237,36 @@ router.put("/sessions/:id", requireAuth, async (req, res) => {
     res
       .status(500)
       .json({ message: "Error updating session", error: error.message });
+  }
+});
+
+// Delete academic session (only permitted if no course offerings are associated)
+router.delete("/sessions/:id", requireAuth, async (req, res) => {
+  try {
+    const session = await AcademicSession.findById(req.params.id);
+    if (!session) {
+      return res.status(404).json({ message: "Academic session not found." });
+    }
+
+    // Safety check: ensure no course offerings reference this session
+    const offeringCount = await CourseOffering.countDocuments({
+      semester: req.params.id,
+    });
+
+    if (offeringCount > 0) {
+      return res.status(400).json({
+        message: `Cannot delete "${session.semesterName} ${session.academicYear}" because ${offeringCount} course offering(s) are associated with it. Only unused sessions can be deleted.`,
+      });
+    }
+
+    await AcademicSession.findByIdAndDelete(req.params.id);
+    res.status(200).json({
+      message: `Academic session "${session.semesterName} ${session.academicYear}" deleted successfully.`,
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error deleting session", error: error.message });
   }
 });
 
@@ -1046,10 +1148,14 @@ router.post("/course-offerings", requireAuth, async (req, res) => {
       course: selectedCourse,
       semester: selectedSemester,
       section: selectedSection,
-      teacher: req.user._id,
     });
 
     if (existing) {
+      if (existing.teacher && existing.teacher.toString() !== req.user._id.toString()) {
+        return res.status(400).json({
+          message: "This course section is already assigned to another instructor for this session.",
+        });
+      }
       const populated = await CourseOffering.findById(existing._id)
         .populate("course")
         .populate("semester");

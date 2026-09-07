@@ -225,6 +225,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (activeTab === "sessions") {
       fetchSessions();
+      fetchOfferings();
     }
     if (activeTab === "courses") {
       fetchCourses();
@@ -258,7 +259,22 @@ export default function AdminDashboard() {
     setSessionError("");
     try {
       const data = await apiService.getSessions();
-      setSessions(data.sessions || []);
+      const sList = data.sessions || [];
+      setSessions(sList);
+      // Automatically keep offeringForm aligned with the single active session
+      const activeSes = sList.find((s) => s.status === "active");
+      if (activeSes) {
+        setOfferingForm((prev) => {
+          if (!prev.semesterId || !sList.some((s) => s._id === prev.semesterId && s.status === "active")) {
+            return {
+              ...prev,
+              semesterId: activeSes._id,
+              academicYear: String(activeSes.academicYear),
+            };
+          }
+          return prev;
+        });
+      }
     } catch (err) {
       setSessionError(err.message || "Failed to load academic sessions.");
     } finally {
@@ -395,12 +411,24 @@ export default function AdminDashboard() {
       alert("Please fill all academic session fields.");
       return;
     }
+    const enteredSemester = newSessionForm.semesterName.trim();
+    const enteredYear = parseInt(newSessionForm.academicYear, 10);
+    const isDuplicate = sessions.some(
+      (s) =>
+        s.semesterName.toLowerCase() === enteredSemester.toLowerCase() &&
+        Number(s.academicYear) === enteredYear
+    );
+    if (isDuplicate) {
+      setSessionError(`Academic session "${enteredSemester} ${enteredYear}" already exists.`);
+      return;
+    }
+
     setSessionError("");
     setSessionSuccess("");
     try {
       await apiService.createSession({
-        semesterName: newSessionForm.semesterName.trim(),
-        academicYear: parseInt(newSessionForm.academicYear),
+        semesterName: enteredSemester,
+        academicYear: enteredYear,
         status: newSessionForm.status,
       });
       setNewSessionForm({
@@ -408,31 +436,65 @@ export default function AdminDashboard() {
         academicYear: new Date().getFullYear(),
         status: "active",
       });
-      setSessionSuccess("Academic session created successfully!");
+      const successMsg = newSessionForm.status === "active"
+        ? "Academic session created as Active! Any previous active session was automatically completed."
+        : "Academic session created successfully!";
+      setSessionSuccess(successMsg);
       fetchSessions();
+      fetchOfferings();
     } catch (err) {
       setSessionError(err.message || "Failed to create academic session.");
     }
   };
 
   const handleUpdateSession = async (sessionId) => {
-    if (!editingSessionForm.semesterName || !editingSessionForm.academicYear) {
-      alert("Please fill all academic session fields.");
-      return;
-    }
     try {
       setSessionError("");
       setSessionSuccess("");
       await apiService.updateSession(sessionId, {
-        semesterName: editingSessionForm.semesterName.trim(),
-        academicYear: Number(editingSessionForm.academicYear),
         status: editingSessionForm.status,
       });
       setEditingSessionId(null);
-      setSessionSuccess("Academic session updated successfully!");
+      const successMsg = editingSessionForm.status === "active"
+        ? "Academic session set to Active! Any previous active session was automatically completed."
+        : "Academic session status updated successfully!";
+      setSessionSuccess(successMsg);
       fetchSessions();
+      fetchOfferings();
     } catch (err) {
       setSessionError(err.message || "Failed to update academic session.");
+    }
+  };
+
+  const handleDeleteSession = async (session) => {
+    const sessionLabel = `${session.semesterName} ${session.academicYear}`;
+    const hasOfferings =
+      (session.offeringCount > 0) ||
+      offerings.some((o) => (o.semester?._id || o.semester) === session._id);
+    if (hasOfferings) {
+      alert(
+        `Cannot delete "${sessionLabel}" because course offerings are assigned to it. Only unused sessions can be deleted.`
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${sessionLabel}"? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setSessionError("");
+      setSessionSuccess("");
+      await apiService.deleteSession(session._id);
+      setSessionSuccess(`Academic session "${sessionLabel}" deleted successfully.`);
+      fetchSessions();
+      fetchOfferings();
+    } catch (err) {
+      setSessionError(err.message || "Failed to delete academic session.");
     }
   };
 
@@ -1470,18 +1532,30 @@ export default function AdminDashboard() {
                     <label className="block text-sm font-semibold text-gray-700 mb-1">
                       Academic Year
                     </label>
-                    <input
-                      type="number"
-                      value={newSessionForm.academicYear}
-                      onChange={(e) =>
-                        setNewSessionForm({
-                          ...newSessionForm,
-                          academicYear: Number(e.target.value),
-                        })
-                      }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-gray-50/50 font-medium"
-                      required
-                    />
+                    <div className="flex rounded-xl overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent bg-gray-50/50">
+                      <span className="inline-flex items-center px-4 bg-gray-200/80 text-gray-800 font-extrabold text-sm border-r border-gray-300 select-none tracking-wider">
+                        20
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
+                        value={String(newSessionForm.academicYear || "").replace(/^20/, "")}
+                        onChange={(e) => {
+                          const suffix = e.target.value.replace(/\D/g, "").slice(0, 2);
+                          setNewSessionForm({
+                            ...newSessionForm,
+                            academicYear: suffix ? Number(`20${suffix}`) : "",
+                          });
+                        }}
+                        placeholder="26"
+                        className="w-full px-4 py-2.5 outline-none font-semibold text-gray-800 text-sm bg-transparent"
+                        required
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-1 font-medium">
+                      Fixed prefix <span className="font-bold text-gray-600">20</span> — enter last 2 digits (e.g. <span className="font-bold text-blue-600">26</span> for 2026, <span className="font-bold text-blue-600">27</span> for 2027)
+                    </p>
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">
@@ -1549,41 +1623,10 @@ export default function AdminDashboard() {
                                 className="hover:bg-gray-50/50 text-gray-700"
                               >
                                 <td className="py-3.5 px-4 font-semibold text-indigo-900">
-                                  {isEditing ? (
-                                    <select
-                                      value={editingSessionForm.semesterName}
-                                      onChange={(e) =>
-                                        setEditingSessionForm({
-                                          ...editingSessionForm,
-                                          semesterName: e.target.value,
-                                        })
-                                      }
-                                      className="border border-gray-300 px-3 py-1.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-semibold text-indigo-900"
-                                    >
-                                      <option value="Spring">Spring</option>
-                                      <option value="Fall">Fall</option>
-                                    </select>
-                                  ) : (
-                                    session.semesterName
-                                  )}
+                                  {session.semesterName}
                                 </td>
-                                <td className="py-3.5 px-4 font-medium">
-                                  {isEditing ? (
-                                    <input
-                                      type="number"
-                                      value={editingSessionForm.academicYear}
-                                      onChange={(e) =>
-                                        setEditingSessionForm({
-                                          ...editingSessionForm,
-                                          academicYear: e.target.value,
-                                        })
-                                      }
-                                      className="w-28 border border-gray-300 px-3 py-1.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-sm font-medium"
-                                      required
-                                    />
-                                  ) : (
-                                    session.academicYear
-                                  )}
+                                <td className="py-3.5 px-4 font-medium text-gray-800">
+                                  {session.academicYear}
                                 </td>
                                 <td className="py-3.5 px-4 text-center">
                                   {isEditing ? (
@@ -1595,7 +1638,7 @@ export default function AdminDashboard() {
                                           status: e.target.value,
                                         })
                                       }
-                                      className="border border-gray-300 px-2 py-1 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white text-xs font-semibold"
+                                      className="border border-blue-400 px-2.5 py-1 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white text-xs font-semibold shadow-sm"
                                     >
                                       <option value="active">Active</option>
                                       <option value="completed">Completed</option>
@@ -1620,34 +1663,52 @@ export default function AdminDashboard() {
                                     <div className="flex justify-end gap-2">
                                       <button
                                         onClick={() => handleUpdateSession(session._id)}
-                                        className="text-green-600 hover:text-green-800 p-1 hover:bg-green-50 rounded-lg transition-colors"
-                                        title="Save session changes"
+                                        className="text-green-600 hover:text-green-800 p-1.5 hover:bg-green-50 rounded-lg transition-colors"
+                                        title="Save status"
                                       >
                                         <Save size={16} />
                                       </button>
                                       <button
                                         onClick={() => setEditingSessionId(null)}
-                                        className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                                        className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
                                         title="Cancel"
                                       >
                                         <X size={16} />
                                       </button>
                                     </div>
                                   ) : (
-                                    <button
-                                      onClick={() => {
-                                        setEditingSessionId(session._id);
-                                        setEditingSessionForm({
-                                          semesterName: session.semesterName,
-                                          academicYear: session.academicYear,
-                                          status: session.status,
-                                        });
-                                      }}
-                                      className="text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded-lg transition-colors"
-                                      title="Edit session"
-                                    >
-                                      <Edit2 size={16} />
-                                    </button>
+                                    (() => {
+                                      const hasOfferings =
+                                        (session.offeringCount > 0) ||
+                                        offerings.some(
+                                          (o) => (o.semester?._id || o.semester) === session._id
+                                        );
+                                      return (
+                                        <div className="flex justify-end items-center gap-1.5">
+                                          <button
+                                            onClick={() => {
+                                              setEditingSessionId(session._id);
+                                              setEditingSessionForm({
+                                                status: session.status,
+                                              });
+                                            }}
+                                            className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="Change session status"
+                                          >
+                                            <Edit2 size={16} />
+                                          </button>
+                                          {!hasOfferings && (
+                                            <button
+                                              onClick={() => handleDeleteSession(session)}
+                                              className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+                                              title="Delete unused session"
+                                            >
+                                              <Trash2 size={16} />
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()
                                   )}
                                 </td>
                               </tr>
@@ -2932,6 +2993,7 @@ export default function AdminDashboard() {
                       setOfferingForm({
                         ...offeringForm,
                         courseId: e.target.value,
+                        section: "", // reset section to prevent assigning an offered section
                       })
                     }
                     className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
@@ -2989,9 +3051,14 @@ export default function AdminDashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Academic Session
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                      Academic Session
+                    </label>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                      Active Session Only
+                    </span>
+                  </div>
                   <select
                     value={offeringForm.semesterId}
                     onChange={(e) => {
@@ -3000,18 +3067,27 @@ export default function AdminDashboard() {
                       setOfferingForm({
                         ...offeringForm,
                         semesterId: selectedSemId,
+                        section: "", // reset section to re-validate availability
                         academicYear: selectedSem ? String(selectedSem.academicYear) : offeringForm.academicYear,
                       });
                     }}
                     className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
+                    required
                   >
-                    <option value="">Select session</option>
-                    {sessions.map((session) => (
-                      <option key={session._id} value={session._id}>
-                        {session.semesterName} ({session.academicYear})
-                      </option>
-                    ))}
+                    <option value="">Select active session</option>
+                    {sessions
+                      .filter((s) => s.status === "active" || (editingOfferingId && s._id === offeringForm.semesterId))
+                      .map((session) => (
+                        <option key={session._id} value={session._id}>
+                          {session.semesterName} ({session.academicYear}) {session.status === "active" ? "— Active" : `— ${session.status}`}
+                        </option>
+                      ))}
                   </select>
+                  {sessions.filter((s) => s.status === "active").length === 0 && (
+                    <p className="text-[11px] text-amber-700 mt-1 font-semibold">
+                      ⚠️ No active session found. Please activate a session in the Sessions tab.
+                    </p>
+                  )}
                 </div>
 
                 <div>

@@ -152,6 +152,13 @@ export const apiService = {
     return handleResponse(res);
   },
 
+  async deleteSession(sessionId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/sessions/${sessionId}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
   // Courses
   async getCourses() {
     const res = await fetchWithDefaults(`${API_BASE}/api/courses`);
