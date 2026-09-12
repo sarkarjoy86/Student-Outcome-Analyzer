@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import Sidebar from "./components/layout/Sidebar";
 import Dashboard from "./components/dashboard/Dashboard";
 import StudentManagement from "./components/students/StudentManagement";
@@ -10,11 +10,12 @@ import ComprehensiveReports from "./components/reports/ComprehensiveReports";
 import Results from "./components/reports/Results";
 import AuthCard from "./components/auth/AuthCard";
 import ProfileAvatar from "./components/layout/ProfileAvatar";
-import AdminDashboard from "./components/admin/AdminDashboard";
 import { useAuth } from "./context/AuthContext";
 import { apiService } from "./services/apiService";
-import TeacherDashboard from "./components/dashboard/TeacherDashboard";
-import PublicSurveyForm from "./components/survey/PublicSurveyForm";
+
+const AdminDashboard = lazy(() => import("./components/admin/AdminDashboard"));
+const TeacherDashboard = lazy(() => import("./components/dashboard/TeacherDashboard"));
+const PublicSurveyForm = lazy(() => import("./components/survey/PublicSurveyForm"));
 
 
 function App() {
@@ -77,13 +78,137 @@ function App() {
     kpiPO: 50,
   });
 
+  // Synchronize Browser History & Hardware Navigation (Mouse Back/Forward, Alt+Arrows, Backspace)
+  useEffect(() => {
+    if (authLoading || !user || user.role === "admin") return;
+
+    // Ensure baseline history state is populated
+    if (!window.history.state) {
+      const params = new URLSearchParams(window.location.search);
+      const urlOfferingId = params.get("offering");
+      const urlTab = params.get("tab") || "overview";
+      const urlPaper = params.get("paper");
+
+      if (urlOfferingId && selectedOffering && (selectedOffering._id === urlOfferingId || selectedOffering.id === urlOfferingId)) {
+        window.history.replaceState(
+          {
+            view: urlPaper ? "paper" : "offering",
+            offeringId: urlOfferingId,
+            tab: urlTab,
+            paperId: urlPaper || null,
+          },
+          "",
+          window.location.href
+        );
+      } else {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        window.history.replaceState({ view: "dashboard" }, "", url.toString());
+      }
+    }
+
+    const handlePopState = (e) => {
+      const state = e.state;
+      const params = new URLSearchParams(window.location.search);
+      const urlOfferingId = state?.offeringId || params.get("offering");
+
+      if (!urlOfferingId || state?.view === "dashboard") {
+        // Navigated back to offerings dashboard
+        setSelectedOffering(null);
+        localStorage.removeItem("selectedOffering");
+        localStorage.removeItem("teacherActiveTab");
+      } else if (urlOfferingId) {
+        // Navigated forward/back to an offering
+        if (!selectedOffering || (selectedOffering._id !== urlOfferingId && selectedOffering.id !== urlOfferingId)) {
+          try {
+            const saved = localStorage.getItem("selectedOffering");
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed._id === urlOfferingId || parsed.id === urlOfferingId) {
+                setSelectedOffering(parsed);
+              }
+            }
+          } catch (err) {}
+        }
+      }
+    };
+
+    // Hardware Mouse Button 3 (Back) & 4 (Forward) support
+    const handleMouseUp = (e) => {
+      if (e.button === 3) {
+        // Mouse Back button
+        e.preventDefault();
+        window.history.back();
+      } else if (e.button === 4) {
+        // Mouse Forward button
+        e.preventDefault();
+        window.history.forward();
+      }
+    };
+
+    // Keyboard Backspace outside text inputs
+    const handleKeyDown = (e) => {
+      if (e.key === "Backspace") {
+        const active = document.activeElement;
+        const isEditable = active && (
+          active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.isContentEditable ||
+          active.closest?.('[contenteditable="true"]') ||
+          active.closest?.('.e-rte-content')
+        );
+        if (!isEditable) {
+          e.preventDefault();
+          window.history.back();
+        }
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [authLoading, user, selectedOffering]);
+
   // Load all data for selected course offering
-  const handleSelectOffering = (offering) => {
+  const handleSelectOffering = (offering, pushHistory = true) => {
     setSelectedOffering(offering);
     if (offering) {
       localStorage.setItem("selectedOffering", JSON.stringify(offering));
+      if (pushHistory) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("offering", offering._id);
+        const currentTab = localStorage.getItem("teacherActiveTab") || "overview";
+        url.searchParams.set("tab", currentTab);
+        url.searchParams.delete("paper");
+        window.history.pushState(
+          {
+            view: "offering",
+            offeringId: offering._id,
+            tab: currentTab,
+            paperId: null,
+          },
+          "",
+          url.toString()
+        );
+      }
     } else {
       localStorage.removeItem("selectedOffering");
+      localStorage.removeItem("teacherActiveTab");
+      if (pushHistory) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        window.history.pushState({ view: "dashboard" }, "", url.toString());
+      }
     }
   };
 
@@ -255,15 +380,18 @@ function App() {
       <ProfileAvatar />
       {selectedOffering ? (
         <main className="p-8">
-          <TeacherDashboard
-            offering={selectedOffering}
-            onBackToDashboard={() => {
-              setSelectedOffering(null);
-              localStorage.removeItem("selectedOffering");
-              localStorage.removeItem("teacherActiveTab");
-            }}
-            user={user}
-          />
+          <Suspense fallback={
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
+              <p className="text-gray-600 font-bold text-base">Loading Course Dashboard...</p>
+            </div>
+          }>
+            <TeacherDashboard
+              offering={selectedOffering}
+              onBackToDashboard={() => handleSelectOffering(null)}
+              user={user}
+            />
+          </Suspense>
         </main>
       ) : (
         <Dashboard onSelectOffering={handleSelectOffering} />
@@ -281,15 +409,21 @@ function App() {
 
   if (feedbackEvaluationId) {
     return (
-      <PublicSurveyForm
-        evaluationId={feedbackEvaluationId}
-        user={user}
-        onBackToHome={() => {
-          const url = new URL(window.location.origin + window.location.pathname);
-          window.history.replaceState({}, '', url.toString());
-          setFeedbackEvaluationId(null);
-        }}
-      />
+      <Suspense fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
+        </div>
+      }>
+        <PublicSurveyForm
+          evaluationId={feedbackEvaluationId}
+          user={user}
+          onBackToHome={() => {
+            const url = new URL(window.location.origin + window.location.pathname);
+            window.history.replaceState({}, '', url.toString());
+            setFeedbackEvaluationId(null);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -313,7 +447,15 @@ function App() {
   }
 
   if (user.role === "admin") {
-    return <AdminDashboard />;
+    return (
+      <Suspense fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+        </div>
+      }>
+        <AdminDashboard />
+      </Suspense>
+    );
   }
 
   return renderDashboard();

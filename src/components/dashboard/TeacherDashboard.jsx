@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react'
 import { apiService } from '../../services/apiService'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -43,12 +43,14 @@ import {
   ChevronDown,
   Target
 } from 'lucide-react'
-import QuestionPaperEditor from '../marks/QuestionPaperEditor'
 import ErrorBoundary from '../ErrorBoundary'
-import ComprehensiveReports from '../reports/ComprehensiveReports'
-import CourseSurvey from '../survey/CourseSurvey'
-import PORecommendationMatrix from '../reports/PORecommendationMatrix'
+const QuestionPaperEditor = lazy(() => import('../marks/QuestionPaperEditor'))
+const ComprehensiveReports = lazy(() => import('../reports/ComprehensiveReports'))
+const CourseSurvey = lazy(() => import('../survey/CourseSurvey'))
+const PORecommendationMatrix = lazy(() => import('../reports/PORecommendationMatrix'))
 import { calculateAllAttainments } from '../../utils/comprehensiveCalculations'
+import ReferenceNotesModal from './ReferenceNotesModal'
+import { getNotesStatus, getNormalizedCourseKey, getCachedNotesStatus } from '../../services/notesApi'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -123,6 +125,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   }, [propOffering])
 
   const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlTab = params.get('tab');
+    if (urlTab) return urlTab;
     return localStorage.getItem("teacherActiveTab") || "overview";
   });
 
@@ -136,6 +141,66 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [assessments, setAssessments] = useState([])
   const [qBankPapers, setQBankPapers] = useState([])
   const [activeAssessmentForPaper, setActiveAssessmentForPaper] = useState(null)
+
+  // Reference Notes States (Persistent per normalized course key)
+  const activeCourseId = getNormalizedCourseKey(offering)
+  const [showNotesModal, setShowNotesModal] = useState(false)
+  const [notesStatus, setNotesStatus] = useState(() => getCachedNotesStatus(activeCourseId))
+
+  const fetchNotesStatus = useCallback(async () => {
+    if (!activeCourseId) return
+    try {
+      const data = await getNotesStatus(activeCourseId)
+      if (data && typeof data === 'object') {
+        setNotesStatus(data)
+      }
+    } catch (err) {
+      console.warn('Failed to load notes status:', err)
+    }
+  }, [activeCourseId])
+
+  useEffect(() => {
+    const cached = getCachedNotesStatus(activeCourseId)
+    if (cached && cached.hasNotes) {
+      setNotesStatus(cached)
+    }
+    fetchNotesStatus()
+  }, [activeCourseId, fetchNotesStatus, activeTab, offering])
+
+  // Auto-retry fetching notes if not yet loaded (handles ML service still booting up)
+  useEffect(() => {
+    if (notesStatus?.hasNotes || !activeCourseId) return
+
+    const timer1 = setTimeout(() => {
+      fetchNotesStatus()
+    }, 2000)
+
+    const timer2 = setTimeout(() => {
+      fetchNotesStatus()
+    }, 5000)
+
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+    }
+  }, [activeCourseId, notesStatus?.hasNotes, fetchNotesStatus])
+
+  useEffect(() => {
+    const handleNotesUpdated = (e) => {
+      if (!e.detail?.courseId || e.detail.courseId === activeCourseId) {
+        fetchNotesStatus()
+      }
+    }
+    const handleFocus = () => {
+      fetchNotesStatus()
+    }
+    window.addEventListener('teacher_notes_updated', handleNotesUpdated)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      window.removeEventListener('teacher_notes_updated', handleNotesUpdated)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [activeCourseId, fetchNotesStatus])
 
   // Prevent idle auto-logout while actively entering marks or working on a question paper
   useEffect(() => {
@@ -459,6 +524,49 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     kpiConfig: { targetPassMarks: 40, kpiCO: 50, kpiPO: 50 }
   })
   const [kpiInput, setKpiInput] = useState({ targetPassMarks: 40, kpiCO: 50, kpiPO: 50 })
+  const [displayKpi, setDisplayKpi] = useState({ targetPassMarks: 0, kpiCO: 0, kpiPO: 0 })
+  const isKpiUserInteractingRef = useRef(false)
+  const kpiAnimRef = useRef(null)
+
+  // Smooth entrance animation for KPI threshold sliders when entering the Attainment tab
+  useEffect(() => {
+    if (activeTab === 'attainment') {
+      isKpiUserInteractingRef.current = false
+      if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
+
+      const targetPass = typeof kpiInput.targetPassMarks === 'number' ? kpiInput.targetPassMarks : 40
+      const targetCO = typeof kpiInput.kpiCO === 'number' ? kpiInput.kpiCO : 50
+      const targetPO = typeof kpiInput.kpiPO === 'number' ? kpiInput.kpiPO : 50
+
+      const startTime = performance.now()
+      const duration = 850 // ms
+
+      const step = (currentTime) => {
+        if (isKpiUserInteractingRef.current) return
+        const elapsed = currentTime - startTime
+        const progress = Math.min(elapsed / duration, 1)
+        // Smooth easeOutCubic curve
+        const ease = 1 - Math.pow(1 - progress, 3)
+
+        setDisplayKpi({
+          targetPassMarks: Math.round(targetPass * ease),
+          kpiCO: Math.round(targetCO * ease),
+          kpiPO: Math.round(targetPO * ease)
+        })
+
+        if (progress < 1) {
+          kpiAnimRef.current = requestAnimationFrame(step)
+        }
+      }
+
+      setDisplayKpi({ targetPassMarks: 0, kpiCO: 0, kpiPO: 0 })
+      kpiAnimRef.current = requestAnimationFrame(step)
+    }
+
+    return () => {
+      if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
+    }
+  }, [activeTab, kpiInput.targetPassMarks, kpiInput.kpiCO, kpiInput.kpiPO])
 
   // Live computed attainment data as threshold sliders change
   const liveAttainmentData = useMemo(() => {
@@ -867,7 +975,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   }, [allRemindersList, dismissedReminderIds])
 
   const handleReminderAction = (reminder) => {
-    setActiveTab(reminder.actionTab)
+    handleSelectTab(reminder.actionTab)
     if (reminder.actionAssessmentId) {
       setSelectedAssessmentId(reminder.actionAssessmentId)
       initializeTempMarks(
@@ -889,44 +997,42 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       setLoading(true)
     }
     try {
-      // 0. Fetch latest offering details
-      const offeringRes = await apiService.getCourseOffering(propOffering._id)
-      const currentOffering = offeringRes.offering || propOffering
+      const offeringId = propOffering._id
+      const courseId = propOffering.course?._id || offering?.course?._id
+
+      // 1. Fire all primary dashboard requests in parallel via Promise.allSettled
+      const [
+        offeringResult,
+        studentResult,
+        assessmentsResult,
+        attainmentResult,
+        qBankResult,
+        coResult,
+        poResult,
+        surveyResult,
+        marksResult,
+        copoReqResult,
+        actResult
+      ] = await Promise.allSettled([
+        apiService.getCourseOffering(offeringId),
+        apiService.getTeacherStudents(offeringId),
+        apiService.getAssessments(offeringId),
+        apiService.getAttainmentData(offeringId),
+        courseId ? apiService.getQuestionBank(courseId) : Promise.resolve({ papers: [] }),
+        courseId ? apiService.getCourseOutcomes(courseId) : Promise.resolve({ outcomes: [] }),
+        apiService.getProgramOutcomes(),
+        apiService.getSurveys(offeringId),
+        apiService.getMarksSpreadsheet(offeringId),
+        courseId ? apiService.getMyCOPORequests(courseId) : Promise.resolve({ requests: [] }),
+        apiService.getRecentActivities(offeringId)
+      ])
+
+      // 2. Unpack Offering & CO-PO Mapping
+      const currentOffering = (offeringResult.status === 'fulfilled' && offeringResult.value?.offering)
+        ? offeringResult.value.offering
+        : propOffering
       setOffering(currentOffering)
 
-      // 1. Fetch Students
-      const studentRes = await apiService.getTeacherStudents(currentOffering._id)
-      setStudents(studentRes.students || [])
-
-      // 2. Fetch Assessments
-      const assessmentsRes = await apiService.getAssessments(currentOffering._id)
-      // Resolve structured assessments from general array (filter out any that do not have an _id)
-      const flatAssessments = [
-        ...(assessmentsRes.assessments?.cts || []),
-        ...(assessmentsRes.assessments?.midTerm || []),
-        ...(assessmentsRes.assessments?.final || []),
-        ...(assessmentsRes.assessments?.assignments || []),
-      ].filter(a => a && a._id)
-
-      if (assessmentsRes.assessments?.attendance && assessmentsRes.assessments.attendance._id) {
-        flatAssessments.push(assessmentsRes.assessments.attendance)
-      }
-      if (assessmentsRes.assessments?.performance && assessmentsRes.assessments.performance._id) {
-        flatAssessments.push(assessmentsRes.assessments.performance)
-      }
-      if (assessmentsRes.assessments?.presentation && assessmentsRes.assessments.presentation._id) {
-        flatAssessments.push(assessmentsRes.assessments.presentation)
-      }
-      if (assessmentsRes.assessments?.participation && assessmentsRes.assessments.participation._id) {
-        flatAssessments.push(assessmentsRes.assessments.participation)
-      }
-      if (assessmentsRes.assessments?.projectReport && assessmentsRes.assessments.projectReport._id) {
-        flatAssessments.push(assessmentsRes.assessments.projectReport)
-      }
-
-      setAssessments(flatAssessments)
-
-      // 3. Fetch CO-PO Mapping from Course Master Mapping (Read-Only)
       const rawMapping = currentOffering.course?.coPoMapping || {}
       const normalizedCoMapping = {}
       Object.keys(rawMapping).forEach(coKey => {
@@ -941,109 +1047,115 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       })
       setCoMapping(normalizedCoMapping)
 
-      // 4. Fetch Attainment Data
-      const attainmentRes = await apiService.getAttainmentData(offering._id)
-      setAttainmentData(attainmentRes)
-      setKpiInput(attainmentRes.kpiConfig)
-
-      // 5. Fetch Question Bank (Filtered by current Course ID)
-      const qBankRes = await apiService.getQuestionBank(offering.course?._id)
-      setQBankPapers(qBankRes.papers || [])
- 
-      // 6. Fetch database CO-PO descriptions
-      try {
-        const coRes = await apiService.getCourseOutcomes(offering.course?._id)
-        setDbCourseOutcomes(coRes.outcomes || coRes || [])
-      } catch (err) {
-        console.error('Failed to load course outcomes from database:', err)
-      }
- 
-      try {
-        const poRes = await apiService.getProgramOutcomes()
-        setDbProgramOutcomes(poRes.programOutcomes || poRes || [])
-      } catch (err) {
-        console.error('Failed to load program outcomes from database:', err)
+      // 3. Unpack Students
+      if (studentResult.status === 'fulfilled') {
+        setStudents(studentResult.value?.students || [])
       }
 
-      // 7. Fetch survey config and response analytics
-      try {
-        const surveyRes = await apiService.getSurveys(currentOffering._id)
-        if (surveyRes && surveyRes.survey) {
-          setSurvey(surveyRes.survey)
-          try {
-            const analytics = await apiService.getSurveyAnalytics(surveyRes.survey._id)
-            setSurveyResponsesCount(analytics.responses?.length || 0)
-          } catch (err) {
-            console.error('Failed to load survey responses count:', err)
-            setSurveyResponsesCount(0)
-          }
-        } else {
-          setSurvey(null)
-          setSurveyResponsesCount(0)
+      // 4. Unpack Assessments
+      if (assessmentsResult.status === 'fulfilled') {
+        const assessmentsData = assessmentsResult.value?.assessments || {}
+        const flatAssessments = [
+          ...(assessmentsData.cts || []),
+          ...(assessmentsData.midTerm || []),
+          ...(assessmentsData.final || []),
+          ...(assessmentsData.assignments || []),
+        ].filter(a => a && a._id)
+
+        if (assessmentsData.attendance && assessmentsData.attendance._id) flatAssessments.push(assessmentsData.attendance)
+        if (assessmentsData.performance && assessmentsData.performance._id) flatAssessments.push(assessmentsData.performance)
+        if (assessmentsData.presentation && assessmentsData.presentation._id) flatAssessments.push(assessmentsData.presentation)
+        if (assessmentsData.participation && assessmentsData.participation._id) flatAssessments.push(assessmentsData.participation)
+        if (assessmentsData.projectReport && assessmentsData.projectReport._id) flatAssessments.push(assessmentsData.projectReport)
+
+        setAssessments(flatAssessments)
+
+        // Auto-resume question paper editor if URL specifies paper parameter
+        const params = new URLSearchParams(window.location.search)
+        const targetPaperId = params.get('paper')
+        if (targetPaperId && flatAssessments.length > 0) {
+          const match = flatAssessments.find(a => a._id === targetPaperId)
+          if (match) setActiveAssessmentForPaper(match)
         }
-      } catch (err) {
-        console.error('Failed to load survey config for reminders:', err)
+      }
+
+      // 5. Unpack Attainment
+      if (attainmentResult.status === 'fulfilled' && attainmentResult.value) {
+        setAttainmentData(attainmentResult.value)
+        if (attainmentResult.value.kpiConfig) {
+          setKpiInput(attainmentResult.value.kpiConfig)
+        }
+      }
+
+      // 6. Unpack Question Bank
+      if (qBankResult.status === 'fulfilled') {
+        setQBankPapers(qBankResult.value?.papers || [])
+      }
+
+      // 7. Unpack Course Outcomes & Program Outcomes
+      if (coResult.status === 'fulfilled') {
+        setDbCourseOutcomes(coResult.value?.outcomes || coResult.value || [])
+      }
+      if (poResult.status === 'fulfilled') {
+        setDbProgramOutcomes(poResult.value?.programOutcomes || poResult.value || [])
+      }
+
+      // 8. Unpack Survey (and fetch analytics asynchronously in background)
+      if (surveyResult.status === 'fulfilled' && surveyResult.value?.survey) {
+        const surveyObj = surveyResult.value.survey
+        setSurvey(surveyObj)
+        apiService.getSurveyAnalytics(surveyObj._id)
+          .then(analytics => setSurveyResponsesCount(analytics.responses?.length || 0))
+          .catch(() => setSurveyResponsesCount(0))
+      } else {
         setSurvey(null)
         setSurveyResponsesCount(0)
       }
 
-      // 8. Fetch marks spreadsheet data for completeness check
-      try {
-        const res = await apiService.getMarksSpreadsheet(currentOffering._id)
+      // 9. Unpack Marks Spreadsheet
+      if (marksResult.status === 'fulfilled' && marksResult.value) {
+        const res = marksResult.value
         setMarksSpreadsheetData(res)
         if (res.assessments && res.assessments.length > 0) {
           if (!selectedAssessmentId) {
             setSelectedAssessmentId(res.assessments[0]._id)
-            initializeTempMarks(res.marks, res.assessments[0]._id, res.metadata[res.assessments[0]._id], res.students)
+            initializeTempMarks(res.marks, res.assessments[0]._id, res.metadata?.[res.assessments[0]._id], res.students)
           }
         }
-      } catch (err) {
-        console.error('Failed to load marks spreadsheet for overview:', err)
       }
 
-      // 9. Fetch CO-PO requests for teacher
-      try {
-        if (currentOffering?.course?._id) {
-          const reqRes = await apiService.getMyCOPORequests(currentOffering.course._id)
-          setTeacherRequests(reqRes.requests || [])
-        }
-      } catch (err) {
-        console.error('Failed to load teacher CO-PO requests:', err)
+      // 10. Unpack Teacher Requests
+      if (copoReqResult.status === 'fulfilled') {
+        setTeacherRequests(copoReqResult.value?.requests || [])
       }
- 
-      // 10. Fetch recent activities from database
-      try {
-        const actRes = await apiService.getRecentActivities(offering._id)
-        if (actRes && actRes.activities) {
-          const formattedActs = actRes.activities.map(act => {
-            const diffMs = Date.now() - new Date(act.createdAt).getTime()
-            const diffMins = Math.floor(diffMs / 60000)
-            const diffHours = Math.floor(diffMins / 60)
-            const diffDays = Math.floor(diffHours / 24)
 
-            let relativeTime = 'Just now'
-            if (diffDays > 0) {
-              relativeTime = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
-            } else if (diffHours > 0) {
-              relativeTime = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-            } else if (diffMins > 0) {
-              relativeTime = `${diffMins} min${diffMins > 1 ? 's' : ''} ago`
-            }
+      // 11. Unpack Recent Activities
+      if (actResult.status === 'fulfilled' && actResult.value?.activities) {
+        const formattedActs = actResult.value.activities.map(act => {
+          const diffMs = Date.now() - new Date(act.createdAt).getTime()
+          const diffMins = Math.floor(diffMs / 60000)
+          const diffHours = Math.floor(diffMins / 60)
+          const diffDays = Math.floor(diffHours / 24)
 
-            return {
-              id: act._id,
-              msg: act.description,
-              time: relativeTime,
-              createdAt: act.createdAt,
-              action: act.action
-            }
-          })
-          setActivities(formattedActs)
-        } else {
-          setActivities([])
-        }
-      } catch (err) {
-        console.error('Failed to load recent activities from database:', err)
+          let relativeTime = 'Just now'
+          if (diffDays > 0) {
+            relativeTime = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+          } else if (diffHours > 0) {
+            relativeTime = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+          } else if (diffMins > 0) {
+            relativeTime = `${diffMins} min${diffMins > 1 ? 's' : ''} ago`
+          }
+
+          return {
+            id: act._id,
+            msg: act.description,
+            time: relativeTime,
+            createdAt: act.createdAt,
+            action: act.action
+          }
+        })
+        setActivities(formattedActs)
+      } else {
         setActivities([
           { id: 1, msg: `Course Dashboard opened for ${offering.course?.courseCode}`, time: 'Just now' }
         ])
@@ -1264,6 +1376,93 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       marksSpreadsheetData.students
     )
   }
+
+  // ─── Browser History & Navigation Synchronization Handlers ───
+  const handleSelectTab = (tabId, pushHistory = true) => {
+    if (tabId === activeTab && !activeAssessmentForPaper) return;
+    if (activeTab === 'marksEntry') {
+      autoSaveMarks();
+    }
+    setActiveTab(tabId);
+    localStorage.setItem("teacherActiveTab", tabId);
+
+    if (activeAssessmentForPaper) {
+      setActiveAssessmentForPaper(null);
+    }
+
+    if (pushHistory && offering?._id) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('offering', offering._id);
+      url.searchParams.set('tab', tabId);
+      url.searchParams.delete('paper');
+      window.history.pushState({
+        view: 'offering',
+        offeringId: offering._id,
+        tab: tabId,
+        paperId: null
+      }, '', url.toString());
+    }
+  };
+
+  const handleOpenQuestionPaper = (assessment, pushHistory = true) => {
+    setActiveAssessmentForPaper(assessment);
+    if (pushHistory && offering?._id && assessment?._id) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('offering', offering._id);
+      url.searchParams.set('tab', 'assessments');
+      url.searchParams.set('paper', assessment._id);
+      window.history.pushState({
+        view: 'paper',
+        offeringId: offering._id,
+        tab: 'assessments',
+        paperId: assessment._id
+      }, '', url.toString());
+    }
+  };
+
+  const handleCloseQuestionPaper = () => {
+    setActiveAssessmentForPaper(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('paper');
+    if (offering?._id) {
+      window.history.pushState({
+        view: 'offering',
+        offeringId: offering._id,
+        tab: 'assessments',
+        paperId: null
+      }, '', url.toString());
+    }
+    loadAllData();
+  };
+
+  useEffect(() => {
+    const handlePopState = (e) => {
+      const state = e.state;
+      const params = new URLSearchParams(window.location.search);
+      const paperId = state?.paperId || params.get('paper');
+      const tabId = state?.tab || params.get('tab');
+
+      if (paperId) {
+        // Navigated forward to question paper editor
+        const match = assessments.find(a => a._id === paperId);
+        if (match) {
+          setActiveAssessmentForPaper(match);
+        }
+      } else {
+        // Navigated back from question paper editor to dashboard
+        if (activeAssessmentForPaper) {
+          setActiveAssessmentForPaper(null);
+          loadAllData();
+        }
+        if (tabId && tabId !== activeTab) {
+          setActiveTab(tabId);
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [assessments, activeAssessmentForPaper, activeTab]);
 
   const handleSpreadsheetMarkChange = (studentId, key, val, maxVal, questionsList = []) => {
     if (val !== '' && (isNaN(val) || parseFloat(val) < 0 || parseFloat(val) > maxVal)) {
@@ -1603,14 +1802,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   if (activeAssessmentForPaper) {
     return (
       <ErrorBoundary>
-        <QuestionPaperEditor
-          assessment={activeAssessmentForPaper}
-          offering={offering}
-          onBack={() => {
-            setActiveAssessmentForPaper(null)
-            loadAllData()
-          }}
-        />
+        <Suspense fallback={
+          <div className="bg-white rounded-2xl shadow-md border p-16 flex flex-col items-center justify-center gap-4 min-h-[50vh]">
+            <Loader2 className="animate-spin text-green-700" size={40} />
+            <p className="text-gray-600 font-bold text-lg">Loading Question Paper Editor...</p>
+          </div>
+        }>
+          <QuestionPaperEditor
+            assessment={activeAssessmentForPaper}
+            offering={offering}
+            onBack={handleCloseQuestionPaper}
+          />
+        </Suspense>
       </ErrorBoundary>
     )
   }
@@ -1668,13 +1871,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           return (
             <button
               key={tab.id}
-              onClick={() => {
-                if (activeTab === 'marksEntry') {
-                  autoSaveMarks()
-                }
-                setActiveTab(tab.id)
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all ${isActive
+              onClick={() => handleSelectTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all cursor-pointer ${isActive
                 ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-md'
                 : 'text-gray-600 hover:bg-green-50 hover:text-green-700'
                 }`}
@@ -2608,13 +2806,36 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-extrabold text-gray-800">Assessments Management</h2>
-                <button
-                  onClick={openCreateModal}
-                  className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl transition-all font-bold shadow-md hover:shadow-lg"
-                >
-                  <Plus size={16} />
-                  Create Assessment
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowNotesModal(true)}
+                    className="group flex items-center gap-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 hover:from-emerald-100 hover:to-teal-100 text-emerald-950 border border-emerald-300/90 hover:border-emerald-400 px-3.5 py-2 rounded-xl transition-all font-bold shadow-xs hover:shadow-sm cursor-pointer active:scale-98"
+                    title={notesStatus?.hasNotes ? `Reference Questions Active: ${notesStatus.totalChunks} questions loaded across ${notesStatus.files?.length || 1} doc(s)` : 'Attach reference questions/notes for real-time exam suggestions'}
+                  >
+                    <span className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs shadow-xs group-hover:scale-105 transition-transform">
+                      <BookOpen size={13} />
+                    </span>
+                    <span className="text-xs font-black tracking-tight text-emerald-950">Reference Questions</span>
+                    {notesStatus?.hasNotes ? (
+                      <span className="flex items-center gap-1.5 text-[11px] font-extrabold bg-emerald-600 text-white px-2.5 py-0.5 rounded-full shadow-2xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-200 animate-pulse" />
+                        {notesStatus.totalChunks} Qs
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-gray-500 bg-white/90 border border-gray-200 px-2 py-0.5 rounded-full">
+                        + Attach
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={openCreateModal}
+                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl transition-all font-bold shadow-md hover:shadow-lg cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    Create Assessment
+                  </button>
+                </div>
               </div>
 
               {assessments.length === 0 ? (
@@ -2691,8 +2912,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                         <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between">
                           {!isDirectMarksType ? (
                             <button
-                              onClick={() => setActiveAssessmentForPaper(a)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all"
+                              onClick={() => handleOpenQuestionPaper(a)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all cursor-pointer"
                             >
                               <Edit size={14} />
                               Open Q.Paper
@@ -3034,6 +3255,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   </div>
                 )
               })()}
+
+              {/* Reference Notes Modal */}
+              <ReferenceNotesModal
+                isOpen={showNotesModal}
+                onClose={() => setShowNotesModal(false)}
+                courseId={activeCourseId}
+                courseTitle={offering?.course?.courseName || offering?.course?.title || offering?.course?.courseTitle || ''}
+                onNotesUpdated={fetchNotesStatus}
+              />
             </div>
           )}
 
@@ -4210,7 +4440,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           Target Pass Marks (%)
                         </label>
                         <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {kpiInput.targetPassMarks}%
+                          {displayKpi.targetPassMarks}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -4218,14 +4448,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           type="range"
                           min="1"
                           max="100"
-                          value={kpiInput.targetPassMarks}
-                          onChange={(e) =>
-                            setKpiInput({
-                              ...kpiInput,
-                              targetPassMarks: parseInt(e.target.value) || 0,
-                            })
-                          }
-                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={displayKpi.targetPassMarks}
+                          onChange={(e) => {
+                            isKpiUserInteractingRef.current = true
+                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
+                            const val = parseInt(e.target.value) || 0
+                            setDisplayKpi(prev => ({ ...prev, targetPassMarks: val }))
+                            setKpiInput(prev => ({ ...prev, targetPassMarks: val }))
+                          }}
+                          style={{
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.targetPassMarks}%, #e5e7eb ${displayKpi.targetPassMarks}%, #e5e7eb 100%)`
+                          }}
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                         />
                       </div>
                       <div className="flex justify-between text-[11px] font-bold text-gray-400">
@@ -4242,7 +4476,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           CO Attainment Target KPI (%)
                         </label>
                         <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {kpiInput.kpiCO}%
+                          {displayKpi.kpiCO}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -4250,14 +4484,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           type="range"
                           min="1"
                           max="100"
-                          value={kpiInput.kpiCO}
-                          onChange={(e) =>
-                            setKpiInput({
-                              ...kpiInput,
-                              kpiCO: parseInt(e.target.value) || 0,
-                            })
-                          }
-                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={displayKpi.kpiCO}
+                          onChange={(e) => {
+                            isKpiUserInteractingRef.current = true
+                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
+                            const val = parseInt(e.target.value) || 0
+                            setDisplayKpi(prev => ({ ...prev, kpiCO: val }))
+                            setKpiInput(prev => ({ ...prev, kpiCO: val }))
+                          }}
+                          style={{
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.kpiCO}%, #e5e7eb ${displayKpi.kpiCO}%, #e5e7eb 100%)`
+                          }}
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                         />
                       </div>
                       <div className="flex justify-between text-[11px] font-bold text-gray-400">
@@ -4274,7 +4512,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           PO Attainment Target KPI (%)
                         </label>
                         <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {kpiInput.kpiPO}%
+                          {displayKpi.kpiPO}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -4282,14 +4520,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           type="range"
                           min="1"
                           max="100"
-                          value={kpiInput.kpiPO}
-                          onChange={(e) =>
-                            setKpiInput({
-                              ...kpiInput,
-                              kpiPO: parseInt(e.target.value) || 0,
-                            })
-                          }
-                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          value={displayKpi.kpiPO}
+                          onChange={(e) => {
+                            isKpiUserInteractingRef.current = true
+                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
+                            const val = parseInt(e.target.value) || 0
+                            setDisplayKpi(prev => ({ ...prev, kpiPO: val }))
+                            setKpiInput(prev => ({ ...prev, kpiPO: val }))
+                          }}
+                          style={{
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.kpiPO}%, #e5e7eb ${displayKpi.kpiPO}%, #e5e7eb 100%)`
+                          }}
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                         />
                       </div>
                       <div className="flex justify-between text-[11px] font-bold text-gray-400">
@@ -4423,111 +4665,133 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
           {/* TAB 8: REPORTS */}
           {activeTab === 'reports' && (
-            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
-              {(() => {
-                if (reportScope === 'combined' && !combinedBatchSpreadsheetData && !loadingCombinedBatch) {
-                  setLoadingCombinedBatch(true)
-                  apiService.getCombinedBatchSpreadsheet(offering._id)
-                    .then(res => {
-                      setCombinedBatchSpreadsheetData(res)
-                      setLoadingCombinedBatch(false)
-                    })
-                    .catch(err => {
-                      console.error('Failed to load combined batch spreadsheet:', err)
-                      setLoadingCombinedBatch(false)
-                    })
-                }
+            <Suspense fallback={
+              <div className="bg-white rounded-2xl shadow-md border p-12 flex flex-col items-center justify-center gap-4">
+                <Loader2 className="animate-spin text-green-700" size={36} />
+                <p className="text-gray-500 font-semibold">Loading Comprehensive Reports...</p>
+              </div>
+            }>
+              <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
+                {(() => {
+                  if (reportScope === 'combined' && !combinedBatchSpreadsheetData && !loadingCombinedBatch) {
+                    setLoadingCombinedBatch(true)
+                    apiService.getCombinedBatchSpreadsheet(offering._id)
+                      .then(res => {
+                        setCombinedBatchSpreadsheetData(res)
+                        setLoadingCombinedBatch(false)
+                      })
+                      .catch(err => {
+                        console.error('Failed to load combined batch spreadsheet:', err)
+                        setLoadingCombinedBatch(false)
+                      })
+                  }
 
-                if (reportScope === 'combined' && (loadingCombinedBatch || !combinedBatchSpreadsheetData)) {
+                  if (reportScope === 'combined' && (loadingCombinedBatch || !combinedBatchSpreadsheetData)) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-16">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+                        <p className="mt-4 text-emerald-800 font-bold text-lg">Generating Combined Batch Report...</p>
+                        <p className="text-sm text-gray-500 font-semibold">Aggregating students and assessment marks across all sections</p>
+                      </div>
+                    )
+                  }
+
+                  const activeSpreadsheetData = reportScope === 'combined' && combinedBatchSpreadsheetData
+                    ? combinedBatchSpreadsheetData
+                    : marksSpreadsheetData
+
+                  const activeStudents = (activeSpreadsheetData.students || []).map(s => ({ id: s.id, name: s.name, _id: s._id, section: s.section }))
+                  const activeAssessmentsList = activeSpreadsheetData.assessments || assessments
+
+                  const cts = activeAssessmentsList.filter(a => a.type === 'cts')
+                  const midTerm = activeAssessmentsList.filter(a => a.type === 'midTerm')
+                  const final = activeAssessmentsList.filter(a => a.type === 'final')
+                  const assignments = activeAssessmentsList.filter(a => a.type === 'assignments')
+                  const attendance = activeAssessmentsList.find(a => a.type === 'attendance')
+                  const performance = activeAssessmentsList.find(a => a.type === 'performance')
+                  const presentation = activeAssessmentsList.find(a => a.type === 'presentation')
+
+                  const structuredAssessments = {
+                    cts,
+                    midTerm,
+                    final,
+                    assignments,
+                    attendance,
+                    performance,
+                    presentation
+                  }
+
+                  if (!activeSpreadsheetData.marks) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                        <p className="mt-4 text-gray-600 font-medium">Loading report calculations...</p>
+                      </div>
+                    )
+                  }
+
+                  const sectionsList = activeSpreadsheetData.sections || [offering.section]
+                  const sectionDisplayName = reportScope === 'combined'
+                    ? (sectionsList.length > 1 ? `All Sections (${sectionsList.join(', ')})` : `Section ${offering.section}`)
+                    : offering.section
+
                   return (
-                    <div className="flex flex-col items-center justify-center py-16">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
-                      <p className="mt-4 text-emerald-800 font-bold text-lg">Generating Combined Batch Report...</p>
-                      <p className="text-sm text-gray-500 font-semibold">Aggregating students and assessment marks across all sections</p>
-                    </div>
+                    <ComprehensiveReports
+                      key={`comp-reports-${activeTab}-${reportScope}`}
+                      students={activeStudents}
+                      marks={activeSpreadsheetData.marks || {}}
+                      assessments={structuredAssessments}
+                      coMapping={coMapping}
+                      courseInfo={{
+                        ...offering.course,
+                        courseTitle: offering.course?.courseName,
+                        teacherName: offering.teacher?.fullName,
+                        teacherEmail: offering.teacher?.email,
+                        batchName: offering.batch?.name || offering.batch?.batchName || 'N/A',
+                        semesterName: offering.semester?.semesterName,
+                        sectionName: sectionDisplayName,
+                        rawSectionName: offering.section,
+                        academicYear: offering.academicYear || offering.semester?.academicYear,
+                      }}
+                      targetPassMarks={attainmentData.kpiConfig?.targetPassMarks}
+                      kpiCO={attainmentData.kpiConfig?.kpiCO}
+                      kpiPO={attainmentData.kpiConfig?.kpiPO}
+                      metadataMap={activeSpreadsheetData.metadata || {}}
+                      dbCourseOutcomes={dbCourseOutcomes}
+                      dbProgramOutcomes={dbProgramOutcomes}
+                      reportScope={reportScope}
+                      onReportScopeChange={setReportScope}
+                    />
                   )
-                }
-
-                const activeSpreadsheetData = reportScope === 'combined' && combinedBatchSpreadsheetData
-                  ? combinedBatchSpreadsheetData
-                  : marksSpreadsheetData
-
-                const activeStudents = (activeSpreadsheetData.students || []).map(s => ({ id: s.id, name: s.name, _id: s._id, section: s.section }))
-                const activeAssessmentsList = activeSpreadsheetData.assessments || assessments
-
-                const cts = activeAssessmentsList.filter(a => a.type === 'cts')
-                const midTerm = activeAssessmentsList.filter(a => a.type === 'midTerm')
-                const final = activeAssessmentsList.filter(a => a.type === 'final')
-                const assignments = activeAssessmentsList.filter(a => a.type === 'assignments')
-                const attendance = activeAssessmentsList.find(a => a.type === 'attendance')
-                const performance = activeAssessmentsList.find(a => a.type === 'performance')
-                const presentation = activeAssessmentsList.find(a => a.type === 'presentation')
-
-                const structuredAssessments = {
-                  cts,
-                  midTerm,
-                  final,
-                  assignments,
-                  attendance,
-                  performance,
-                  presentation
-                }
-
-                if (!activeSpreadsheetData.marks) {
-                  return (
-                    <div className="flex flex-col items-center justify-center py-12">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-                      <p className="mt-4 text-gray-600 font-medium">Loading report calculations...</p>
-                    </div>
-                  )
-                }
-
-                const sectionsList = activeSpreadsheetData.sections || [offering.section]
-                const sectionDisplayName = reportScope === 'combined'
-                  ? (sectionsList.length > 1 ? `All Sections (${sectionsList.join(', ')})` : `Section ${offering.section}`)
-                  : offering.section
-
-                return (
-                  <ComprehensiveReports
-                    students={activeStudents}
-                    marks={activeSpreadsheetData.marks || {}}
-                    assessments={structuredAssessments}
-                    coMapping={coMapping}
-                    courseInfo={{
-                      ...offering.course,
-                      courseTitle: offering.course?.courseName,
-                      teacherName: offering.teacher?.fullName,
-                      teacherEmail: offering.teacher?.email,
-                      batchName: offering.batch?.name || offering.batch?.batchName || 'N/A',
-                      semesterName: offering.semester?.semesterName,
-                      sectionName: sectionDisplayName,
-                      rawSectionName: offering.section,
-                      academicYear: offering.academicYear || offering.semester?.academicYear,
-                    }}
-                    targetPassMarks={attainmentData.kpiConfig?.targetPassMarks}
-                    kpiCO={attainmentData.kpiConfig?.kpiCO}
-                    kpiPO={attainmentData.kpiConfig?.kpiPO}
-                    metadataMap={activeSpreadsheetData.metadata || {}}
-                    dbCourseOutcomes={dbCourseOutcomes}
-                    dbProgramOutcomes={dbProgramOutcomes}
-                    reportScope={reportScope}
-                    onReportScopeChange={setReportScope}
-                  />
-                )
-              })()}
-            </div>
+                })()}
+              </div>
+            </Suspense>
           )}
 
           {/* TAB 9: COURSE SURVEY */}
           {activeTab === 'evaluation' && (
-            <CourseSurvey offering={offering} />
+            <Suspense fallback={
+              <div className="bg-white rounded-2xl shadow-md border p-12 flex flex-col items-center justify-center gap-4">
+                <Loader2 className="animate-spin text-green-700" size={36} />
+                <p className="text-gray-500 font-semibold">Loading Course Survey...</p>
+              </div>
+            }>
+              <CourseSurvey offering={offering} />
+            </Suspense>
           )}
 
           {/* TAB 10: PO RECOMMENDATION */}
           {activeTab === 'poRecommendation' && (
-            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
-              <PORecommendationMatrix offering={offering} initialStudentList={students} />
-            </div>
+            <Suspense fallback={
+              <div className="bg-white rounded-2xl shadow-md border p-12 flex flex-col items-center justify-center gap-4">
+                <Loader2 className="animate-spin text-green-700" size={36} />
+                <p className="text-gray-500 font-semibold">Loading PO Recommendation...</p>
+              </div>
+            }>
+              <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
+                <PORecommendationMatrix offering={offering} initialStudentList={students} />
+              </div>
+            </Suspense>
           )}
         </div>
       )}

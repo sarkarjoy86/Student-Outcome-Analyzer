@@ -3,7 +3,33 @@ import { requireAuth } from '../middleware/auth.js'
 
 const router = express.Router()
 
-// Local smart semantic similarity fallback analyzer
+// ---------------------------------------------------------------------------
+// Local NLP Microservice Configuration (Python FastAPI @ localhost:8000)
+// ---------------------------------------------------------------------------
+const NLP_SERVICE_BASE = process.env.NLP_SERVICE_URL || 'http://localhost:8000'
+const NLP_FETCH_TIMEOUT_MS = 120_000 // 2 minute timeout for heavy SBERT inference
+
+/**
+ * Checks whether the local NLP microservice is reachable.
+ * Returns { online: true, device, gpu_name } or { online: false }.
+ */
+async function checkNlpServiceHealth() {
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5000)
+    const response = await fetch(`${NLP_SERVICE_BASE}/health`, { signal: controller.signal })
+    clearTimeout(timer)
+    if (response.ok) {
+      const data = await response.json()
+      return { online: true, device: data.device, gpu_name: data.gpu_name }
+    }
+    return { online: false }
+  } catch {
+    return { online: false }
+  }
+}
+
+// Local smart semantic similarity fallback analyzer (keyword-based, no ML)
 function computeLocalSimilarityFallback(currentPaperText, archiveText) {
   try {
     const cleanCurrent = String(currentPaperText || '').toLowerCase().replace(/\[\d+\]|\[CO\d+[-\w]*\]/gi, '').trim()
@@ -279,10 +305,84 @@ router.post('/swot-generate', async (req, res) => {
   }
 })
 
+// ===========================================================================
+// LOCAL NLP MICROSERVICE ROUTES (Sentence-BERT + Zero-Shot on CUDA / CPU)
+// ===========================================================================
+
+/**
+ * POST /api/ai/suggest-metadata
+ * Routes to the local NLP microservice for Bloom's Taxonomy classification
+ * and Course Outcome (CO) mapping using SBERT + Zero-Shot Classification.
+ * Accepts both camelCase (questionText, courseOutcomes) and snake_case (question_text, course_outcomes).
+ */
+router.post('/suggest-metadata', async (req, res) => {
+  try {
+    const rawQuestion = req.body.questionText || req.body.question_text || ''
+    const rawOutcomes = req.body.courseOutcomes || req.body.course_outcomes || []
+
+    const questionText = String(rawQuestion).trim()
+    if (!questionText) {
+      return res.status(400).json({ success: false, message: 'No question text provided.' })
+    }
+
+    // Health check: is the NLP service reachable?
+    const health = await checkNlpServiceHealth()
+    if (!health.online) {
+      console.warn('[Suggest-Metadata] ⚠ Local NLP microservice is offline (http://localhost:8000). Cannot classify Bloom/CO.')
+      return res.status(503).json({
+        success: false,
+        message: 'NLP microservice is not running. Please start it with: cd ml-service && uvicorn main:app --port 8000'
+      })
+    }
+
+    console.log(`[Suggest-Metadata] Routing to local NLP service (${health.device}${health.gpu_name ? ' — ' + health.gpu_name : ''})`)
+
+    // Normalize course outcomes to guarantee required FastAPI keys (code, description)
+    const normalizedOutcomes = (Array.isArray(rawOutcomes) ? rawOutcomes : []).map(item => ({
+      id: item?.id || item?._id || item?.code || '',
+      code: item?.code || item?.id || item?.coCode || '',
+      description: item?.description || item?.desc || item?.coDescription || ''
+    }))
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
+
+    const response = await fetch(`${NLP_SERVICE_BASE}/suggest-metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        questionText,
+        courseOutcomes: normalizedOutcomes
+      }),
+      signal: controller.signal
+    })
+    clearTimeout(timer)
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      console.error(`[Suggest-Metadata] NLP service returned ${response.status}:`, data)
+      return res.status(response.status).json({
+        success: false,
+        message: data?.detail || data?.message || 'NLP metadata suggestion failed.'
+      })
+    }
+
+    return res.json(data)
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error('[Suggest-Metadata] NLP service request timed out.')
+      return res.status(504).json({ success: false, message: 'NLP metadata suggestion timed out. The model may still be loading.' })
+    }
+    console.error('[Suggest-Metadata] handler error:', error)
+    return res.status(500).json({ success: false, message: `Server error: ${error.message}` })
+  }
+})
+
 /**
  * POST /api/ai/similarity-check
- * Compares the current question paper against archived papers using Gemini AI
- * for intelligent semantic similarity detection.
+ * Routes to the local NLP microservice for SBERT-powered semantic similarity.
+ * Falls back to local keyword-based analysis if the NLP service is unreachable.
  */
 router.post('/similarity-check', requireAuth, async (req, res) => {
   try {
@@ -298,132 +398,53 @@ router.post('/similarity-check', requireAuth, async (req, res) => {
       return res.status(200).json({ success: true, results: [], maxSimilarity: 0, totalArchivesCompared: 0, message: 'No archived papers to compare against.' })
     }
 
-    const apiKey = (process.env.GEMINI_API_KEY || '').trim()
+    // Attempt to route through the local NLP microservice first
+    const health = await checkNlpServiceHealth()
 
-    // Truncate current paper text for prompts
-    const currentTextTruncated = currentPaperText.substring(0, 5000)
+    if (health.online) {
+      console.log(`[Similarity Check] ✓ Routing to local NLP microservice (${health.device}${health.gpu_name ? ' — ' + health.gpu_name : ''}) for ${archivedPapers.length} archive(s)`)
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
 
+        const nlpResponse = await fetch(`${NLP_SERVICE_BASE}/similarity-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPaperText, archivedPapers }),
+          signal: controller.signal
+        })
+        clearTimeout(timer)
+
+        const nlpData = await nlpResponse.json()
+
+        if (nlpResponse.ok && nlpData.success) {
+          console.log(`[Similarity Check] ✓ NLP service returned results — maxSimilarity=${nlpData.maxSimilarity}%`)
+          return res.json(nlpData)
+        }
+
+        console.warn(`[Similarity Check] NLP service responded with error (${nlpResponse.status}):`, nlpData?.message || nlpData?.detail)
+        // Fall through to keyword-based fallback below
+      } catch (nlpErr) {
+        if (nlpErr.name === 'AbortError') {
+          console.warn('[Similarity Check] ⚠ NLP service request timed out. Falling back to keyword analysis.')
+        } else {
+          console.warn('[Similarity Check] ⚠ NLP service fetch failed:', nlpErr.message, '— falling back to keyword analysis.')
+        }
+        // Fall through to keyword-based fallback below
+      }
+    } else {
+      console.warn('[Similarity Check] ⚠ Local NLP microservice is offline. Using keyword-based fallback.')
+    }
+
+    // -----------------------------------------------------------------------
+    // Fallback: Keyword-based local similarity analysis (no ML, no API key)
+    // -----------------------------------------------------------------------
     const results = []
 
-    // Process archives one-by-one to avoid rate limits
     for (let i = 0; i < archivedPapers.length; i++) {
       try {
         const archive = archivedPapers[i]
-        const archiveTextTruncated = (archive.text || '').substring(0, 5000)
-
-        let parsed = null
-
-        // Try Gemini AI if API key is available
-        if (apiKey && archiveTextTruncated.length > 10) {
-          const prompt = `You are an expert academic exam paper similarity analyzer.
-
-TASK: Compare CURRENT question paper against an ARCHIVED question paper. Find questions that test the same concepts.
-
-CURRENT QUESTION PAPER:
-"""
-${currentTextTruncated}
-"""
-
-ARCHIVED QUESTION PAPER (${archive.assessmentName || 'Unknown'} — ${archive.semester || ''} — Section ${archive.section || ''}):
-"""
-${archiveTextTruncated}
-"""
-
-RULES:
-1. IGNORE headers, university names, course codes, instructions, mark allocations like "[10]" or "[CO1-C4]".
-2. FOCUS on the actual exam questions and what concepts they test.
-3. Questions are "similar" if they test the SAME concept/topic even if worded differently.
-4. Be thorough — if both papers have questions about the same OOP concept (inheritance, polymorphism, encapsulation, abstraction, constructors, etc.), flag them.
-5. Return overallSimilarity as a percentage reflecting how much question content overlaps.
-
-Return ONLY valid JSON:
-{
-  "overallSimilarity": <number 0-100>,
-  "verdict": "<Original|Low Overlap|Moderate Overlap|High Overlap|Heavily Reused>",
-  "matchedQuestions": [
-    {
-      "currentQ": "<question text from current paper>",
-      "archivedQ": "<question text from archived paper>",
-      "similarity": <number 0-100>,
-      "explanation": "<why these questions are similar>"
-    }
-  ],
-  "summary": "<1-2 sentence summary>"
-}`
-
-          // Try up to 3 attempts with exponential backoff
-          for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
-            if (attempt > 0) {
-              await new Promise(r => setTimeout(r, 1000 * attempt))
-            }
-
-            const endpoints = [
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(apiKey)}`
-            ]
-
-            for (const url of endpoints) {
-              if (parsed) break
-              try {
-                const response = await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'x-goog-api-key': apiKey
-                  },
-                  body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    generationConfig: {
-                      temperature: 0.15,
-                      maxOutputTokens: 2048
-                    }
-                  })
-                })
-
-                if (!response.ok) {
-                  const errBody = await response.text().catch(() => '')
-                  console.warn(`[Similarity] Gemini ${response.status} for archive ${i}:`, errBody.substring(0, 200))
-                  continue
-                }
-
-                let data
-                try {
-                  data = await response.json()
-                } catch (jsonParseErr) {
-                  console.warn(`[Similarity] Could not parse Gemini response for archive ${i}`)
-                  continue
-                }
-                const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
-
-                if (rawText) {
-                  try {
-                    let clean = rawText.trim()
-                    clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-                    const fb = clean.indexOf('{')
-                    const lb = clean.lastIndexOf('}')
-                    if (fb !== -1 && lb > fb) {
-                      clean = clean.substring(fb, lb + 1)
-                    }
-                    const candidate = JSON.parse(clean)
-                    if (typeof candidate.overallSimilarity === 'number') {
-                      parsed = candidate
-                    }
-                  } catch (jsonErr) {
-                    console.warn(`[Similarity] JSON parse failed for archive ${i}:`, jsonErr.message)
-                  }
-                }
-              } catch (fetchErr) {
-                console.warn(`[Similarity] Fetch error for archive ${i}:`, fetchErr.message)
-              }
-            }
-          }
-        }
-
-        // Fallback to local keyword-based analysis if AI failed
-        if (!parsed) {
-          parsed = computeLocalSimilarityFallback(currentPaperText, archive.text || '')
-        }
+        const parsed = computeLocalSimilarityFallback(currentPaperText, archive.text || '')
 
         results.push({
           archiveId: archive.id,
@@ -452,11 +473,6 @@ Return ONLY valid JSON:
           summary: 'Could not analyze this paper.'
         })
       }
-
-      // Small delay between archives to respect rate limits
-      if (i < archivedPapers.length - 1) {
-        await new Promise(r => setTimeout(r, 500))
-      }
     }
 
     results.sort((a, b) => b.overallSimilarity - a.overallSimilarity)
@@ -472,6 +488,140 @@ Return ONLY valid JSON:
   } catch (error) {
     console.error('Similarity check handler error:', error)
     return res.status(200).json({ success: false, message: `Similarity Check Error: ${error.message}` })
+  }
+})
+
+/**
+ * POST /api/ai/smart-code-output
+ * Accurately analyzes university exam code snippets (C++, C, Python, Pseudocode)
+ * to predict stdout or identify Compilation / Syntax / Runtime errors.
+ */
+router.post('/smart-code-output', async (req, res) => {
+  try {
+    const { code, language = 'cpp' } = req.body
+
+    if (!code || !code.trim()) {
+      return res.status(400).json({ success: false, message: 'No code provided for execution analysis.' })
+    }
+
+    const apiKey = (process.env.GEMINI_API_KEY || '').trim()
+    if (!apiKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'GEMINI_API_KEY is not configured in server .env file.'
+      })
+    }
+
+    const systemPrompt = `You are an expert compiler, code execution engine, and computer science professor evaluating exam questions.
+Analyze the provided university exam code snippet (${language}) and determine:
+1. The EXACT standard console output (stdout) if the code compiles and runs successfully.
+2. If the code has errors (intentional trick question or syntax/logic mistake by the professor, e.g. private member access, const violation, missing semicolon, undeclared variable, infinite loop/recursion, type error, zero division):
+   Identify if it is a "Compilation Error", "Syntax Error", or "Runtime Error" and explain the exact issue clearly.
+3. If language is Pseudocode, simulate the algorithm trace and return the expected output or result.
+
+STRICT JSON FORMAT:
+Return ONLY a valid JSON object without markdown fences, matching this structure:
+{
+  "status": "SUCCESS" | "COMPILATION_ERROR" | "RUNTIME_ERROR" | "PSEUDOCODE_RESULT",
+  "output": "Exact stdout string or algorithm result (null if error prevents output)",
+  "errorType": "Compilation Error" | "Syntax Error" | "Runtime Error" | null,
+  "explanation": "Concise 1-2 sentence academic explanation of the result or error cause"
+}
+Rules:
+- Be strictly accurate. In C++, accessing private members from main() is COMPILATION_ERROR.
+- If no output is produced due to error, output MUST be null or an empty string.
+- Keep explanation concise to minimize token usage.`
+
+    const userMessage = `Language: ${language}\n\nCode:\n\`\`\`${language}\n${code.trim()}\n\`\`\``
+
+    const endpointsToTry = [
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: 800
+          }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: 800
+          }
+        }
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${encodeURIComponent(apiKey)}`,
+        body: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: 800
+          }
+        }
+      }
+    ]
+
+    let resultJson = null
+    let lastErrorMsg = ''
+
+    for (const ep of endpointsToTry) {
+      try {
+        const response = await fetch(ep.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify(ep.body)
+        })
+
+        const data = await response.json()
+        if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          const rawText = data.candidates[0].content.parts[0].text.trim()
+          try {
+            resultJson = JSON.parse(rawText)
+            if (resultJson) break
+          } catch (pErr) {
+            const match = rawText.match(/\{[\s\S]*\}/)
+            if (match) {
+              resultJson = JSON.parse(match[0])
+              if (resultJson) break
+            }
+          }
+        } else {
+          lastErrorMsg = data?.error?.message || data?.message || `HTTP ${response.status}`
+        }
+      } catch (fErr) {
+        lastErrorMsg = fErr.message
+      }
+    }
+
+    if (!resultJson) {
+      return res.status(502).json({
+        success: false,
+        message: `Smart Output failed: ${lastErrorMsg || 'Unable to simulate code execution.'}`
+      })
+    }
+
+    return res.json({
+      success: true,
+      data: resultJson
+    })
+  } catch (err) {
+    console.error('[Smart-Code-Output] handler error:', err)
+    return res.status(500).json({ success: false, message: `Server error: ${err.message}` })
   }
 })
 

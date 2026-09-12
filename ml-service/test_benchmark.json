@@ -1,0 +1,102 @@
+[
+  {
+    "question": "State the definition of data abstraction in object-oriented programming.",
+    "true_bloom": "C1",
+    "true_co": "CO1"
+  },
+  {
+    "question": "Define the role and syntax of dynamic memory allocation using the new and delete operators in C++.",
+    "true_bloom": "C1",
+    "true_co": "CO2"
+  },
+  {
+    "question": "List the primary roles and responsibilities in an Agile development team during software specification engineering.",
+    "true_bloom": "C1",
+    "true_co": "CO3"
+  },
+  {
+    "question": "Explain how runtime polymorphism differs from compile-time polymorphism with code examples.",
+    "true_bloom": "C2",
+    "true_co": "CO1"
+  },
+  {
+    "question": "Describe how standard exception handling mechanisms like try, catch, and throw manage runtime errors in C++.",
+    "true_bloom": "C2",
+    "true_co": "CO2"
+  },
+  {
+    "question": "Discuss why collaborative team communication and version control workflows are essential when constructing software specifications.",
+    "true_bloom": "C2",
+    "true_co": "CO3"
+  },
+  {
+    "question": "Demonstrate single and multiple inheritance by writing an employee management class hierarchy with base and derived classes.",
+    "true_bloom": "C3",
+    "true_co": "CO1"
+  },
+  {
+    "question": "Implement a C++ template function to perform safe dynamic memory allocation for arrays.",
+    "true_bloom": "C3",
+    "true_co": "CO2"
+  },
+  {
+    "question": "Solve memory leak issues by implementing copy constructor and copy assignment operator following the Rule of Three.",
+    "true_bloom": "C3",
+    "true_co": "CO2"
+  },
+  {
+    "question": "Construct a formal software engineering requirements specification document for a collaborative student outcome analyzer module.",
+    "true_bloom": "C3",
+    "true_co": "CO3"
+  },
+  {
+    "question": "Analyze why accessing private members outside a class results in a compilation error: class Foo { private: int x; };",
+    "true_bloom": "C4",
+    "true_co": "CO1"
+  },
+  {
+    "question": "Compare and contrast the memory overhead and execution performance of C++ function templates versus virtual function tables.",
+    "true_bloom": "C4",
+    "true_co": "CO2"
+  },
+  {
+    "question": "Deconstruct a monolithic e-commerce application architecture and examine the trade-offs of refactoring it into decoupled microservices.",
+    "true_bloom": "C4",
+    "true_co": "CO4"
+  },
+  {
+    "question": "Critique the decision to use deep inheritance hierarchies versus object composition in high-scale software engineering.",
+    "true_bloom": "C5",
+    "true_co": "CO1"
+  },
+  {
+    "question": "Appraise and prioritize user requirement specifications submitted by cross-functional collaborative teams based on risk and feasibility.",
+    "true_bloom": "C5",
+    "true_co": "CO3"
+  },
+  {
+    "question": "Critique and evaluate the security and encapsulation vulnerabilities in a given singleton design pattern.",
+    "true_bloom": "C5",
+    "true_co": "CO4"
+  },
+  {
+    "question": "Formulate an advanced custom smart pointer class in C++ that supports reference counting and custom deleters.",
+    "true_bloom": "C6",
+    "true_co": "CO2"
+  },
+  {
+    "question": "Synthesize an end-to-end collaborative team workflow and specification template for automated software peer reviews.",
+    "true_bloom": "C6",
+    "true_co": "CO3"
+  },
+  {
+    "question": "Design an extensible architecture for a multithreaded order processing system using modern C++ design patterns.",
+    "true_bloom": "C6",
+    "true_co": "CO4"
+  },
+  {
+    "question": "Architect an event-driven publish-subscribe distributed messaging framework to solve real-life high-throughput engineering problems.",
+    "true_bloom": "C6",
+    "true_co": "CO4"
+  }
+]

@@ -14,13 +14,17 @@ import {
   PasteCleanup,
   Count
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Trash2 } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Trash2, GripHorizontal, Code2, Terminal, AlignCenter, AlignLeft, Copy, CheckSquare, ListOrdered, Square, Edit3, BookOpen, Play, Undo2, Redo2 } from 'lucide-react'
 import mammoth from 'mammoth'
 import html2canvas from 'html2canvas'
 
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { BAIUST_LOGO } from './baiustLogo'
+import { getNotesStatus, suggestQuestionsFromNotes, stripQuestionLeadingNumber, getNormalizedCourseKey, getCachedNotesStatus } from '../../services/notesApi'
+import { smartFormatCode, isCodeLikelySingleLine, detectEmbeddedCodeInQuestion } from '../../utils/codeFormatter'
+import ReferenceNotesModal from '../dashboard/ReferenceNotesModal'
+import TableDesignModal from './TableDesignModal'
 
 // Syncfusion CSS imports
 import '@syncfusion/ej2-base/styles/material.css'
@@ -33,6 +37,8 @@ import '@syncfusion/ej2-navigations/styles/material.css'
 import '@syncfusion/ej2-popups/styles/material.css'
 import '@syncfusion/ej2-richtexteditor/styles/material.css'
 import '@syncfusion/ej2-dropdowns/styles/material.css'
+
+const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1") ? "https://student-outcome-analyzer-api.onrender.com" : "");
 
 // Helper: Word-by-word diff calculation for AI comparison view
 function getWordDiff(oldText = '', newText = '') {
@@ -211,7 +217,75 @@ function ModalPortal({ children }) {
   return createPortal(children, target)
 }
 
-// Helper: Compute positions for Graph & Tree layouts (Tree Hierarchical, Map, Circle, or Custom Dragged)
+// Helper: Universal Graph / Tree Edge Line Parser (Supports negative numbers like -5, math symbols, words)
+function parseGraphLines(edgeText = '') {
+  const lines = (edgeText || '').split(/[\n,;]+/).map(l => l.trim()).filter(Boolean)
+  const nodesSet = new Set()
+  const edges = []
+
+  lines.forEach(line => {
+    // Extract optional weight: e.g. ": 10" or "= 10"
+    let weight = ''
+    let edgePart = line.trim()
+    const weightMatch = edgePart.match(/^(.+?)(?:\s*[:=]\s*(.+))$/)
+    if (weightMatch) {
+      edgePart = weightMatch[1].trim()
+      weight = weightMatch[2].trim()
+    }
+
+    let from = ''
+    let to = ''
+
+    // Delimiter priority: -> , => , -- , " - " (space-padded dash), or single "-"
+    if (edgePart.includes('->')) {
+      const parts = edgePart.split('->')
+      from = parts[0].trim()
+      to = parts.slice(1).join('->').trim()
+    } else if (edgePart.includes('=>')) {
+      const parts = edgePart.split('=>')
+      from = parts[0].trim()
+      to = parts.slice(1).join('=>').trim()
+    } else if (edgePart.includes('--')) {
+      const parts = edgePart.split('--')
+      from = parts[0].trim()
+      to = parts.slice(1).join('--').trim()
+    } else if (/\s+-\s+/.test(edgePart)) {
+      const parts = edgePart.split(/\s+-\s+/)
+      from = parts[0].trim()
+      to = parts.slice(1).join(' - ').trim()
+    } else if (edgePart.includes('-')) {
+      // e.g. A-B, or C--5, or -5-B, or -5--10
+      let dashIdx = -1
+      if (edgePart.startsWith('-')) {
+        dashIdx = edgePart.indexOf('-', 1)
+      } else {
+        dashIdx = edgePart.indexOf('-')
+      }
+      if (dashIdx !== -1) {
+        from = edgePart.substring(0, dashIdx).trim()
+        to = edgePart.substring(dashIdx + 1).trim()
+      }
+    }
+
+    if (from && to) {
+      nodesSet.add(from)
+      nodesSet.add(to)
+      edges.push({ from, to, weight })
+    }
+  })
+
+  if (nodesSet.size === 0) {
+    ['A', 'B', 'C', 'D'].forEach(n => nodesSet.add(n))
+    edges.push({ from: 'A', to: 'B', weight: '10' })
+    edges.push({ from: 'A', to: 'C', weight: '5' })
+    edges.push({ from: 'B', to: 'C', weight: '15' })
+    edges.push({ from: 'C', to: 'D', weight: '8' })
+  }
+
+  return { nodes: Array.from(nodesSet), edges }
+}
+
+// Helper: Compute positions for Graph & Tree layouts (Tree Hierarchical, Map, Circle/Polygon, Horizontal Flow, or Custom Dragged)
 function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', customPositions = {}) {
   const width = 600
   const height = 400
@@ -227,23 +301,239 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
   const unpositioned = nodesList.filter(n => !positions[n])
   if (unpositioned.length === 0) return positions
 
-  // 1. Tree Layout Algorithm (Hierarchical Top-Down Layout for Binary, Ternary, & N-ary trees)
-  if (graphType === 'tree') {
+  // 1. Symmetrical Level-Wise Tree Layout Algorithms (Top-Down, Left-to-Right, Right-to-Left)
+  if (graphType.startsWith('tree')) {
+    const isTopDown = graphType === 'tree' || graphType === 'tree_directed'
+    const isLR = graphType === 'tree_lr' || graphType === 'tree_lr_directed'
+    const isRL = graphType === 'tree_rl' || graphType === 'tree_rl_directed'
+
+    // Exact Symmetrical Coordinates crafted and approved by Teacher for the default academic tree
+    const predefinedAcademicTreeCoords = {
+      '15': { x: 295, y: 55 },
+      '35': { x: 205, y: 115 },
+      '9':  { x: 295, y: 115 },
+      '40': { x: 385, y: 115 },
+      '3':  { x: 170, y: 185 },
+      '6':  { x: 240, y: 185 },
+      '5':  { x: 350, y: 185 },
+      '7':  { x: 420, y: 185 },
+      '1':  { x: 135, y: 255 },
+      '10': { x: 215, y: 255 },
+      '8':  { x: 310, y: 255 },
+      '4':  { x: 355, y: 255 },
+      '41': { x: 400, y: 255 }
+    }
+
+    const isAcademicTree = ['15', '35', '9', '40'].every(n => nodesList.includes(n))
+    if (isAcademicTree && isTopDown) {
+      nodesList.forEach((n, idx) => {
+        if (predefinedAcademicTreeCoords[n]) {
+          positions[n] = { ...predefinedAcademicTreeCoords[n] }
+        } else {
+          positions[n] = { x: 60 + idx * 45, y: 255 }
+        }
+      })
+    } else {
+      const inDegree = {}
+      const childrenMap = {}
+      nodesList.forEach(n => { inDegree[n] = 0; childrenMap[n] = [] })
+
+      edges.forEach(e => {
+        if (inDegree[e.to] !== undefined) inDegree[e.to] += 1
+        if (childrenMap[e.from]) childrenMap[e.from].push(e.to)
+      })
+
+      let roots = nodesList.filter(n => inDegree[n] === 0)
+      if (roots.length === 0 && nodesList.length > 0) roots = [nodesList[0]]
+
+      const nodeLevels = {}
+      const levels = {}
+      const visited = new Set()
+
+      const assignLevels = (node, level) => {
+        if (visited.has(node)) return
+        visited.add(node)
+        nodeLevels[node] = level
+        if (!levels[level]) levels[level] = []
+        levels[level].push(node)
+        const children = childrenMap[node] || []
+        children.forEach(child => assignLevels(child, level + 1))
+      }
+
+      roots.forEach(r => assignLevels(r, 0))
+      nodesList.forEach(n => {
+        if (!visited.has(n)) {
+          nodeLevels[n] = 0
+          if (!levels[0]) levels[0] = []
+          levels[0].push(n)
+        }
+      })
+
+      const levelKeys = Object.keys(levels).map(Number).sort((a, b) => a - b)
+      const maxLevel = levelKeys.length > 0 ? Math.max(...levelKeys) : 0
+
+      // Symmetrical subtree layout
+      const subtreeLeaves = (node, seen = new Set()) => {
+        if (seen.has(node)) return 1
+        seen.add(node)
+        const children = childrenMap[node] || []
+        if (children.length === 0) return 1
+        return children.reduce((sum, c) => sum + subtreeLeaves(c, seen), 0)
+      }
+
+      const totalLeaves = roots.reduce((sum, r) => sum + subtreeLeaves(r), 0)
+
+      if (isLR || isRL) {
+        // Horizontal Tree Layout (Left-to-Right or Right-to-Left)
+        const stepX = maxLevel > 0 ? Math.min(Math.floor((width - 150) / maxLevel), 110) : 110
+        const slotH = Math.min((height - 70) / Math.max(totalLeaves, 1), 58)
+
+        let leafCursor = 0
+        const placeNodeHorizontal = (node, seen = new Set()) => {
+          if (seen.has(node)) return positions[node].y
+          seen.add(node)
+          const children = childrenMap[node] || []
+          const lvl = nodeLevels[node] || 0
+          const x = isLR ? (75 + lvl * stepX) : ((width - 75) - lvl * stepX)
+
+          if (children.length === 0) {
+            const y = 45 + (leafCursor + 0.5) * slotH
+            leafCursor++
+            positions[node] = { x, y: Math.round(y) }
+            return positions[node].y
+          }
+
+          const childYs = children.map(c => placeNodeHorizontal(c, seen))
+          let parentY
+          if (children.length === 3) {
+            const midChildY = childYs[1]
+            const topGap = midChildY - childYs[0]
+            const bottomGap = childYs[2] - midChildY
+            const avgGap = Math.max(topGap, bottomGap, 40)
+            positions[children[0]].y = Math.round(midChildY - avgGap)
+            positions[children[1]].y = Math.round(midChildY)
+            positions[children[2]].y = Math.round(midChildY + avgGap)
+            parentY = midChildY
+          } else {
+            parentY = Math.round((childYs[0] + childYs[childYs.length - 1]) / 2)
+          }
+
+          positions[node] = { x, y: parentY }
+          return parentY
+        }
+
+        roots.forEach(r => placeNodeHorizontal(r))
+
+        // Center tree vertically around centerY = 200
+        let tMinY = Infinity, tMaxY = -Infinity
+        nodesList.forEach(n => {
+          if (positions[n]) {
+            tMinY = Math.min(tMinY, positions[n].y)
+            tMaxY = Math.max(tMaxY, positions[n].y)
+          }
+        })
+        if (isFinite(tMinY) && isFinite(tMaxY)) {
+          const shiftY = Math.round(200 - (tMinY + tMaxY) / 2)
+          nodesList.forEach(n => {
+            if (positions[n]) {
+              positions[n].y = Math.max(26, Math.min(height - 26, positions[n].y + shiftY))
+            }
+          })
+        }
+      } else {
+        // Top-Down Hierarchical Tree Layout
+        const stepY = maxLevel > 0 ? Math.min(Math.floor((height - 90) / maxLevel), 75) : 75
+        const slotW = Math.min((width - 60) / Math.max(totalLeaves, 1), 68)
+
+        let leafCursor = 0
+        const placeNode = (node, seen = new Set()) => {
+          if (seen.has(node)) return positions[node].x
+          seen.add(node)
+          const children = childrenMap[node] || []
+          const lvl = nodeLevels[node] || 0
+          const y = 65 + lvl * stepY
+
+          if (children.length === 0) {
+            const x = 35 + (leafCursor + 0.5) * slotW
+            leafCursor++
+            positions[node] = { x: Math.round(x), y }
+            return positions[node].x
+          }
+
+          const childXs = children.map(c => placeNode(c, seen))
+
+          let parentX
+          if (children.length === 3) {
+            const midChildX = childXs[1]
+            const leftGap = midChildX - childXs[0]
+            const rightGap = childXs[2] - midChildX
+            const avgGap = Math.max(leftGap, rightGap, 45)
+            positions[children[0]].x = Math.round(midChildX - avgGap)
+            positions[children[1]].x = Math.round(midChildX)
+            positions[children[2]].x = Math.round(midChildX + avgGap)
+            parentX = midChildX
+          } else {
+            parentX = Math.round((childXs[0] + childXs[childXs.length - 1]) / 2)
+          }
+
+          positions[node] = { x: parentX, y }
+          return parentX
+        }
+
+        roots.forEach(r => placeNode(r))
+
+        // Second pass: For parent with 3 children, lock middle child directly below parent
+        nodesList.forEach(node => {
+          const children = childrenMap[node] || []
+          if (children.length === 3) {
+            const pX = positions[node].x
+            positions[children[1]].x = pX
+            const dX = Math.max(Math.abs(pX - positions[children[0]].x), Math.abs(positions[children[2]].x - pX), 52)
+            positions[children[0]].x = pX - dX
+            positions[children[2]].x = pX + dX
+          }
+        })
+
+        // Handle any orphan nodes
+        nodesList.forEach((n, idx) => {
+          if (!positions[n]) {
+            positions[n] = { x: 50 + idx * 50, y: 65 }
+          }
+        })
+
+        // Center tree horizontally around centerX = 300
+        let tMinX = Infinity, tMaxX = -Infinity
+        nodesList.forEach(n => {
+          if (positions[n]) {
+            tMinX = Math.min(tMinX, positions[n].x)
+            tMaxX = Math.max(tMaxX, positions[n].x)
+          }
+        })
+        if (isFinite(tMinX) && isFinite(tMaxX)) {
+          const shiftX = Math.round(300 - (tMinX + tMaxX) / 2)
+          nodesList.forEach(n => {
+            if (positions[n]) {
+              positions[n].x = Math.max(26, Math.min(574, positions[n].x + shiftX))
+            }
+          })
+        }
+      }
+    }
+  }
+
+  // 2. Horizontal Flow Layout (Left-to-Right Pipeline)
+  if (graphType === 'horizontal') {
     const inDegree = {}
     const childrenMap = {}
     nodesList.forEach(n => { inDegree[n] = 0; childrenMap[n] = [] })
-
     edges.forEach(e => {
       if (inDegree[e.to] !== undefined) inDegree[e.to] += 1
       if (childrenMap[e.from]) childrenMap[e.from].push(e.to)
     })
-
     let roots = nodesList.filter(n => inDegree[n] === 0)
     if (roots.length === 0 && nodesList.length > 0) roots = [nodesList[0]]
-
     const levels = {}
     const visited = new Set()
-
     const assignLevels = (node, level) => {
       if (visited.has(node)) return
       visited.add(node)
@@ -252,7 +542,6 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
       const children = childrenMap[node] || []
       children.forEach(child => assignLevels(child, level + 1))
     }
-
     roots.forEach(r => assignLevels(r, 0))
     nodesList.forEach(n => {
       if (!visited.has(n)) {
@@ -260,59 +549,56 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
         levels[0].push(n)
       }
     })
-
     const levelKeys = Object.keys(levels).map(Number).sort((a, b) => a - b)
     const maxLevel = levelKeys.length > 0 ? Math.max(...levelKeys) : 0
-    const stepY = (height - 90) / Math.max(maxLevel, 1)
+    const stepX = (width - 120) / Math.max(maxLevel, 1)
 
     levelKeys.forEach(lvl => {
       const nodesAtLvl = levels[lvl]
       const count = nodesAtLvl.length
-      const stepX = width / (count + 1)
-      const y = 45 + lvl * Math.min(stepY, 80)
-
+      const stepY = height / (count + 1)
+      const x = 60 + lvl * Math.min(stepX, 130)
       nodesAtLvl.forEach((node, idx) => {
         if (!positions[node]) {
           positions[node] = {
-            x: stepX * (idx + 1),
-            y: y
+            x: x,
+            y: stepY * (idx + 1)
           }
         }
       })
     })
-
-    return positions
   }
 
-  // 2. Map Layout (Romania Network & Geography Layout)
-  if (graphType === 'map') {
+  // 3. Map Layout (Network & Geography Layout with clean coordinates)
+  if (graphType === 'map' || graphType === 'map_directed') {
     const predefinedMapCoords = {
-      'ORADEA': { x: 80, y: 40 },
-      'ZERIND': { x: 60, y: 100 },
-      'ARAD': { x: 50, y: 175 },
-      'TIMISOARA': { x: 50, y: 255 },
-      'LUGOJ': { x: 130, y: 295 },
-      'MEHADIA': { x: 130, y: 345 },
-      'DROBETA': { x: 130, y: 385 },
-      'CRAIOVA': { x: 260, y: 385 },
-      'SIBIU': { x: 210, y: 185 },
-      'RIMNICU': { x: 250, y: 245 },
-      'PITESTI': { x: 340, y: 295 },
-      'FAGARAS': { x: 320, y: 185 },
-      'BUCHAREST': { x: 440, y: 345 },
-      'GIURGIU': { x: 410, y: 395 },
-      'URZICENI': { x: 500, y: 305 },
-      'VASLUI': { x: 550, y: 215 },
-      'IASI': { x: 510, y: 135 },
-      'NEAMT': { x: 450, y: 70 },
-      'HIRSOVA': { x: 570, y: 305 },
-      'EFORIE': { x: 580, y: 375 }
+      'ORADEA': { x: 215, y: 32 },
+      'ZERIND': { x: 130, y: 105 },
+      'ARAD': { x: 135, y: 215 },
+      'SIBIU': { x: 290, y: 82 },
+      'FAGARAS': { x: 345, y: 220 },
+      'RIMNICU': { x: 255, y: 225 },
+      'PITESTI': { x: 310, y: 298 },
+      'BUCHAREST': { x: 415, y: 298 },
+      'URZICENI': { x: 500, y: 220 },
+      'VASLUI': { x: 500, y: 105 },
+      'IASI': { x: 425, y: 160 },
+      'NEAMT': { x: 385, y: 88 },
+      'TIMISOARA': { x: 90, y: 295 },
+      'LUGOJ': { x: 150, y: 345 },
+      'MEHADIA': { x: 180, y: 385 },
+      'DROBETA': { x: 210, y: 385 },
+      'CRAIOVA': { x: 270, y: 385 },
+      'GIURGIU': { x: 415, y: 385 },
+      'HIRSOVA': { x: 560, y: 220 },
+      'EFORIE': { x: 570, y: 295 }
     }
 
     nodesList.forEach((node, idx) => {
       if (!positions[node]) {
-        if (predefinedMapCoords[node]) {
-          positions[node] = { ...predefinedMapCoords[node] }
+        const upper = node.toUpperCase()
+        if (predefinedMapCoords[upper]) {
+          positions[node] = { ...predefinedMapCoords[upper] }
         } else {
           const angle = (2 * Math.PI * idx) / nodesList.length - Math.PI / 2
           positions[node] = {
@@ -322,57 +608,159 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
         }
       }
     })
-    return positions
   }
 
-  // 3. Default Circular Layout
-  const N = unpositioned.length
-  const centerX = width / 2
-  const centerY = height / 2
-  const radius = Math.min(width, height) * 0.36
+  // 4. Automata / State Diagram Pipeline Layout (Spaced evenly with left clearance for start arrow)
+  const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType)
+  if (isAutomata) {
+    const unpositioned = nodesList.filter(n => !positions[n])
+    const count = unpositioned.length
+    if (count > 0) {
+      const startX = 130 // Room for initial arrow from nowhere on the left
+      const availableW = width - startX - 80
+      const stepX = count > 1 ? Math.min(180, Math.max(120, Math.floor(availableW / (count - 1)))) : 0
+      unpositioned.forEach((node, idx) => {
+        positions[node] = {
+          x: count === 1 ? 300 : Math.round(startX + idx * stepX),
+          y: 200
+        }
+      })
+    }
+  }
 
-  unpositioned.forEach((node, idx) => {
-    const angle = (2 * Math.PI * idx) / N - Math.PI / 2
-    positions[node] = {
-      x: centerX + radius * Math.cos(angle),
-      y: centerY + radius * Math.sin(angle)
+  // 5. Default Circular / Regular Symmetrical Polygon Layout
+  if (!graphType.startsWith('tree') && !graphType.startsWith('map') && graphType !== 'horizontal' && !isAutomata) {
+    const unpositioned = nodesList.filter(n => !positions[n])
+    const N = unpositioned.length || nodesList.length
+    const centerX = width / 2
+    const centerY = height / 2 + 10
+    const radius = Math.min(width, height) * 0.32
+
+    unpositioned.forEach((node, idx) => {
+      const angle = (2 * Math.PI * idx) / N - Math.PI / 2
+      positions[node] = {
+        x: Math.round(centerX + radius * Math.cos(angle)),
+        y: Math.round(centerY + radius * Math.sin(angle))
+      }
+    })
+  }
+
+  // CRITICAL: Any manually dragged node in customPositions ALWAYS overrides the default calculated position!
+  nodesList.forEach(node => {
+    if (customPositions && customPositions[node]) {
+      positions[node] = { ...customPositions[node] }
     }
   })
 
   return positions
 }
 
-// Helper: SVG Graph Diagram Generator (Supports B&W Print Theme, Emerald System Theme, Custom Drag Positions)
-function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', customPositions = {}) {
-  const lines = edgeText.split(/[\n,;]+/).map(l => l.trim()).filter(Boolean)
-  const nodesSet = new Set()
-  const edges = []
+// Helper: Compute optimal outward direction & smooth geometry for self-loops
+// Automatically steers loop away from all incident edges to prevent any collision
+function getSelfLoopGeometry(u, positions, edges, subIdx = 0, options = {}) {
+  const pu = positions[u]
+  if (!pu) return null
 
-  lines.forEach(line => {
-    const match = line.match(/^([\w]+)\s*(?:->|-|=>)\s*([\w]+)(?:\s*[:=]\s*(.+))?$/i)
-    if (match) {
-      const from = match[1].toUpperCase()
-      const to = match[2].toUpperCase()
-      const weight = match[3] ? match[3].trim() : ''
-      nodesSet.add(from)
-      nodesSet.add(to)
-      edges.push({ from, to, weight })
+  const isAutomata = options.isAutomata || false
+  const isStart = options.startState === u
+
+  let finalAngle
+  if (isAutomata || isStart) {
+    // In Automata / State Diagrams, self-loops standardly orient directly UPWARD (-Math.PI / 2)
+    // Symmetrically fan multiple loops if present on the same state: 0 -> center, 1 -> right, 2 -> left
+    const fanOffset = subIdx === 0 ? 0 : (subIdx % 2 === 1 ? 1 : -1) * Math.ceil(subIdx / 2) * 0.45
+    finalAngle = -Math.PI / 2 + fanOffset
+  } else {
+    // General Graph: Outward direction opposite of net neighbor pull
+    let rx = 0
+    let ry = 0
+    let neighborCount = 0
+
+    edges.forEach(e => {
+      if (e.from === u && e.to !== u) {
+        const pv = positions[e.to]
+        if (pv) {
+          const dx = pv.x - pu.x
+          const dy = pv.y - pu.y
+          const d = Math.sqrt(dx * dx + dy * dy) || 1
+          rx += dx / d
+          ry += dy / d
+          neighborCount++
+        }
+      } else if (e.to === u && e.from !== u) {
+        const pv = positions[e.from]
+        if (pv) {
+          const dx = pv.x - pu.x
+          const dy = pv.y - pu.y
+          const d = Math.sqrt(dx * dx + dy * dy) || 1
+          rx += dx / d
+          ry += dy / d
+          neighborCount++
+        }
+      }
+    })
+
+    let angle
+    if (neighborCount === 0 || (Math.abs(rx) < 0.05 && Math.abs(ry) < 0.05)) {
+      angle = -Math.PI / 2
+    } else {
+      angle = Math.atan2(-ry, -rx)
     }
-  })
 
-  if (nodesSet.size === 0) {
-    ['A', 'B', 'C', 'D'].forEach(n => nodesSet.add(n))
-    edges.push({ from: 'A', to: 'B', weight: '10' })
-    edges.push({ from: 'A', to: 'C', weight: '5' })
-    edges.push({ from: 'B', to: 'C', weight: '15' })
-    edges.push({ from: 'C', to: 'D', weight: '8' })
+    // Never point into start arrow if this node is a start state
+    if (isStart && Math.cos(angle) < -0.3) {
+      angle = -Math.PI / 2
+    }
+
+    const angleSpread = (subIdx - 0) * 0.42
+    finalAngle = angle + angleSpread
   }
 
-  const nodeList = Array.from(nodesSet)
+  const ox = Math.cos(finalAngle)
+  const oy = Math.sin(finalAngle)
+  const px = -oy
+  const py = ox
+
+  const nodeR = 22
+  const loopLen = 42 + subIdx * 16
+  const loopSpread = 22 + subIdx * 8
+
+  // Start point on node circumference (counter-clockwise)
+  const startX = pu.x + nodeR * (ox * 0.80 - px * 0.60)
+  const startY = pu.y + nodeR * (oy * 0.80 - py * 0.60)
+
+  // End point on node circumference (clockwise)
+  const endX = pu.x + nodeR * (ox * 0.80 + px * 0.60)
+  const endY = pu.y + nodeR * (oy * 0.80 + py * 0.60)
+
+  // Cubic Bezier control points
+  const c1x = pu.x + ox * loopLen - px * loopSpread
+  const c1y = pu.y + oy * loopLen - py * loopSpread
+  const c2x = pu.x + ox * loopLen + px * loopSpread
+  const c2y = pu.y + oy * loopLen + py * loopSpread
+
+  // Peak badge coordinate
+  const midX = pu.x + ox * (loopLen + 8)
+  const midY = pu.y + oy * (loopLen + 8)
+
+  const path = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`
+
+  return {
+    path,
+    midX,
+    midY,
+    minX: Math.min(startX, endX, c1x, c2x, midX - 16),
+    maxX: Math.max(startX, endX, c1x, c2x, midX + 16),
+    minY: Math.min(startY, endY, c1y, c2y, midY - 12),
+    maxY: Math.max(startY, endY, c1y, c2y, midY + 12)
+  }
+}
+
+// Helper: SVG Graph Diagram Generator (Supports Dynamic Auto-Crop ViewBox, B&W Print Theme, Emerald System Theme)
+function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', customPositions = {}, automataOptions = {}) {
+  const { nodes: nodeList, edges } = parseGraphLines(edgeText)
   const positions = computeGraphLayout(nodeList, edges, graphType, customPositions)
 
-  const width = 600
-  const height = 400
   const nodeRadius = 22
   const isBw = theme === 'bw'
   const strokeColor = isBw ? '#000000' : '#047857'
@@ -382,38 +770,184 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
   const badgeFill = '#ffffff'
   const badgeStroke = isBw ? '#000000' : '#10b981'
   const badgeText = isBw ? '#000000' : '#047857'
-  const isDirected = (graphType === 'directed' || graphType === 'directed_tree')
+  const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType)
+  const isDirected = (graphType === 'directed' || graphType === 'horizontal' || graphType.endsWith('_directed') || isAutomata)
 
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
+  // Calculate dynamic tight bounding box so graph NEVER has huge empty whitespace!
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  nodeList.forEach(node => {
+    const p = positions[node]
+    if (p) {
+      minX = Math.min(minX, p.x)
+      maxX = Math.max(maxX, p.x)
+      minY = Math.min(minY, p.y)
+      maxY = Math.max(maxY, p.y)
+    }
+  })
+
+  // Expand bounding box for Automata start state arrow
+  if (automataOptions.startState && positions[automataOptions.startState]) {
+    minX = Math.min(minX, positions[automataOptions.startState].x - 50)
+  }
+
+  // Group all edges by canonical pair of endpoints {u, v} to calculate symmetrical multigraph offsets
+  const pairGroups = {}
+  edges.forEach((edge, idx) => {
+    const u = edge.from < edge.to ? edge.from : edge.to
+    const v = edge.from < edge.to ? edge.to : edge.from
+    const key = `${u}~~~${v}`
+    if (!pairGroups[key]) pairGroups[key] = []
+    pairGroups[key].push(idx)
+  })
+
+  edges.forEach((edge, idx) => {
+    const p1 = positions[edge.from]
+    const p2 = positions[edge.to]
+    if (!p1 || !p2) return
+
+    const u = edge.from < edge.to ? edge.from : edge.to
+    const v = edge.from < edge.to ? edge.to : edge.from
+    const key = `${u}~~~${v}`
+    const group = pairGroups[key] || [idx]
+    const k = group.length
+    const subIdx = group.indexOf(idx)
+
+    const pu = positions[u]
+    const pv = positions[v]
+
+    if (edge.from === edge.to) {
+      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, subIdx, { isAutomata, startState: automataOptions.startState })
+      if (loopGeo) {
+        minX = Math.min(minX, loopGeo.minX)
+        maxX = Math.max(maxX, loopGeo.maxX)
+        minY = Math.min(minY, loopGeo.minY)
+        maxY = Math.max(maxY, loopGeo.maxY)
+      }
+    } else if (k > 1 && pu && pv) {
+      const dx = pv.x - pu.x
+      const dy = pv.y - pu.y
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const nx = -dy / dist
+      const ny = dx / dist
+      const step = Math.min(46, Math.max(30, dist * 0.22))
+      const offset = (subIdx - (k - 1) / 2) * step
+
+      if (Math.abs(offset) > 1) {
+        const cx = (pu.x + pv.x) / 2 + nx * offset
+        const cy = (pu.y + pv.y) / 2 + ny * offset
+        minX = Math.min(minX, cx)
+        maxX = Math.max(maxX, cx)
+        minY = Math.min(minY, cy)
+        maxY = Math.max(maxY, cy)
+      }
+    } else if (edge.weight) {
+      const midX = (p1.x + p2.x) / 2
+      const midY = (p1.y + p2.y) / 2
+      minX = Math.min(minX, midX)
+      maxX = Math.max(maxX, midX)
+      minY = Math.min(minY, midY)
+      maxY = Math.max(maxY, midY)
+    }
+  })
+
+  if (!isFinite(minX)) {
+    minX = 100; maxX = 500; minY = 50; maxY = 350;
+  }
+
+  // Padding around outermost node boundaries (nodeRadius is 22, pad leaves comfortable breathing room)
+  const pad = 44
+  const cropX = Math.max(0, Math.floor(minX - pad))
+  const cropY = Math.max(0, Math.floor(minY - pad))
+  const cropW = Math.ceil((maxX + pad) - cropX)
+  const cropH = Math.ceil((maxY + pad) - cropY)
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cropX} ${cropY} ${cropW} ${cropH}" style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
 
   svg += `<defs>
     <marker id="arrowhead-${theme}" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="${strokeColor}" />
     </marker>
+    <marker id="arrowhead-loop-${theme}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="${strokeColor}" />
+    </marker>
   </defs>`
 
-  edges.forEach(edge => {
+  edges.forEach((edge, idx) => {
     const p1 = positions[edge.from]
     const p2 = positions[edge.to]
     if (!p1 || !p2) return
 
-    const markerAttr = isDirected ? `marker-end="url(#arrowhead-${theme})"` : ''
-    svg += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${lineStroke}" stroke-width="2.5" ${markerAttr} />`
+    const isSelfLoop = edge.from === edge.to
+    const markerAttr = isDirected ? `marker-end="url(#${isSelfLoop ? `arrowhead-loop-${theme}` : `arrowhead-${theme}`})"` : ''
+    const u = edge.from < edge.to ? edge.from : edge.to
+    const v = edge.from < edge.to ? edge.to : edge.from
+    const key = `${u}~~~${v}`
+    const group = pairGroups[key] || [idx]
+    const k = group.length
+    const subIdx = group.indexOf(idx)
+
+    const pu = positions[u]
+    const pv = positions[v]
+
+    let edgePath = null
+    let midX = (p1.x + p2.x) / 2
+    let midY = (p1.y + p2.y) / 2
+
+    if (isSelfLoop) {
+      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, subIdx, { isAutomata, startState: automataOptions.startState })
+      if (loopGeo) {
+        edgePath = loopGeo.path
+        midX = loopGeo.midX
+        midY = loopGeo.midY
+      }
+    } else if (k > 1 && pu && pv) {
+      const dx = pv.x - pu.x
+      const dy = pv.y - pu.y
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const nx = -dy / dist
+      const ny = dx / dist
+
+      const step = Math.min(46, Math.max(30, dist * 0.22))
+      const offset = (subIdx - (k - 1) / 2) * step
+
+      if (Math.abs(offset) > 1) {
+        const cx = (pu.x + pv.x) / 2 + nx * offset
+        const cy = (pu.y + pv.y) / 2 + ny * offset
+        midX = (pu.x + pv.x) / 2 + nx * (offset * 0.55)
+        midY = (pu.y + pv.y) / 2 + ny * (offset * 0.55)
+        edgePath = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`
+      }
+    }
+
+    if (edgePath) {
+      svg += `<path d="${edgePath}" fill="none" stroke="${lineStroke}" stroke-width="2.5" ${markerAttr} />`
+    } else {
+      svg += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${lineStroke}" stroke-width="2.5" ${markerAttr} />`
+    }
 
     if (edge.weight) {
-      const midX = (p1.x + p2.x) / 2
-      const midY = (p1.y + p2.y) / 2
       const textWidth = Math.max(edge.weight.length * 8 + 10, 22)
       svg += `<rect x="${midX - textWidth / 2}" y="${midY - 10}" width="${textWidth}" height="18" rx="4" fill="${badgeFill}" stroke="${badgeStroke}" stroke-width="1.5" />`
       svg += `<text x="${midX}" y="${midY + 3}" font-size="11" font-weight="bold" fill="${badgeText}" text-anchor="middle">${edge.weight}</text>`
     }
   })
 
+  // Automata Initial/Start State Arrow from nowhere
+  if (automataOptions.startState && positions[automataOptions.startState]) {
+    const sp = positions[automataOptions.startState]
+    svg += `<line x1="${sp.x - 46}" y1="${sp.y}" x2="${sp.x - 23}" y2="${sp.y}" stroke="${lineStroke}" stroke-width="2.5" marker-end="url(#arrowhead-${theme})" />`
+  }
+
+  const acceptSet = new Set(automataOptions.acceptStates || [])
   nodeList.forEach(node => {
     const p = positions[node]
     if (!p) return
+    const isAccepting = acceptSet.has(node)
     const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
     svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius}" fill="${nodeFill}" stroke="${strokeColor}" stroke-width="2.5" />`
+    if (isAccepting) {
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius - 4.5}" fill="none" stroke="${strokeColor}" stroke-width="2" />`
+    }
     svg += `<text x="${p.x}" y="${p.y + 4}" font-size="${fontSize}" font-weight="extrabold" fill="${textColor}" text-anchor="middle">${node}</text>`
   })
 
@@ -446,6 +980,81 @@ function generateTableHtml(headers = [], rows = []) {
   return html
 }
 
+/**
+ * Parses a question chunk that may contain [Scenario: ...] prefix and/or
+ * markdown table syntax (| col1 | col2 |). Returns structured parts for rendering.
+ *
+ * @param {string} text - The raw question text from the ML service
+ * @returns {{ scenarioText: string|null, questionText: string, markdownTable: { headers: string[], rows: string[][] }|null }}
+ */
+function parseScenarioAndTable(text) {
+  if (!text) return { scenarioText: null, questionText: '', markdownTable: null }
+
+  let scenarioText = null
+  let remaining = text
+
+  // Extract [Scenario: ...] prefix
+  const scenarioMatch = remaining.match(/^\[Scenario:\s*([\s\S]*?)\]\s*\n?/)
+  if (scenarioMatch) {
+    scenarioText = scenarioMatch[1].trim()
+    remaining = remaining.slice(scenarioMatch[0].length).trim()
+  }
+
+  // Extract markdown table (lines starting/ending with |)
+  let markdownTable = null
+  const tableLines = []
+  const nonTableLines = []
+
+  remaining.split('\n').forEach(line => {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      tableLines.push(trimmed)
+    } else {
+      nonTableLines.push(line)
+    }
+  })
+
+  if (tableLines.length >= 2) {
+    // Parse markdown table: first row = headers, skip separator row, rest = data
+    const parseRow = (row) => row.split('|').filter((_, i, arr) => i > 0 && i < arr.length - 1).map(c => c.trim())
+    const headers = parseRow(tableLines[0])
+    // Skip separator row (| --- | --- |)
+    const dataStartIdx = tableLines[1].includes('---') ? 2 : 1
+    const rows = tableLines.slice(dataStartIdx).map(parseRow)
+    if (headers.length > 0 && rows.length > 0) {
+      markdownTable = { headers, rows }
+    }
+  }
+
+  const questionText = nonTableLines.join('\n').trim()
+  return { scenarioText, questionText, markdownTable }
+}
+
+/**
+ * Converts a parsed markdown table to an HTML <table> string with academic styling
+ * for insertion into the Syncfusion RTE.
+ */
+function markdownTableToHtml(parsedTable) {
+  if (!parsedTable || !parsedTable.headers || parsedTable.headers.length === 0) return ''
+
+  let html = `<table class="e-rte-table" style="border-collapse: collapse; width: auto; margin: 8px 0; font-family: 'Times New Roman', Times, serif; font-size: 12pt; border: 1.5px solid #374151;">`
+  html += `<thead><tr style="background-color: #f3f4f6; border-bottom: 2px solid #374151;">`
+  parsedTable.headers.forEach(h => {
+    html += `<th style="padding: 6px 14px; border: 1px solid #374151; text-align: left; font-weight: 700; color: #111827;">${h}</th>`
+  })
+  html += `</tr></thead><tbody>`
+  parsedTable.rows.forEach((row, idx) => {
+    const bg = idx % 2 === 0 ? '#ffffff' : '#f9fafb'
+    html += `<tr style="background-color: ${bg};">`
+    row.forEach(cell => {
+      html += `<td style="padding: 5px 14px; border: 1px solid #374151; color: #1f2937;">${cell}</td>`
+    })
+    html += `</tr>`
+  })
+  html += `</tbody></table>`
+  return html
+}
+
 // Helper: Parse existing exam structure table from DOM to preserve typed question text
 function parseExamPaperStructureFromDom(tableEl) {
   if (!tableEl) return null
@@ -459,26 +1068,35 @@ function parseExamPaperStructureFromDom(tableEl) {
   const parts = []
   let currentPart = null
   let currentQ = null
+  let pendingOrContext = null // Tracks when an OR divider is passed
 
   rows.forEach(tr => {
     // Only get DIRECT child cells of this row — not cells from nested tables inside content
     const tds = Array.from(tr.querySelectorAll(':scope > td, :scope > th'))
     if (tds.length === 0) return
 
-    // 1. Part Header Row (colspan="4" or single-cell row with text containing "PART")
-    // Check if this is a header row: either exactly 1 direct cell with colspan,
-    // or the first direct cell has colspan="4" and contains PART text
+    const rowType = tr.getAttribute('data-obe-row')
     const firstCellColspan = parseInt(tds[0].getAttribute('colspan') || '1')
-    if (tds.length === 1 && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
+    const fullRowText = tds.map(t => t.textContent.trim()).join(' ')
+    const isOrRow = rowType === 'or-separator' || /^\s*OR\s*$/i.test(fullRowText)
+
+    // 1. Part Header Row (colspan="4" or single-cell row with text containing "PART")
+    if (tds.length === 1 && !isOrRow && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
       const partName = tds[0].textContent.trim()
       currentPart = { name: partName, questions: [] }
       parts.push(currentPart)
       currentQ = null
+      pendingOrContext = null
       return
     }
 
-    // 2. Question Data Row (4 direct columns: Q#, Sub-Q, Content, Marks)
-    // 2. Question Data Row (3 direct columns when subCount === 0 with colspan="2", or 4 direct columns)
+    // 2. OR Separator Row
+    if (isOrRow) {
+      pendingOrContext = 'after-or'
+      return
+    }
+
+    // 3. Question Data Row (3 direct columns when subCount === 0 with colspan="2", or 4 direct columns)
     if (tds.length === 3 || tds.length === 4) {
       const is3Col = tds.length === 3
       const col0Text = tds[0].textContent.trim()
@@ -489,12 +1107,14 @@ function parseExamPaperStructureFromDom(tableEl) {
       const clean0 = col0Text.replace(/[\s\xa0]/g, '')
       const clean1 = col1Text.replace(/[\s\xa0]/g, '')
 
-      // A valid question/sub-question row MUST have a sub-question label (e.g. "a.", "b.") in column 1 or be 3-col
       const isSubQLabel = !is3Col && /^[a-z]\.?$/i.test(clean1)
       const isQNumber = /^\d+\.?$/.test(clean0)
 
-      // Skip spacing rows (no Q number and no sub-Q label)
-      if (!isQNumber && !isSubQLabel) return
+      // Spacing row check: all cells are empty / blank
+      const isBlankRow = !isQNumber && !isSubQLabel && !col2Html.replace(/<[^>]*>/g, '').replace(/(?:&nbsp;|\u00a0)/gi, '').trim()
+      if (isBlankRow && rowType !== 'sub-q-or' && rowType !== 'question-or') {
+        return
+      }
 
       const markMatch = col3Text.match(/\d+/)
       const markVal = markMatch ? parseInt(markMatch[0]) : 10
@@ -503,8 +1123,45 @@ function parseExamPaperStructureFromDom(tableEl) {
       const bloomMatch = col2Html.match(/\[(?:CO\d+)?(?:->|→)?(C[1-6])\]/i) || col2Html.match(/\[(C[1-6])\]/i)
       const bloomVal = bloomMatch ? bloomMatch[1].toUpperCase() : ''
 
+      // A. Explicit Sub-Q OR alternative row
+      if (rowType === 'sub-q-or' || (pendingOrContext === 'after-or' && !isQNumber && !isSubQLabel)) {
+        if (currentQ) {
+          const sIdx = tr.hasAttribute('data-sub-idx')
+            ? parseInt(tr.getAttribute('data-sub-idx'))
+            : Math.max(0, (currentQ.marks?.length || 1) - 1)
+
+          if (!currentQ.subHasOr) currentQ.subHasOr = Array(currentQ.marks?.length || 1).fill(false)
+          if (!currentQ.subOrBlooms) currentQ.subOrBlooms = Array(currentQ.marks?.length || 1).fill('')
+          if (!currentQ.subOrContents) currentQ.subOrContents = Array(currentQ.marks?.length || 1).fill('')
+          if (!currentQ.subOrMarks) currentQ.subOrMarks = [...(currentQ.marks || [markVal])]
+
+          currentQ.subHasOr[sIdx] = true
+          currentQ.subOrBlooms[sIdx] = bloomVal
+          currentQ.subOrContents[sIdx] = col2Html || ''
+          currentQ.subOrMarks[sIdx] = markVal
+        }
+        pendingOrContext = null
+        return
+      }
+
+      // B. Explicit Question-level OR alternative row
+      if (rowType === 'question-or' || (pendingOrContext === 'after-or' && !isQNumber && isSubQLabel)) {
+        if (currentQ) {
+          currentQ.hasQuestionOr = true
+          if (!currentQ.questionOrMarks) currentQ.questionOrMarks = []
+          if (!currentQ.questionOrBlooms) currentQ.questionOrBlooms = []
+          if (!currentQ.questionOrContents) currentQ.questionOrContents = []
+
+          currentQ.questionOrMarks.push(markVal)
+          currentQ.questionOrBlooms.push(bloomVal)
+          currentQ.questionOrContents.push(col2Html || '')
+        }
+        return
+      }
+
+      // C. Standard Question row (e.g. "1.")
       if (isQNumber) {
-        // New Question e.g. "1."
+        pendingOrContext = null
         if (!currentPart) {
           currentPart = { name: '', questions: [] }
           parts.push(currentPart)
@@ -513,15 +1170,39 @@ function parseExamPaperStructureFromDom(tableEl) {
           subCount: is3Col ? 0 : 1,
           marks: [markVal],
           blooms: [bloomVal],
-          contents: [col2Html || '&nbsp;']
+          contents: [col2Html || ''],
+          subHasOr: [false],
+          subOrBlooms: [''],
+          subOrContents: [''],
+          subOrMarks: [markVal],
+          subOrBeforeSpace: [1],
+          subOrAfterSpace: [1],
+          hasQuestionOr: false,
+          questionOrMarks: [],
+          questionOrBlooms: [],
+          questionOrContents: [],
+          qOrBeforeSpace: 1,
+          qOrAfterSpace: 1
         }
         currentPart.questions.push(currentQ)
       } else if (currentQ && isSubQLabel) {
-        // Additional sub-question row e.g. "b."
+        pendingOrContext = null
         currentQ.subCount = (currentQ.subCount || 0) + 1
         currentQ.marks.push(markVal)
         currentQ.blooms.push(bloomVal)
-        currentQ.contents.push(col2Html || '&nbsp;')
+        currentQ.contents.push(col2Html || '')
+        if (!currentQ.subHasOr) currentQ.subHasOr = []
+        currentQ.subHasOr.push(false)
+        if (!currentQ.subOrBlooms) currentQ.subOrBlooms = []
+        currentQ.subOrBlooms.push('')
+        if (!currentQ.subOrContents) currentQ.subOrContents = []
+        currentQ.subOrContents.push('')
+        if (!currentQ.subOrMarks) currentQ.subOrMarks = []
+        currentQ.subOrMarks.push(markVal)
+        if (!currentQ.subOrBeforeSpace) currentQ.subOrBeforeSpace = []
+        currentQ.subOrBeforeSpace.push(1)
+        if (!currentQ.subOrAfterSpace) currentQ.subOrAfterSpace = []
+        currentQ.subOrAfterSpace.push(1)
       }
     }
   })
@@ -531,26 +1212,29 @@ function parseExamPaperStructureFromDom(tableEl) {
 
 // Helper: Exam Paper Structure Builder — generates professional exam question paper table layout
 // Produces a 4-column table: Q# | Sub-Q | Content Area | Marks [X]
-// Matches BAIUST university exam paper format with proper spacing rows & [CO->Bloom] tags
+// Matches BAIUST university exam paper format with proper spacing rows, OR choice rows & [CO->Bloom] tags
 function generateExamPaperStructureHtml(parts = [], questionsList = []) {
   if (!parts || parts.length === 0) return ''
 
   const bd = 'border:1px solid #000;'
-  const qW = 'width:35px;'
-  const sW = 'width:30px;'
-  const mW = 'width:55px;'
-  const pad = 'padding:6px 8px;'
+  const qW = 'width:28px;max-width:32px;'
+  const sW = 'width:24px;max-width:28px;'
+  const mW = 'width:50px;max-width:55px;'
+  const qPad = 'padding:5px 2px 5px 0px;'
+  const sPad = 'padding:5px 4px 5px 0px;'
+  const cPad = 'padding:5px 8px 5px 2px;'
+  const mPad = 'padding:5px 0px 5px 4px;text-align:right;'
   const vt = 'vertical-align:top;'
 
-  let html = `<table class="e-rte-table obe-paper-structure-table" data-obe-paper-structure="true" style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Georgia,serif;font-size:13px;${bd}">`
+  let html = `<table class="e-rte-table obe-paper-structure-table" data-obe-paper-structure="true" style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
+  html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-subq" style="width:24px;max-width:28px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
 
   let globalQNum = 1
 
   parts.forEach((part) => {
     // Part Header Row — merged across all 4 columns, bold centered (only if part.name is non-empty)
     if (part.name && part.name.trim()) {
-      html += `<tr><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-size:14px;letter-spacing:2px;">${part.name.trim()}</td></tr>`
-      // Blank spacing row after part header
+      html += `<tr><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
       html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
     }
 
@@ -559,11 +1243,80 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
       const effectiveSubCount = isNoSubQ ? 1 : (q.subCount || 1)
       const subLabels = 'abcdefghijklmnopqrstuvwxyz'
 
-      // Get mapped CO for this question from Question-wise CO Mapping state
       const mappedCo = (questionsList && questionsList[globalQNum - 1] && questionsList[globalQNum - 1].co && questionsList[globalQNum - 1].co !== 'NONE')
         ? questionsList[globalQNum - 1].co
         : ''
 
+      // Helper to render spacing rows
+      const renderSpacingRows = (count = 1) => {
+        let sHtml = ''
+        for (let sp = 0; sp < count; sp++) {
+          if (isNoSubQ) {
+            sHtml += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td colspan="2" style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+          } else {
+            sHtml += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+          }
+        }
+        return sHtml
+      }
+
+      // Helper to render prominent centered OR divider row (14pt, bold, Times New Roman)
+      const renderOrRow = () => {
+        return `<tr data-obe-row="or-separator"><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:6px 8px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">OR</td></tr>`
+      }
+
+      // Helper to format question cell content with tags and clean formatting
+      const formatCellContent = (rawContent, bloomCode) => {
+        let tagStr = ''
+        if (mappedCo && bloomCode) {
+          tagStr = `[${mappedCo}\u2192${bloomCode}]`
+        } else if (mappedCo) {
+          tagStr = `[${mappedCo}]`
+        } else if (bloomCode) {
+          tagStr = `[${bloomCode}]`
+        }
+
+        let cleaned = (rawContent || '')
+          .replace(/\s*<span class="co-bloom-tag"[^>]*>.*?<\/span>/gi, '')
+          .replace(/\s*\[CO\d+(?:\s*(?:->|→)\s*)?[C1-6]?\]/gi, '')
+          .replace(/\s*\[C[1-6]\]/gi, '')
+          .replace(/<p>\s*(?:&nbsp;|\u00a0|<br\s*\/?>|\s)*<\/p>/gi, '')
+          .replace(/<div>\s*(?:&nbsp;|\u00a0|<br\s*\/?>|\s)*<\/div>/gi, '')
+          .replace(/^(?:\s|&nbsp;|\u00a0|<br\s*\/?>)+/gi, '')
+          .replace(/(?:\s|&nbsp;|\u00a0|<br\s*\/?>)+$/gi, '')
+          .trim()
+
+        const hasActualContent = cleaned && (
+          cleaned.replace(/<[^>]*>/g, '').replace(/(?:&nbsp;|\u00a0)/gi, '').trim().length > 0 ||
+          /<(?:img|table|svg|math|canvas)\b/i.test(cleaned) ||
+          /math-equation-wrapper/i.test(cleaned)
+        )
+
+        if (hasActualContent) {
+          // Unwrap outer paragraph tag if it wraps the entire text so content stays strictly on the same baseline as Q# and Sub-Q
+          let unwrapped = cleaned
+          if (/^<p\b[^>]*>[\s\S]*<\/p>$/i.test(unwrapped) && (unwrapped.match(/<p\b/gi) || []).length === 1) {
+            unwrapped = unwrapped.replace(/^<p\b[^>]*>/i, '').replace(/<\/p>$/i, '').trim()
+          }
+
+          if (tagStr) {
+            const tagSpan = `<span class="co-bloom-tag" style="font-weight:bold;margin-left:6px;">${tagStr}</span>`
+            if (/<\/(p|div)>\s*$/i.test(unwrapped)) {
+              return unwrapped.replace(/<\/(p|div)>\s*$/i, `&nbsp;${tagSpan}</$1>`)
+            } else {
+              return `${unwrapped}&nbsp;${tagSpan}`
+            }
+          }
+          return unwrapped
+        } else {
+          if (tagStr) {
+            return `<span class="co-bloom-tag" style="font-weight:bold;">${tagStr}</span>`
+          }
+          return `<br>`
+        }
+      }
+
+      // 1. Primary sub-questions
       for (let s = 0; s < effectiveSubCount; s++) {
         const isFirst = s === 0
         const qLabel = isFirst ? `${globalQNum}.` : ''
@@ -571,55 +1324,56 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
         const mark = q.marks && q.marks[s] !== undefined ? q.marks[s] : ''
         const markDisplay = mark !== '' ? `[${mark}]` : ''
         const subBloom = q.blooms && q.blooms[s] ? q.blooms[s] : ''
+        const cellHtml = formatCellContent(q.contents && q.contents[s], subBloom)
 
-        // Build CO -> Bloom Tag: e.g. [CO3→C4] or [CO3] or [C4]
-        let tagStr = ''
-        if (mappedCo && subBloom) {
-          tagStr = `[${mappedCo}\u2192${subBloom}]`
-        } else if (mappedCo) {
-          tagStr = `[${mappedCo}]`
-        } else if (subBloom) {
-          tagStr = `[${subBloom}]`
-        }
-
-        // Get typed cell HTML content
-        let cellHtml = (q.contents && q.contents[s] && q.contents[s].trim() && q.contents[s] !== '&nbsp;') ? q.contents[s].trim() : ''
-
-        // Strip previous [CO...->...] or [CO...] or [C...] tags from cellHtml to avoid duplicate tags
-        cellHtml = cellHtml.replace(/\s*<span class="co-bloom-tag"[^>]*>.*?<\/span>/gi, '')
-        cellHtml = cellHtml.replace(/\s*\[CO\d+(?:\s*(?:->|→)\s*)?[C1-6]?\]/gi, '')
-        cellHtml = cellHtml.replace(/\s*\[C[1-6]\]/gi, '')
-
-        // If tagStr exists, append tag at the end of content
-        if (tagStr) {
-          const tagSpan = `<span class="co-bloom-tag" style="font-weight:bold;margin-left:6px;">${tagStr}</span>`
-          if (!cellHtml) {
-            cellHtml = tagSpan
-          } else {
-            cellHtml = `${cellHtml} ${tagSpan}`
-          }
-        } else if (!cellHtml) {
-          cellHtml = '&nbsp;'
-        }
-
-        // Question content row — height provides writing space
         html += `<tr>`
-        html += `<td style="${bd}${qW}${vt}${pad}font-weight:bold;">${qLabel}</td>`
+        html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}font-weight:bold;white-space:nowrap;">${qLabel}</td>`
         if (isNoSubQ) {
-          // Merge Sub-Q column into Content column (colspan="2") to remove empty Sub-Q column space!
-          html += `<td colspan="2" style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
+          html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
         } else {
-          html += `<td style="${bd}${sW}${vt}${pad}">${subLabel}</td>`
-          html += `<td style="${bd}${pad}min-height:50px;height:55px;">${cellHtml}</td>`
+          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}white-space:nowrap;">${subLabel}</td>`
+          html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
         }
-        html += `<td style="${bd}${mW}${vt}${pad}text-align:center;font-weight:bold;">${markDisplay}</td>`
+        html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${markDisplay}</td>`
         html += `</tr>`
 
-        const isLastSubQ = s === effectiveSubCount - 1
+        // Check if this sub-question has an individual Sub-Q level OR choice
+        const hasSubOr = Boolean(q.subHasOr && q.subHasOr[s])
+        if (hasSubOr) {
+          const subBeforeOr = (Array.isArray(q.subOrBeforeSpace) && q.subOrBeforeSpace[s] !== undefined)
+            ? parseInt(q.subOrBeforeSpace[s])
+            : (q.subOrBeforeSpace !== undefined ? parseInt(q.subOrBeforeSpace) : 1)
+          const subAfterOr = (Array.isArray(q.subOrAfterSpace) && q.subOrAfterSpace[s] !== undefined)
+            ? parseInt(q.subOrAfterSpace[s])
+            : (q.subOrAfterSpace !== undefined ? parseInt(q.subOrAfterSpace) : 1)
 
-        // Blank spacing row(s):
-        // If it's the last sub-question of the question, use qSpaceRows (Question to Question spacing).
-        // If it's an intermediate sub-question (between a. and b.), use subSpaceRows (Sub-Question spacing).
+          // Gap row(s) before OR
+          html += renderSpacingRows(subBeforeOr)
+          // OR divider row
+          html += renderOrRow()
+          // Gap row(s) after OR
+          html += renderSpacingRows(subAfterOr)
+
+          // Alternative Sub-Q row (No Q# label, No Sub-Q label per specification; matching marks)
+          const orBloom = (q.subOrBlooms && q.subOrBlooms[s]) ? q.subOrBlooms[s] : subBloom
+          const orContent = (q.subOrContents && q.subOrContents[s]) ? q.subOrContents[s] : ''
+          const orCellHtml = formatCellContent(orContent, orBloom)
+          const orMark = (q.subOrMarks && q.subOrMarks[s] !== undefined) ? q.subOrMarks[s] : mark
+          const orMarkDisplay = orMark !== '' ? `[${orMark}]` : markDisplay
+
+          html += `<tr data-obe-row="sub-q-or" data-sub-idx="${s}">`
+          html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
+          if (isNoSubQ) {
+            html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
+          } else {
+            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}">&nbsp;</td>`
+            html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
+          }
+          html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
+          html += `</tr>`
+        }
+
+        const isLastSubQ = s === effectiveSubCount - 1
         const defaultSpace = q.spaceRows !== undefined ? parseInt(q.spaceRows) : 1
         let subSpace = defaultSpace
         if (Array.isArray(q.subSpaceRows)) {
@@ -628,16 +1382,56 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
           subSpace = parseInt(q.subSpaceRows)
         }
 
-        const spaceCount = isLastSubQ
-          ? (q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : defaultSpace)
-          : subSpace
+        if (!isLastSubQ) {
+          html += renderSpacingRows(subSpace)
+        } else if (!q.hasQuestionOr) {
+          const qSpace = q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : defaultSpace
+          html += renderSpacingRows(qSpace)
+        }
+      }
 
-        for (let sp = 0; sp < spaceCount; sp++) {
+      // 2. Question-level OR alternative set
+      if (q.hasQuestionOr) {
+        const beforeOrCount = q.qOrBeforeSpace !== undefined ? parseInt(q.qOrBeforeSpace) : 1
+        const afterOrCount = q.qOrAfterSpace !== undefined ? parseInt(q.qOrAfterSpace) : 1
+
+        // Gap row(s) before OR
+        html += renderSpacingRows(beforeOrCount)
+        // OR divider row
+        html += renderOrRow()
+        // Gap row(s) after OR
+        html += renderSpacingRows(afterOrCount)
+
+        // Alternate set with numbering preserved (a., b., c.)
+        for (let s = 0; s < effectiveSubCount; s++) {
+          const subLabel = isNoSubQ ? '' : (effectiveSubCount > 1 ? `${subLabels[s]}.` : '')
+          const orMark = (q.questionOrMarks && q.questionOrMarks[s] !== undefined)
+            ? q.questionOrMarks[s]
+            : (q.marks && q.marks[s] !== undefined ? q.marks[s] : '')
+          const orMarkDisplay = orMark !== '' ? `[${orMark}]` : ''
+          const orBloom = (q.questionOrBlooms && q.questionOrBlooms[s])
+            ? q.questionOrBlooms[s]
+            : (q.blooms && q.blooms[s] ? q.blooms[s] : '')
+          const orContent = (q.questionOrContents && q.questionOrContents[s]) ? q.questionOrContents[s] : ''
+          const orCellHtml = formatCellContent(orContent, orBloom)
+
+          html += `<tr data-obe-row="question-or" data-sub-idx="${s}">`
+          html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
           if (isNoSubQ) {
-            html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td colspan="2" style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+            html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           } else {
-            html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}${effectiveSubCount > 1 ? 'font-weight:bold;' : ''}white-space:nowrap;">${subLabel}</td>`
+            html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           }
+          html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
+          html += `</tr>`
+
+          const isLastOrSubQ = s === effectiveSubCount - 1
+          const qSpace = q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : 1
+          const sSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[s] ?? 1) : 1
+          const spaceCount = isLastOrSubQ ? qSpace : sSpace
+
+          html += renderSpacingRows(spaceCount)
         }
       }
 
@@ -647,6 +1441,262 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
 
   html += `</table>`
   return html
+}
+
+// ─── Code Snippet Generator Presets & Utilities ───
+const CODE_SNIPPET_PRESETS = {
+  cpp: [
+    {
+      title: 'OOP Class Error Finding (Screenshot Example)',
+      code: `class MyClass {
+private:
+    int y;
+};
+
+int main() {
+    MyClass obj;
+    obj.y = 50;
+    return 0;
+}`
+    },
+    {
+      title: 'Virtual Functions & Runtime Polymorphism',
+      code: `class Base {
+public:
+    virtual void print() {
+        cout << "Base Function" << endl;
+    }
+};
+
+class Derived : public Base {
+public:
+    void print() override {
+        cout << "Derived Function" << endl;
+    }
+};`
+    },
+    {
+      title: 'Constructor & Destructor Order',
+      code: `class Alpha {
+public:
+    Alpha() { cout << "Alpha constructed\\n"; }
+    ~Alpha() { cout << "Alpha destroyed\\n"; }
+};
+
+class Beta : public Alpha {
+public:
+    Beta() { cout << "Beta constructed\\n"; }
+    ~Beta() { cout << "Beta destroyed\\n"; }
+};`
+    },
+    {
+      title: 'Operator Overloading (+)',
+      code: `class Complex {
+private:
+    float real, imag;
+public:
+    Complex(float r = 0, float i = 0) : real(r), imag(i) {}
+    Complex operator + (const Complex& obj) {
+        return Complex(real + obj.real, imag + obj.imag);
+    }
+};`
+    },
+    {
+      title: 'Generic Template Class',
+      code: `template <typename T>
+class Pair {
+private:
+    T first, second;
+public:
+    Pair(T a, T b) : first(a), second(b) {}
+    T getMax() { return (first > second) ? first : second; }
+};`
+    }
+  ],
+  c: [
+    {
+      title: 'Pointer Arithmetic & Output Tracing',
+      code: `int arr[] = {10, 20, 30, 40, 50};
+int *ptr = arr;
+
+printf("%d\\n", *(ptr + 2));
+printf("%d\\n", *ptr++);
+printf("%d\\n", *++ptr);`
+    },
+    {
+      title: 'Dynamic Memory Allocation (malloc & free)',
+      code: `int n = 5;
+int *arr = (int*) malloc(n * sizeof(int));
+
+if (arr == NULL) {
+    printf("Memory Allocation Failed!\\n");
+    return 1;
+}
+
+for (int i = 0; i < n; i++) arr[i] = (i + 1) * 10;
+free(arr);`
+    },
+    {
+      title: 'Recursive Function Output',
+      code: `int mystery(int a, int b) {
+    if (b == 0) return 0;
+    if (b % 2 == 0) 
+        return mystery(a + a, b / 2);
+    return mystery(a + a, b / 2) + a;
+}`
+    },
+    {
+      title: 'Structure with Pointer Node',
+      code: `typedef struct Student {
+    int id;
+    char name[50];
+    float marks;
+    struct Student *next;
+} Student;`
+    }
+  ],
+  python: [
+    {
+      title: 'Indented Loops & Conditionals',
+      code: `def count_vowels(text):
+    vowels = "aeiouAEIOU"
+    count = 0
+    for char in text:
+        if char in vowels:
+            count += 1
+    return count`
+    },
+    {
+      title: 'Class with __init__ & Methods',
+      code: `class Rectangle:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    def area(self):
+        return self.width * self.height
+
+    def perimeter(self):
+        return 2 * (self.width + self.height)`
+    },
+    {
+      title: 'Fibonacci with Recursion & Memoization',
+      code: `def fib(n, memo={}):
+    if n in memo:
+        return memo[n]
+    if n <= 1:
+        return n
+    memo[n] = fib(n - 1, memo) + fib(n - 2, memo)
+    return memo[n]`
+    },
+    {
+      title: 'List Comprehension & Filtering',
+      code: `numbers = [12, 45, 23, 67, 88, 90, 34]
+even_squares = [x**2 for x in numbers if x % 2 == 0]
+freq = {x: numbers.count(x) for x in numbers}`
+    }
+  ],
+  pseudocode: [
+    {
+      title: 'Binary Search Algorithm',
+      code: `Algorithm BinarySearch(A, n, key):
+    low ← 0, high ← n - 1
+    while low ≤ high do:
+        mid ← ⌊(low + high) / 2⌋
+        if A[mid] = key then
+            return mid
+        else if A[mid] < key then
+            low ← mid + 1
+        else
+            high ← mid - 1
+    return -1`
+    },
+    {
+      title: 'QuickSort Partitioning (Lomuto)',
+      code: `Algorithm Partition(A, p, r):
+    x ← A[r]
+    i ← p - 1
+    for j ← p to r - 1 do:
+        if A[j] ≤ x then
+            i ← i + 1
+            swap A[i] with A[j]
+    swap A[i + 1] with A[r]
+    return i + 1`
+    },
+    {
+      title: 'Dijkstra Single-Source Shortest Path',
+      code: `Algorithm Dijkstra(G, w, s):
+    for each vertex v in V[G] do:
+        dist[v] ← ∞
+        parent[v] ← NIL
+    dist[s] ← 0
+    Q ← V[G]
+    while Q ≠ ∅ do:
+        u ← Extract-Min(Q)
+        for each neighbor v of u do:
+            if dist[u] + w(u, v) < dist[v] then
+                dist[v] ← dist[u] + w(u, v)
+                parent[v] ← u`
+    }
+  ]
+}
+
+// Helper: Format academic code keywords in bold pure black text (#000000) without red/pink syntax coloring
+function formatCodeWithKeywordsBold(codeStr = '', language = 'cpp') {
+  const escapeHtml = (str) =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+
+  const escaped = escapeHtml(codeStr)
+
+  // Standard Computer Science keywords to bold in pure black (#000000)
+  const keywordsPattern = /\b(int|float|double|char|void|bool|long|short|unsigned|class|struct|union|typedef|enum|private|public|protected|virtual|override|return|if|else|switch|case|default|while|for|do|break|continue|new|delete|malloc|free|sizeof|NULL|true|false|nullptr|def|self|import|from|in|is|not|and|or|lambda|try|except|finally|raise|Algorithm|to|then|exchange|swap|cout|cin|printf|scanf|endl)\b/g
+
+  return escaped.replace(keywordsPattern, '<strong style="font-weight: 700; color: #000000;">$1</strong>')
+}
+
+function generateCodeSnippetHtml({
+  code = '',
+  language = 'cpp',
+  alignment = 'center',
+  hasBorder = true,
+  boxStyle = 'exam',
+  showLineNumbers = false,
+  fontSize = '11pt'
+}) {
+  const safeCode = (code || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = safeCode.split('\n')
+  const encodedCode = encodeURIComponent(safeCode)
+
+  const isWithBorder = hasBorder !== false && boxStyle !== 'borderless'
+  const boxBorder = isWithBorder ? 'border: 1px solid #000000;' : 'border: none;'
+  const boxBg = isWithBorder ? 'background: #ffffff;' : 'background: transparent;'
+  const boxPadding = isWithBorder ? 'padding: 8px 14px;' : 'padding: 4px 6px;'
+  const borderRadius = isWithBorder ? 'border-radius: 4px;' : 'border-radius: 0;'
+
+  const isCentered = alignment === 'center'
+  const containerStyle = isCentered
+    ? 'text-align: center; margin: 8px 0; clear: both;'
+    : 'text-align: left; margin: 8px 0; clear: both;'
+
+  let innerCodeHtml = ''
+  if (showLineNumbers) {
+    const tableRows = lines.map((line, idx) => {
+      const lineNum = idx + 1
+      const formattedLine = formatCodeWithKeywordsBold(line, language) || '&nbsp;'
+      return `<tr><td class="obe-code-ln" style="border:none;color:#555555;user-select:none;padding:0 10px 0 0;text-align:right;border-right:1px solid #999999;font-family:Consolas,Courier New,Monaco,monospace;font-size:${fontSize};vertical-align:top;line-height:1.35;font-weight:normal;">${lineNum}</td><td class="obe-code-txt" style="border:none;padding:0 0 0 10px;font-family:Consolas,Courier New,Monaco,monospace;font-size:${fontSize};white-space:pre-wrap;line-height:1.35;vertical-align:top;text-align:left;color:#000000;">${formattedLine}</td></tr>`
+    }).join('')
+
+    innerCodeHtml = `<table class="obe-code-table" style="border-collapse:collapse;border:none;margin:0;padding:0;width:auto;text-align:left;background:transparent;color:#000000;"><tbody>${tableRows}</tbody></table>`
+  } else {
+    innerCodeHtml = `<code style="font-family:inherit;font-size:inherit;color:#000000;background:transparent;padding:0;border:none;">${formatCodeWithKeywordsBold(safeCode, language)}</code>`
+  }
+
+  return `<div class="obe-code-snippet-container" data-obe-code="true" data-code="${encodedCode}" data-language="${language}" data-align="${alignment}" data-hasborder="${isWithBorder ? 'true' : 'false'}" data-linenumbers="${showLineNumbers ? 'true' : 'false'}" data-fontsize="${fontSize}" style="${containerStyle}" contenteditable="false" tabindex="0" draggable="false"><pre class="obe-code-block" draggable="false" style="display: inline-block; text-align: left; margin: 0; ${boxPadding} font-family: 'Consolas', 'Courier New', Monaco, monospace; font-size: ${fontSize}; line-height: 1.35; ${boxBg} ${boxBorder} color: #000000; ${borderRadius} tab-size: 4; -moz-tab-size: 4; white-space: pre-wrap; word-break: break-word; max-width: 95%; box-sizing: border-box; cursor: text; user-select: text; -webkit-user-select: text;" title="Double-click to edit code snippet">${innerCodeHtml}</pre></div><p style="clear: both;"><br></p>`
 }
 
 export default function QuestionPaperEditor({ assessment, offering, onBack }) {
@@ -703,7 +1753,57 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [aiProcessing, setAiProcessing] = useState(false)
   const [aiPreview, setAiPreview] = useState(null)
 
+  // Selection-based AI Tag Verifier State
+  const [aiVerifySelection, setAiVerifySelection] = useState(null)
+  const [showAiVerifyPopover, setShowAiVerifyPopover] = useState(false)
+  const [aiVerifyLoading, setAiVerifyLoading] = useState(false)
+  const [aiVerifyResult, setAiVerifyResult] = useState(null)
+  const [aiVerifySuccessMsg, setAiVerifySuccessMsg] = useState('')
+  const showAiVerifyPopoverRef = useRef(false)
+  showAiVerifyPopoverRef.current = showAiVerifyPopover
+  const aiVerifyPopoverRef = useRef(null)
+  const lastSelectionRangeRef = useRef(null)
+  const [popoverPos, setPopoverPos] = useState(null)
+  const isDraggingRef = useRef(false)
+  const dragStartRef = useRef({ startX: 0, startY: 0, initialLeft: 0, initialTop: 0 })
+  const [floatingBtnPos, setFloatingBtnPos] = useState(null)
+  const isDraggingBtnRef = useRef(false)
+  const btnDragStartRef = useRef({ startX: 0, startY: 0, initialLeft: 0, initialTop: 0, hasMoved: false })
+  const userMovedFloatingBtnRef = useRef(false)
+  const [showFloatingAiMenu, setShowFloatingAiMenu] = useState(false)
+  const showFloatingAiMenuRef = useRef(false)
+  showFloatingAiMenuRef.current = showFloatingAiMenu
+  const [isContextMenuTriggered, setIsContextMenuTriggered] = useState(false)
+  const isContextMenuTriggeredRef = useRef(false)
+  isContextMenuTriggeredRef.current = isContextMenuTriggered
+  const [activeAiSubmenu, setActiveAiSubmenu] = useState(null)
+
+
+
+  // Real-time Reference Notes Suggestion States (Local to teacher machine & persistent)
+  const notesCourseId = getNormalizedCourseKey(offering)
+  const [notesStatusInfo, setNotesStatusInfo] = useState(() => getCachedNotesStatus(notesCourseId))
+  const [activeNoteSuggestions, setActiveNoteSuggestions] = useState([])
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false)
+  const [noteSuggestionPos, setNoteSuggestionPos] = useState(null)
+  const [activeInputTarget, setActiveInputTarget] = useState(null)
+  const [showNotesModal, setShowNotesModal] = useState(false)
+  const [showTableDesignModal, setShowTableDesignModal] = useState(false)
+  const noteDebounceTimerRef = useRef(null)
+  const notePopoverRef = useRef(null)
+
+  // Dual-Layer Resource Optimization: Live suggestions default to PAUSED (false) to prevent accidental backend load.
+  // Resets to paused whenever the teacher navigates away or opens the editor fresh.
+  const [isLiveSuggestActive, setIsLiveSuggestActive] = useState(false)
+  const suggestAbortRef = useRef(null)
+  const suggestRequestIdRef = useRef(0)
+
+  useEffect(() => {
+    try { localStorage.removeItem('obe_live_suggest_toggle') } catch {}
+  }, [])
+
   const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
+  const [showParagraphMarks, setShowParagraphMarks] = useState(false)
 
   const [examDuration, setExamDuration] = useState(assessment.examDuration || '')
   const [deadline, setDeadline] = useState(() => {
@@ -719,6 +1819,75 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [numQuestions, setNumQuestions] = useState(assessment.numQuestions || 0)
   const [level, setLevel] = useState(assessment.level || offering?.course?.level || '1')
   const [term, setTerm] = useState(assessment.term || offering?.course?.term || 'I')
+
+  // Exam Duration Parser & Formatter
+  const parseExamDuration = useCallback((str) => {
+    if (!str) {
+      if (isTermFinal) return { hours: 3, minutes: 0 }
+      if (isMidTerm) return { hours: 1, minutes: 30 }
+      return { hours: 0, minutes: 30 }
+    }
+    const s = String(str).toLowerCase().trim()
+
+    // Decimal hours like "1.5 hours" or "2.5 hrs"
+    const decMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)$/i)
+    if (decMatch && decMatch[1].includes('.')) {
+      const val = parseFloat(decMatch[1])
+      const h = Math.floor(val)
+      const m = Math.round((val - h) * 60)
+      return { hours: h, minutes: m }
+    }
+
+    const hrMatch = s.match(/(\d+)\s*(?:hours?|hrs?|h)\b/i)
+    const minMatch = s.match(/(\d+)\s*(?:minutes?|mins?|m)\b/i)
+
+    let h = hrMatch ? parseInt(hrMatch[1], 10) : 0
+    let m = minMatch ? parseInt(minMatch[1], 10) : 0
+
+    if (!hrMatch && minMatch) {
+      const totalMin = parseInt(minMatch[1], 10)
+      if (totalMin >= 60) {
+        h = Math.floor(totalMin / 60)
+        m = totalMin % 60
+      } else {
+        h = 0
+        m = totalMin
+      }
+    } else if (!hrMatch && !minMatch) {
+      const num = parseInt(s, 10)
+      if (!isNaN(num)) {
+        if (num <= 5) {
+          h = num
+          m = 0
+        } else {
+          h = Math.floor(num / 60)
+          m = num % 60
+        }
+      }
+    }
+
+    return { hours: Math.max(0, h), minutes: Math.max(0, m) }
+  }, [isTermFinal, isMidTerm])
+
+  const formatExamDuration = useCallback((h, m) => {
+    const hours = parseInt(h, 10) || 0
+    const minutes = parseInt(m, 10) || 0
+
+    if (hours === 0 && minutes === 0) return '30 Minutes'
+    if (hours > 0 && minutes === 0) {
+      return `${hours} ${hours === 1 ? 'Hour' : 'Hours'}`
+    }
+    if (hours === 0 && minutes > 0) {
+      return `${minutes} Minutes`
+    }
+    return `${hours} ${hours === 1 ? 'Hour' : 'Hours'} ${minutes} Minutes`
+  }, [])
+
+  const handleUpdateExamDuration = useCallback((newHours, newMinutes) => {
+    const formatted = formatExamDuration(newHours, newMinutes)
+    setExamDuration(formatted)
+    setHeaderCustom(prev => ({ ...prev, duration: formatted }))
+  }, [formatExamDuration])
 
   // Disable idle auto-logout while editing a question paper
   useEffect(() => {
@@ -969,49 +2138,44 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     customCOs: []
   })
 
-  // Graph Generator State & Interactive Drag-and-Drop
+  // Graph Generator State & Interactive Drag-and-Drop (Defaults to Tree preset as requested)
   const [showGraphGenModal, setShowGraphGenModal] = useState(false)
   const [graphTheme, setGraphTheme] = useState('bw') // 'bw' or 'emerald'
-  const [graphType, setGraphType] = useState('directed') // 'directed', 'undirected', 'tree', 'map'
-  const [numNodes, setNumNodes] = useState(4)
+  const [graphCategory, setGraphCategory] = useState('tree') // 'tree', 'map', 'graph', 'automata'
+  const [graphType, setGraphType] = useState('tree') // 'tree', 'tree_directed', 'tree_lr', 'tree_lr_directed', 'tree_rl', 'tree_rl_directed', 'directed', 'undirected', 'horizontal', 'map', 'map_directed', 'dfa', 'nfa', 'enfa', 'moore', 'mealy'
+  const [startState, setStartState] = useState('q0') // Initial / Start state (arrow from nowhere)
+  const [acceptStates, setAcceptStates] = useState(['q1']) // Accepting / Final states (concentric double circle)
+  const [numNodes, setNumNodes] = useState(12)
   const [edgeRows, setEdgeRows] = useState([
-    { from: 'A', to: 'B', weight: '10' },
-    { from: 'B', to: 'C', weight: '15' },
-    { from: 'A', to: 'C', weight: '5' },
-    { from: 'C', to: 'D', weight: '8' }
+    { from: '15', to: '35', weight: '' }, { from: '15', to: '9', weight: '' }, { from: '15', to: '40', weight: '' },
+    { from: '35', to: '3', weight: '' }, { from: '35', to: '6', weight: '' },
+    { from: '40', to: '5', weight: '' }, { from: '40', to: '7', weight: '' },
+    { from: '3', to: '1', weight: '' }, { from: '3', to: '10', weight: '' },
+    { from: '5', to: '8', weight: '' }, { from: '5', to: '4', weight: '' }, { from: '5', to: '41', weight: '' }
   ])
-  const [graphEdgesText, setGraphEdgesText] = useState('A-B: 10\nB-C: 15\nA-C: 5\nC-D: 8')
+  const [graphEdgesText, setGraphEdgesText] = useState('15 -> 35\n15 -> 9\n15 -> 40\n35 -> 3\n35 -> 6\n40 -> 5\n40 -> 7\n3 -> 1\n3 -> 10\n5 -> 8\n5 -> 4\n5 -> 41')
   const [graphInputMode, setGraphInputMode] = useState('form') // 'form' or 'text'
   const [customNodePositions, setCustomNodePositions] = useState({})
   const [draggingNode, setDraggingNode] = useState(null)
+  const [activeGuideLines, setActiveGuideLines] = useState([]) // Smart alignment guidelines { type: 'h'|'v', pos, label }
   const graphSvgRef = useRef(null)
 
   const parseGraphData = (text) => {
-    const lines = text.split(/[\n,;]+/).map(l => l.trim()).filter(Boolean)
-    const nodesSet = new Set()
-    const edges = []
+    return parseGraphLines(text)
+  }
 
-    lines.forEach(line => {
-      const match = line.match(/^([\w]+)\s*(?:->|-|=>)\s*([\w]+)(?:\s*[:=]\s*(.+))?$/i)
-      if (match) {
-        const from = match[1].toUpperCase()
-        const to = match[2].toUpperCase()
-        const weight = match[3] ? match[3].trim() : ''
-        nodesSet.add(from)
-        nodesSet.add(to)
-        edges.push({ from, to, weight })
-      }
-    })
+  // Auto-Align & Smart Symmetrical Layout
+  const handleAutoAlignGraph = (requestedType = null) => {
+    const activeData = parseGraphLines(graphEdgesText)
+    const { nodes, edges } = activeData
+    if (nodes.length === 0) return
 
-    if (nodesSet.size === 0) {
-      ['A', 'B', 'C', 'D'].forEach(n => nodesSet.add(n))
-      edges.push({ from: 'A', to: 'B', weight: '10' })
-      edges.push({ from: 'A', to: 'C', weight: '5' })
-      edges.push({ from: 'B', to: 'C', weight: '15' })
-      edges.push({ from: 'C', to: 'D', weight: '8' })
+    if (requestedType) {
+      setGraphType(requestedType)
     }
-
-    return { nodes: Array.from(nodesSet), edges }
+    // Clear custom positions so computeGraphLayout generates mathematically symmetrical coordinates
+    setCustomNodePositions({})
+    setActiveGuideLines([])
   }
 
   const handleSvgMouseDown = (nodeId, e) => {
@@ -1027,17 +2191,63 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     const mouseY = e.clientY - rect.top
     const scaleX = 600 / rect.width
     const scaleY = 400 / rect.height
-    const svgX = Math.max(25, Math.min(575, mouseX * scaleX))
-    const svgY = Math.max(25, Math.min(375, mouseY * scaleY))
+    const rawX = Math.max(28, Math.min(572, mouseX * scaleX))
+    const rawY = Math.max(28, Math.min(372, mouseY * scaleY))
+
+    const activeData = parseGraphLines(graphEdgesText)
+    const currentPositions = computeGraphLayout(activeData.nodes, activeData.edges, graphType, customNodePositions)
+
+    // Snapping threshold in SVG pixels (magnetic alignment)
+    const SNAP_DIST = 8
+    let finalX = rawX
+    let finalY = rawY
+    const guides = []
+
+    const otherNodes = activeData.nodes.filter(n => n !== draggingNode)
+
+    // 1. Horizontal Level Alignment (Y-axis matching)
+    let snappedY = false
+    for (const other of otherNodes) {
+      const p = currentPositions[other]
+      if (p && Math.abs(rawY - p.y) <= SNAP_DIST) {
+        finalY = p.y
+        snappedY = true
+        guides.push({ type: 'h', pos: p.y, label: `Level with ${other}` })
+        break
+      }
+    }
+    if (!snappedY && Math.abs(rawY - 200) <= SNAP_DIST) {
+      finalY = 200
+      guides.push({ type: 'h', pos: 200, label: 'Center Y' })
+    }
+
+    // 2. Vertical Column Alignment (X-axis matching)
+    let snappedX = false
+    for (const other of otherNodes) {
+      const p = currentPositions[other]
+      if (p && Math.abs(rawX - p.x) <= SNAP_DIST) {
+        finalX = p.x
+        snappedX = true
+        guides.push({ type: 'v', pos: p.x, label: `Column with ${other}` })
+        break
+      }
+    }
+    if (!snappedX && Math.abs(rawX - 300) <= SNAP_DIST) {
+      finalX = 300
+      guides.push({ type: 'v', pos: 300, label: 'Center X' })
+    }
+
+    setActiveGuideLines(guides)
 
     setCustomNodePositions(prev => ({
       ...prev,
-      [draggingNode]: { x: svgX, y: svgY }
+      [draggingNode]: { x: Math.round(finalX), y: Math.round(finalY) }
     }))
   }
 
   const handleSvgMouseUp = () => {
     setDraggingNode(null)
+    setActiveGuideLines([])
   }
 
   // Table Generator State
@@ -1073,6 +2283,31 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       ]
     }
   ])
+
+  // Code Snippet Generator State
+  const [showCodeSnippetModal, setShowCodeSnippetModal] = useState(false)
+  const [codeLanguage, setCodeLanguage] = useState('cpp') // 'cpp', 'c', 'python', 'pseudocode'
+  const [codeContent, setCodeContent] = useState(CODE_SNIPPET_PRESETS.cpp[0].code)
+  const [codeAlignment, setCodeAlignment] = useState('center') // 'center', 'left'
+  const [codeHasBorder, setCodeHasBorder] = useState(true) // true: With Border (1px box), false: No Border
+  const [codeBoxStyle, setCodeBoxStyle] = useState('exam')
+  const [codeShowLineNumbers, setCodeShowLineNumbers] = useState(false)
+  const [codeFontSize, setCodeFontSize] = useState('11pt') // '10pt', '11pt', '12pt'
+  const [editingCodeElement, setEditingCodeElement] = useState(null)
+  const [selectedCodeBlockInfo, setSelectedCodeBlockInfo] = useState(null)
+  const savedCodeRangeRef = useRef(null)
+  const [copiedCodeNotice, setCopiedCodeNotice] = useState(false)
+  const [formatNotice, setFormatNotice] = useState('')
+  const [smartOutputLoading, setSmartOutputLoading] = useState(false)
+  const [smartOutputResult, setSmartOutputResult] = useState(null)
+  const [smartOutputError, setSmartOutputError] = useState('')
+  const [copiedOutputNotice, setCopiedOutputNotice] = useState(false)
+  const codeUndoStackRef = useRef([])
+  const codeRedoStackRef = useRef([])
+  const lastCodeSnapshotTimeRef = useRef(0)
+  const codeTextareaRef = useRef(null)
+  const [canCodeUndo, setCanCodeUndo] = useState(false)
+  const [canCodeRedo, setCanCodeRedo] = useState(false)
 
   // Mathematical Equation Editor State & Visual Builder Mode
   const [showEquationModal, setShowEquationModal] = useState(false)
@@ -1346,8 +2581,8 @@ Equation description: "${aiEquationPrompt}"`
     const encodedPrompt = encodeURIComponent(aiEquationPrompt || '')
     const badgeHint = getEquationBadgeHint(aiEquationLatex, aiEquationPrompt)
     const escapedHint = badgeHint.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    // The editor shows a clean clickable badge; print/PDF reads data-latex and converts to a high-res image
-    const wrapperHtml = `<span class="math-equation-wrapper" data-latex="${encodedLatex}" data-prompt="${encodedPrompt}" contenteditable="false" title="Click to edit equation"><span class="math-eq-badge"><code>${escapedHint}</code></span><span class="math-eq-print-content" style="display:none;"></span></span>`
+    // The editor shows a clean clickable badge with hover delete cross button; print/PDF reads data-latex and converts to a high-res image
+    const wrapperHtml = `<span class="math-equation-wrapper" data-latex="${encodedLatex}" data-prompt="${encodedPrompt}" contenteditable="false" title="Click to edit equation"><span class="math-eq-badge"><code>${escapedHint}</code><button type="button" class="math-eq-delete-btn" title="Delete equation" contenteditable="false" aria-label="Delete equation">&times;</button></span><span class="math-eq-print-content" style="display:none;"></span></span>`
 
     if (editingEquationElement) {
       // Replace existing equation in editor DOM
@@ -1659,7 +2894,453 @@ Equation description: "${aiEquationPrompt}"`
     return true
   }
 
+  // Helper to detect if a specific alignment (center, right, justify, or left) is active
+  const isBlockAligned = useCallback((editor, alignmentType) => {
+    // 1. Check toolbar button active state first (Syncfusion tracks selection accurately)
+    const btnIdMap = {
+      center: '_JustifyCenter',
+      right: '_JustifyRight',
+      justify: '_JustifyFull',
+      left: '_JustifyLeft'
+    }
+    const btnId = btnIdMap[alignmentType]
+    if (btnId) {
+      const btn = document.querySelector(`.e-richtexteditor button[id*="${btnId}"]`)
+      if (btn && (btn.classList.contains('e-active') || btn.getAttribute('aria-pressed') === 'true')) {
+        return true
+      }
+    }
+
+    // 2. Check direct DOM block styles at caret
+    if (!editor) return false
+    const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+    const sel = doc ? doc.getSelection() : window.getSelection()
+    if (!sel || !sel.rangeCount) return false
+
+    let node = sel.getRangeAt(0).startContainer
+    if (node && node.nodeType === 3) node = node.parentNode
+    const block = node ? (node.closest ? node.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6') : node.parentElement) : null
+    if (!block) return false
+
+    const inline = (block.style?.textAlign || block.getAttribute('align') || '').toLowerCase().trim()
+    if (alignmentType === 'center') return inline === 'center'
+    if (alignmentType === 'right') return inline === 'right'
+    if (alignmentType === 'justify') return inline === 'justify'
+    if (alignmentType === 'left') {
+      return inline === 'left' || (!inline && !block.style.textAlign)
+    }
+
+    return false
+  }, [])
+
+  const isProgrammaticAlignRef = useRef(false)
+
+  // Helper to toggle block alignment (Word-style: pressing Ctrl+E on centered text toggles back to Left)
+  const toggleBlockAlignment = useCallback((editor, requestedAlign) => {
+    if (!editor) return
+    isProgrammaticAlignRef.current = true
+
+    try {
+      const isAlready = isBlockAligned(editor, requestedAlign)
+      // If already at requested alignment, toggle back to left (Word behavior).
+      // Otherwise apply requested alignment.
+      const targetAlign = (isAlready && requestedAlign !== 'left') ? 'left' : requestedAlign
+
+      const subCmdMap = {
+        left: 'JustifyLeft',
+        center: 'JustifyCenter',
+        right: 'JustifyRight',
+        justify: 'JustifyFull'
+      }
+
+      const syncCmdMap = {
+        left: 'justifyLeft',
+        center: 'justifyCenter',
+        right: 'justifyRight',
+        justify: 'justifyFull'
+      }
+
+      const subCmd = subCmdMap[targetAlign] || 'JustifyLeft'
+      const syncCmd = syncCmdMap[targetAlign] || 'justifyLeft'
+
+      // 1. Try Syncfusion formatter
+      try {
+        if (editor.formatter && typeof editor.formatter.process === 'function') {
+          editor.formatter.process(editor, { subCommand: subCmd }, null, { value: targetAlign })
+        }
+      } catch (err) {}
+
+      // 2. Try Syncfusion executeCommand
+      try {
+        editor.executeCommand(syncCmd)
+      } catch (e) {}
+
+      // 3. Fallback direct DOM style on the active block node
+      const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const sel = doc ? doc.getSelection() : window.getSelection()
+      if (sel && sel.rangeCount) {
+        let node = sel.getRangeAt(0).startContainer
+        if (node && node.nodeType === 3) node = node.parentNode
+        const block = node ? (node.closest ? node.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6') : node.parentElement) : null
+        if (block) {
+          block.style.textAlign = targetAlign === 'left' ? '' : targetAlign
+        }
+      }
+
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      if (editor.refreshUI) {
+        editor.refreshUI()
+      }
+    } finally {
+      setTimeout(() => {
+        isProgrammaticAlignRef.current = false
+      }, 100)
+    }
+  }, [isBlockAligned])
+
+  const savedEditorRangeRef = useRef(null)
+
+  // Apply custom font size (e.g. 11pt, 12pt, 14pt) from manual input or dropdown safely without breaking table structure
+  const applyCustomFontSize = useCallback((sizeInput) => {
+    const editor = rteRef.current
+    if (!editor) return
+
+    const num = parseFloat(String(sizeInput).replace(/[^\d\.]/g, ''))
+    if (isNaN(num) || num < 4 || num > 144) return
+    const ptVal = `${num}pt`
+
+    const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+    const win = doc?.defaultView || window
+    const sel = doc ? doc.getSelection() : win.getSelection()
+    const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+
+    // 1. Restore saved selection if current selection is lost, outside editPanel, or collapsed when saved was not
+    if (savedEditorRangeRef.current && editPanel) {
+      const isCurrentSelInside = sel && sel.rangeCount > 0 && editPanel.contains(sel.getRangeAt(0).commonAncestorContainer)
+      if (!isCurrentSelInside || (sel && sel.isCollapsed && !savedEditorRangeRef.current.collapsed)) {
+        try {
+          sel.removeAllRanges()
+          sel.addRange(savedEditorRangeRef.current.cloneRange())
+        } catch (e) {}
+      }
+    }
+
+    // 2. Pre-save undo state before applying
+    try {
+      if (editor.formatter?.getUndoRedoStack) {
+        if (editor.formatter.getUndoRedoStack().length === 0) {
+          editor.formatter.saveData()
+        }
+      }
+    } catch (e) {}
+
+    // 3. Detect if selection is inside a table cell — Syncfusion's NodeCutter.SplitNode uses
+    //    extractContents() which destroys table structure via HTML5 Foster Parenting.
+    //    When inside a table, we MUST bypass Syncfusion's command engine and apply styles directly.
+    const activeSel = doc ? doc.getSelection() : win.getSelection()
+    let isInsideTable = false
+    if (activeSel && activeSel.rangeCount > 0) {
+      const range = activeSel.getRangeAt(0)
+      const ancestor = range.commonAncestorContainer
+      const ancestorEl = ancestor?.nodeType === 1 ? ancestor : ancestor?.parentElement
+      if (ancestorEl) {
+        isInsideTable = !!(ancestorEl.closest?.('td') || ancestorEl.closest?.('th') || ancestorEl.closest?.('table'))
+      }
+    }
+
+    if (isInsideTable && activeSel && activeSel.rangeCount > 0) {
+      // === SAFE TABLE PATH: Apply font size via direct DOM styling ===
+      const range = activeSel.getRangeAt(0)
+
+      if (range.collapsed) {
+        // Cursor is in a cell but no text selected — style the containing block
+        let node = range.startContainer
+        if (node.nodeType === 3) node = node.parentNode
+        const block = node?.closest?.('p, div, li, td, th, h1, h2, h3, h4, h5, h6, span')
+        if (block) {
+          block.style.fontSize = ptVal
+        }
+      } else {
+        // Text is selected inside table — walk all text nodes in the range and wrap/style them safely
+        const commonAncestor = range.commonAncestorContainer
+        const commonEl = commonAncestor?.nodeType === 1 ? commonAncestor : commonAncestor?.parentElement
+
+        // Check if the entire content of a cell (or multiple cells) is selected
+        const selectedCells = []
+        if (commonEl) {
+          // If commonAncestor IS a td/th, style all content inside it
+          if (commonEl.matches?.('td, th')) {
+            selectedCells.push(commonEl)
+          } else if (commonEl.matches?.('tr, tbody, table')) {
+            // Multiple cells selected — find all cells that intersect the range
+            commonEl.querySelectorAll('td, th').forEach(cell => {
+              if (range.intersectsNode ? range.intersectsNode(cell) : true) {
+                selectedCells.push(cell)
+              }
+            })
+          }
+        }
+
+        if (selectedCells.length > 0) {
+          // Style all content within selected cells
+          selectedCells.forEach(cell => {
+            // Apply to the cell itself for inheritance
+            cell.style.fontSize = ptVal
+            // Also update all inline elements and paragraphs within
+            cell.querySelectorAll('span, p, div, b, i, u, strong, em, a').forEach(el => {
+              if (el.style.fontSize) {
+                el.style.fontSize = ptVal
+              }
+            })
+          })
+        } else {
+          // Partial text selected within a single cell — wrap in a styled span safely
+          // Check if the selection is entirely within a single parent node
+          try {
+            const span = doc.createElement('span')
+            span.style.fontSize = ptVal
+            // surroundContents only works if selection doesn't cross element boundaries
+            range.surroundContents(span)
+            // Re-select the wrapped content
+            activeSel.removeAllRanges()
+            const newRange = doc.createRange()
+            newRange.selectNodeContents(span)
+            activeSel.addRange(newRange)
+            savedEditorRangeRef.current = newRange.cloneRange()
+          } catch (surroundErr) {
+            // Selection crosses element boundaries — fallback to walking text nodes
+            // Collect all text nodes within the range
+            const textNodes = []
+            const treeWalker = doc.createTreeWalker(
+              range.commonAncestorContainer?.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer?.parentElement || editPanel,
+              NodeFilter.SHOW_TEXT,
+              {
+                acceptNode: (node) => {
+                  if (range.intersectsNode ? range.intersectsNode(node) : true) {
+                    return NodeFilter.FILTER_ACCEPT
+                  }
+                  return NodeFilter.FILTER_REJECT
+                }
+              }
+            )
+            while (treeWalker.nextNode()) {
+              textNodes.push(treeWalker.currentNode)
+            }
+            textNodes.forEach(textNode => {
+              const parent = textNode.parentElement
+              if (parent) {
+                // If parent is already a span, just update its font size
+                if (parent.tagName === 'SPAN' && parent.childNodes.length === 1) {
+                  parent.style.fontSize = ptVal
+                } else {
+                  // Wrap the text node in a styled span
+                  const wrapper = doc.createElement('span')
+                  wrapper.style.fontSize = ptVal
+                  parent.insertBefore(wrapper, textNode)
+                  wrapper.appendChild(textNode)
+                }
+              }
+            })
+          }
+        }
+
+        // Also set fontSize on any table element that fully contains the selection
+        if (commonEl) {
+          const parentTable = commonEl.closest?.('table')
+          if (parentTable) {
+            // Check if the entire table is selected
+            const tableText = parentTable.textContent || ''
+            const selText = activeSel.toString() || ''
+            if (selText.length > 0 && tableText.trim().length > 0 && selText.length >= tableText.trim().length * 0.9) {
+              parentTable.style.fontSize = ptVal
+            }
+          }
+        }
+      }
+    } else {
+      // === NON-TABLE PATH: Use Syncfusion's command engine safely ===
+      try {
+        editor.executeCommand('fontSize', ptVal, { undo: true })
+      } catch (e) {
+        console.warn('Syncfusion executeCommand fontSize error:', e)
+      }
+    }
+
+    // 4. If whole table, rows, or cells are in the broader selection, gracefully update table font size too
+    try {
+      const finalSel = doc ? doc.getSelection() : win.getSelection()
+      if (finalSel && finalSel.rangeCount > 0 && editPanel) {
+        const range = finalSel.getRangeAt(0)
+        if (!range.collapsed) {
+          const common = range.commonAncestorContainer
+          const ancestor = common?.nodeType === 1 ? common : common?.parentElement
+          if (ancestor && !isInsideTable) {
+            // For non-table selections that contain tables (e.g. Ctrl+A)
+            const tables = ancestor.matches?.('table') ? [ancestor] : Array.from(ancestor.querySelectorAll?.('table') || [])
+            tables.forEach(tbl => {
+              if (range.intersectsNode ? range.intersectsNode(tbl) : true) {
+                tbl.style.fontSize = ptVal
+                tbl.querySelectorAll('td, th').forEach(cell => {
+                  cell.style.fontSize = ptVal
+                  cell.querySelectorAll('span[style*="font-size"]').forEach(s => {
+                    s.style.fontSize = ptVal
+                  })
+                })
+              }
+            })
+          }
+        }
+        savedEditorRangeRef.current = range.cloneRange()
+      }
+    } catch (e) {}
+
+    // 5. Post-save undo state and update editor value state
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+    if (editor.notify) {
+      editor.notify('contentChanged', {})
+    }
+    if (editPanel) {
+      setEditorValue(editPanel.innerHTML)
+    }
+
+    // 6. Sync all font size input fields in the UI
+    const inputs = document.querySelectorAll('.word-fontsize-input')
+    inputs.forEach(inp => {
+      inp.value = `${num}`
+    })
+  }, [])
+
+  // Apply line height to selected blocks/paragraphs or current cursor block
+  const applySelectedLineHeight = useCallback((selectedVal) => {
+    const editor = rteRef.current
+    if (!editor) return
+    const cssVal = (!selectedVal || selectedVal === 'Default' || selectedVal === '') ? 'normal' : String(selectedVal)
+
+    // 0. Pre-save undo state before applying
+    try {
+      if (editor.formatter?.getUndoRedoStack) {
+        if (editor.formatter.getUndoRedoStack().length === 0) {
+          editor.formatter.saveData()
+        }
+      }
+    } catch (e) {}
+
+    // 1. Notify Syncfusion internal editorManager observer
+    try {
+      if (editor.formatter?.editorManager?.observer) {
+        editor.formatter.editorManager.observer.notify('line-height-type', {
+          subCommand: 'LineHeight',
+          value: { selectedValue: (!selectedVal || selectedVal === 'Default') ? '' : String(selectedVal) },
+          enterAction: editor.enterKey || 'P'
+        })
+      }
+    } catch (e) {}
+
+    // 2. Direct DOM application to selected elements / closest block
+    try {
+      const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const win = doc?.defaultView || window
+      const sel = doc ? doc.getSelection() : win.getSelection()
+      let range = (sel && sel.rangeCount > 0) ? sel.getRangeAt(0) : savedEditorRangeRef.current
+
+      const blocks = new Set()
+      if (range) {
+        if (!range.collapsed) {
+          const common = range.commonAncestorContainer
+          const ancestor = common?.nodeType === 1 ? common : common?.parentElement
+          if (ancestor) {
+            if (/^(P|DIV|LI|TD|TH|H[1-6])$/i.test(ancestor.tagName)) {
+              blocks.add(ancestor)
+            }
+            ancestor.querySelectorAll('p, div, li, td, th, h1, h2, h3, h4, h5, h6').forEach(b => {
+              if (range.intersectsNode ? range.intersectsNode(b) : (sel?.containsNode ? sel.containsNode(b, true) : true)) {
+                blocks.add(b)
+              }
+            })
+          }
+        }
+        if (blocks.size === 0) {
+          let node = range.startContainer
+          if (node && node.nodeType === 3) node = node.parentNode
+          const b = node?.closest ? node.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6') : node?.parentElement
+          if (b) blocks.add(b)
+        }
+      }
+
+      if (blocks.size === 0) {
+        const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+        const active = doc?.activeElement
+        if (editPanel && editPanel.contains(active)) {
+          const b = active.closest ? active.closest('p, div, li, td, th, h1, h2, h3, h4, h5, h6') : active
+          if (b) blocks.add(b)
+        }
+      }
+
+      blocks.forEach(b => {
+        if (cssVal === 'normal') {
+          b.style.removeProperty('line-height')
+        } else {
+          b.style.setProperty('line-height', cssVal, 'important')
+        }
+      })
+
+      // Post-save undo state
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      if (editor.notify) {
+        editor.notify('contentChanged', {})
+      }
+      const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+      if (editPanel) {
+        setEditorValue(editPanel.innerHTML)
+      }
+    } catch (err) {
+      console.warn('applySelectedLineHeight error:', err)
+    }
+  }, [])
+
+  const onRteCreated = useCallback(() => {
+    if (rteRef.current) {
+      // Ensure the edit panel body defaults to Times New Roman and 12pt
+      try {
+        const editPanel = rteRef.current.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+        if (editPanel) {
+          if (!editPanel.style.fontFamily) {
+            editPanel.style.fontFamily = "'Times New Roman', Times, serif"
+          }
+          if (!editPanel.style.fontSize) {
+            editPanel.style.fontSize = '12pt'
+          }
+        }
+      } catch (e) {}
+
+      // Ensure the font size inputs display '12' by default
+      try {
+        const inputs = document.querySelectorAll('.word-fontsize-input')
+        inputs.forEach(inp => {
+          if (!inp.value || inp.value === '') inp.value = '12'
+        })
+      } catch (e) {}
+
+      try {
+        rteRef.current.on('dropDownSelect', (e) => {
+          if (e?.item?.command === 'LineHeight') {
+            const val = e.item?.value
+            applySelectedLineHeight(val)
+          }
+        })
+      } catch (err) {}
+    }
+  }, [applySelectedLineHeight])
+
   const onActionBegin = (args) => {
+    if (isProgrammaticAlignRef.current) return
+
     if (args.requestType === 'Indent') {
       const doc = rteRef.current?.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : document
       if (indentListItem(doc, rteRef.current)) {
@@ -1670,12 +3351,78 @@ Equation description: "${aiEquationPrompt}"`
       if (outdentListItem(doc, rteRef.current)) {
         args.cancel = true
       }
+    } else if (args.requestType === 'JustifyCenter' || args.subCommand === 'JustifyCenter') {
+      if (isBlockAligned(rteRef.current, 'center')) {
+        args.cancel = true
+        toggleBlockAlignment(rteRef.current, 'center')
+      }
+    } else if (args.requestType === 'JustifyRight' || args.subCommand === 'JustifyRight') {
+      if (isBlockAligned(rteRef.current, 'right')) {
+        args.cancel = true
+        toggleBlockAlignment(rteRef.current, 'right')
+      }
+    } else if (args.requestType === 'JustifyFull' || args.subCommand === 'JustifyFull') {
+      if (isBlockAligned(rteRef.current, 'justify')) {
+        args.cancel = true
+        toggleBlockAlignment(rteRef.current, 'justify')
+      }
+    } else if (args.requestType === 'LineHeights' || args.subCommand === 'LineHeights' || args.requestType === 'LineHeight' || args.subCommand === 'LineHeight') {
+      const selectedVal = args.value?.selectedValue ?? args.value?.value ?? args.value
+      applySelectedLineHeight(selectedVal)
     }
   }
+
+  const onActionComplete = useCallback((args) => {
+    // Gracefully handle FontName propagation if entire table is selected
+    if (args && args.requestType === 'FontName') {
+      const editor = rteRef.current
+      const doc = editor?.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const sel = doc ? doc.getSelection() : window.getSelection()
+      const editPanel = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+      if (sel && sel.rangeCount > 0 && editPanel && !sel.isCollapsed) {
+        try {
+          const range = sel.getRangeAt(0)
+          const common = range.commonAncestorContainer
+          const root = common?.nodeType === 1 ? common : common?.parentElement
+          if (root) {
+            const fontVal = args.value?.value || args.value || ''
+            if (fontVal) {
+              const tables = root.matches?.('table') ? [root] : Array.from(root.querySelectorAll?.('table') || [])
+              tables.forEach(tbl => {
+                if (range.intersectsNode ? range.intersectsNode(tbl) : true) {
+                  tbl.style.fontFamily = fontVal
+                }
+              })
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }, [])
 
   // Click-to-Edit & MS Word Keyboard listener for Rich Text Editor
   useEffect(() => {
     const handleEditorClicks = (e) => {
+      // 1. Math Equation delete button click
+      const deleteBtn = e.target.closest('.math-eq-delete-btn')
+      if (deleteBtn) {
+        e.preventDefault()
+        e.stopPropagation()
+        const wrapper = deleteBtn.closest('.math-equation-wrapper')
+        if (wrapper) {
+          wrapper.remove()
+          const editor = rteRef.current
+          if (editor?.formatter?.saveData) editor.formatter.saveData()
+          if (editor?.contentModule?.getEditPanel) {
+            const newHtml = editor.contentModule.getEditPanel().innerHTML
+            setEditorValue(newHtml)
+            if (typeof editor.value !== 'undefined') editor.value = newHtml
+          }
+        }
+        return
+      }
+
+      // Math Equation edit click/dblclick
       const target = e.target.closest('.math-equation-wrapper') || e.target.closest('[data-latex]')
       if (target) {
         e.preventDefault()
@@ -1685,12 +3432,342 @@ Equation description: "${aiEquationPrompt}"`
         const latex = encoded ? decodeURIComponent(encoded) : ''
         const prompt = encodedPrompt ? decodeURIComponent(encodedPrompt) : ''
         handleOpenEquationModal(latex, target, prompt)
+        return
+      }
+
+      // 2. Code Snippet click / dblclick
+      const codeTarget = e.target.closest('.obe-code-snippet-container') || e.target.closest('.obe-code-block')
+      if (codeTarget) {
+        // If user is actively drag-selecting text with mouse, do NOT hijack selection or prevent copy
+        const doc = e.target.ownerDocument || document
+        const currentSel = doc.getSelection ? doc.getSelection() : window.getSelection()
+        if (currentSel && !currentSel.isCollapsed && (currentSel.toString() || '').trim().length > 0) {
+          return
+        }
+
+        e.preventDefault()
+        e.stopPropagation()
+        const container = codeTarget.closest('.obe-code-snippet-container') || codeTarget
+
+        // Double click: Open Edit Modal directly
+        if (e.type === 'dblclick') {
+          const encoded = container.getAttribute('data-code') || ''
+          const lang = container.getAttribute('data-language') || 'cpp'
+          const align = container.getAttribute('data-align') || 'center'
+          const hasBrd = container.getAttribute('data-hasborder') !== 'false'
+          const lineNums = container.getAttribute('data-linenumbers') === 'true'
+          const fontSz = container.getAttribute('data-fontsize') || '11pt'
+
+          let rawCode = ''
+          if (encoded) {
+            try {
+              rawCode = decodeURIComponent(encoded)
+            } catch (err) {
+              rawCode = container.textContent || ''
+            }
+          } else {
+            const tableTxts = container.querySelectorAll('.obe-code-txt')
+            if (tableTxts.length > 0) {
+              rawCode = Array.from(tableTxts).map(td => td.textContent).join('\n')
+            } else {
+              rawCode = container.textContent || ''
+            }
+          }
+
+          setSelectedCodeBlockInfo(null)
+          handleOpenCodeSnippetModal({
+            code: rawCode,
+            language: lang,
+            alignment: align,
+            hasBorder: hasBrd,
+            showLineNumbers: lineNums,
+            fontSize: fontSz,
+            element: container
+          })
+          return
+        }
+
+        // Single click: Select code block with visible outline & show action toolbar
+        const editor = rteRef.current
+        const editArea = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+        if (editArea) {
+          editArea.querySelectorAll('.obe-code-snippet-container').forEach(c => c.removeAttribute('data-selected'))
+        }
+        container.setAttribute('data-selected', 'true')
+
+        const iframe = document.querySelector('.e-rte-content iframe, iframe.e-rte-frame')
+        let iframeLeft = 0
+        let iframeTop = 0
+        if (iframe && container.ownerDocument !== document) {
+          const ifRect = iframe.getBoundingClientRect()
+          iframeLeft = ifRect.left
+          iframeTop = ifRect.top
+        }
+
+        const rect = container.getBoundingClientRect()
+        setSelectedCodeBlockInfo({
+          element: container,
+          rect: {
+            top: rect.top + iframeTop,
+            left: rect.left + iframeLeft,
+            width: rect.width,
+            height: rect.height
+          },
+          hasBorder: container.getAttribute('data-hasborder') !== 'false'
+        })
+        return
+      } else {
+        if (e.type === 'click') {
+          const editor = rteRef.current
+          const editArea = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+          if (editArea) {
+            editArea.querySelectorAll('.obe-code-snippet-container').forEach(c => c.removeAttribute('data-selected'))
+          }
+          setSelectedCodeBlockInfo(null)
+        }
       }
     }
 
     const handleMsWordKeyboard = (e) => {
       const editor = rteRef.current
       if (!editor) return
+
+      // If a code block is currently selected, Delete/Backspace immediately deletes it
+      if (selectedCodeBlockInfo?.element) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault()
+          e.stopPropagation()
+          handleDeleteSelectedCodeBlock()
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setSelectedCodeBlockInfo(null)
+          return
+        }
+      }
+
+      // Math equation and graph diagram deletion via Backspace or Delete key
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+        const sel = doc ? doc.getSelection() : window.getSelection()
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0)
+
+          // 0. If range contains or is an image (graph diagram or inserted graphic)
+          let targetImg = null
+          if (!range.collapsed) {
+            const container = range.commonAncestorContainer
+            targetImg = container.nodeType === 1
+              ? (container.tagName === 'IMG' ? container : container.querySelector?.('img'))
+              : container.parentElement?.querySelector?.('img')
+          } else {
+            const anchor = sel.anchorNode
+            if (anchor?.nodeType === 1 && anchor.tagName === 'IMG') {
+              targetImg = anchor
+            } else if (anchor?.parentElement?.querySelector?.('img.e-rte-image, img.obe-graph-diagram')) {
+              targetImg = anchor.parentElement.querySelector('img.e-rte-image, img.obe-graph-diagram')
+            }
+          }
+
+          if (targetImg) {
+            e.preventDefault()
+            e.stopPropagation()
+            const pWrap = targetImg.closest('p') || targetImg
+            const nextP = pWrap.nextElementSibling
+            pWrap.remove()
+            if (nextP && nextP.tagName === 'P' && (!nextP.textContent.trim() || nextP.innerHTML === '<br>') && !nextP.querySelector('img, table')) {
+              nextP.remove()
+            }
+            if (editor.formatter?.saveData) editor.formatter.saveData()
+            if (editor.contentModule?.getEditPanel) {
+              const newHtml = editor.contentModule.getEditPanel().innerHTML
+              setEditorValue(newHtml)
+              if (typeof editor.value !== 'undefined') editor.value = newHtml
+            }
+            return
+          }
+
+          // 1. If range contains or is inside a .math-equation-wrapper
+          let wrapper = null
+          if (!range.collapsed) {
+            const container = range.commonAncestorContainer
+            wrapper = container.nodeType === 1
+              ? (container.classList?.contains('math-equation-wrapper') ? container : container.querySelector?.('.math-equation-wrapper'))
+              : container.parentElement?.closest?.('.math-equation-wrapper')
+          } else {
+            const anchor = sel.anchorNode
+            wrapper = anchor?.nodeType === 1 ? anchor.closest?.('.math-equation-wrapper') : anchor?.parentElement?.closest?.('.math-equation-wrapper')
+          }
+
+          if (wrapper) {
+            e.preventDefault()
+            e.stopPropagation()
+            wrapper.remove()
+            if (editor.formatter?.saveData) editor.formatter.saveData()
+            if (editor.contentModule?.getEditPanel) {
+              const newHtml = editor.contentModule.getEditPanel().innerHTML
+              setEditorValue(newHtml)
+              if (typeof editor.value !== 'undefined') editor.value = newHtml
+            }
+            return
+          }
+
+          // 2. If cursor is collapsed right next to an equation or graph diagram
+          if (range.collapsed) {
+            const node = range.startContainer
+            const offset = range.startOffset
+
+            if (e.key === 'Backspace') {
+              // Check for preceding graph diagram
+              let prevEl = null
+              if (node.nodeType === Node.TEXT_NODE && offset === 0) {
+                prevEl = node.parentElement?.previousElementSibling || node.previousSibling
+              } else if (node.nodeType === Node.ELEMENT_NODE && offset === 0) {
+                prevEl = node.previousElementSibling
+              }
+              if (prevEl) {
+                const img = prevEl.tagName === 'IMG' ? prevEl : prevEl.querySelector?.('img.obe-graph-diagram, img.e-rte-image, img[alt="Graph Diagram"]')
+                if (img) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const pWrap = img.closest('p') || img
+                  pWrap.remove()
+                  if (editor.formatter?.saveData) editor.formatter.saveData()
+                  if (editor.contentModule?.getEditPanel) {
+                    const newHtml = editor.contentModule.getEditPanel().innerHTML
+                    setEditorValue(newHtml)
+                    if (typeof editor.value !== 'undefined') editor.value = newHtml
+                  }
+                  return
+                }
+              }
+
+              let targetWrapper = null
+              if (node.nodeType === Node.TEXT_NODE && offset === 0) {
+                let prev = node.previousSibling
+                while (prev && prev.nodeType === Node.TEXT_NODE && !prev.textContent.trim()) {
+                  prev = prev.previousSibling
+                }
+                if (prev && (prev.classList?.contains('math-equation-wrapper') || prev.getAttribute?.('data-latex'))) {
+                  targetWrapper = prev
+                }
+              } else if (node.nodeType === Node.ELEMENT_NODE && offset > 0) {
+                const prevChild = node.childNodes[offset - 1]
+                if (prevChild && (prevChild.classList?.contains('math-equation-wrapper') || prevChild.getAttribute?.('data-latex'))) {
+                  targetWrapper = prevChild
+                }
+              }
+
+              if (targetWrapper) {
+                e.preventDefault()
+                e.stopPropagation()
+                targetWrapper.remove()
+                if (editor.formatter?.saveData) editor.formatter.saveData()
+                if (editor.contentModule?.getEditPanel) {
+                  const newHtml = editor.contentModule.getEditPanel().innerHTML
+                  setEditorValue(newHtml)
+                  if (typeof editor.value !== 'undefined') editor.value = newHtml
+                }
+                return
+              }
+            } else if (e.key === 'Delete') {
+              // Check for succeeding graph diagram
+              let nextEl = null
+              if (node.nodeType === Node.TEXT_NODE && offset === node.textContent.length) {
+                nextEl = node.parentElement?.nextElementSibling || node.nextSibling
+              } else if (node.nodeType === Node.ELEMENT_NODE && offset >= node.childNodes.length) {
+                nextEl = node.nextElementSibling
+              }
+              if (nextEl) {
+                const img = nextEl.tagName === 'IMG' ? nextEl : nextEl.querySelector?.('img.obe-graph-diagram, img.e-rte-image, img[alt="Graph Diagram"]')
+                if (img) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const pWrap = img.closest('p') || img
+                  pWrap.remove()
+                  if (editor.formatter?.saveData) editor.formatter.saveData()
+                  if (editor.contentModule?.getEditPanel) {
+                    const newHtml = editor.contentModule.getEditPanel().innerHTML
+                    setEditorValue(newHtml)
+                    if (typeof editor.value !== 'undefined') editor.value = newHtml
+                  }
+                  return
+                }
+              }
+
+              let targetWrapper = null
+              if (node.nodeType === Node.TEXT_NODE && offset === node.textContent.length) {
+                let next = node.nextSibling
+                while (next && next.nodeType === Node.TEXT_NODE && !next.textContent.trim()) {
+                  next = next.nextSibling
+                }
+                if (next && (next.classList?.contains('math-equation-wrapper') || next.getAttribute?.('data-latex'))) {
+                  targetWrapper = next
+                }
+              } else if (node.nodeType === Node.ELEMENT_NODE && offset < node.childNodes.length) {
+                const nextChild = node.childNodes[offset]
+                if (nextChild && (nextChild.classList?.contains('math-equation-wrapper') || nextChild.getAttribute?.('data-latex'))) {
+                  targetWrapper = nextChild
+                }
+              }
+
+              if (targetWrapper) {
+                e.preventDefault()
+                e.stopPropagation()
+                targetWrapper.remove()
+                if (editor.formatter?.saveData) editor.formatter.saveData()
+                if (editor.contentModule?.getEditPanel) {
+                  const newHtml = editor.contentModule.getEditPanel().innerHTML
+                  setEditorValue(newHtml)
+                  if (typeof editor.value !== 'undefined') editor.value = newHtml
+                }
+                return
+              }
+            }
+          }
+        }
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        setSelectedCodeBlockInfo(null)
+      }
+
+      // ══════════════════════════════════════════════════════════
+      // MS Word Alignment Toggle Shortcuts: Ctrl+E, Ctrl+R, Ctrl+J, Ctrl+L
+      // ══════════════════════════════════════════════════════════
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const key = e.key.toLowerCase()
+        if (key === 'e' || key === 'r' || key === 'j' || key === 'l') {
+          e.preventDefault()
+          e.stopPropagation()
+          const targetAlign = key === 'e' ? 'center' : key === 'r' ? 'right' : key === 'j' ? 'justify' : 'left'
+          toggleBlockAlignment(editor, targetAlign)
+          return
+        }
+      }
+
+      // ══════════════════════════════════════════════════════════
+      // MS Word Font Size Shortcuts: Ctrl+] / Ctrl+Shift+> (grow) and Ctrl+[ / Ctrl+Shift+< (shrink)
+      // ══════════════════════════════════════════════════════════
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === ']' || e.key === '[' || e.key === '>' || e.key === '<')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const isGrow = e.key === ']' || e.key === '>'
+        const standardSizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]
+        const currentInput = document.querySelector('.word-fontsize-input')
+        const currentSize = parseFloat(currentInput?.value) || 12
+        let newSize = 12
+        if (isGrow) {
+          const found = standardSizes.find(s => s > currentSize)
+          newSize = found || Math.min(144, currentSize + 2)
+        } else {
+          const found = [...standardSizes].reverse().find(s => s < currentSize)
+          newSize = found || Math.max(4, currentSize - 2)
+        }
+        applyCustomFontSize(newSize)
+        return
+      }
 
       const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
       const sel = doc ? doc.getSelection() : window.getSelection()
@@ -1701,6 +3778,29 @@ Equation description: "${aiEquationPrompt}"`
       if (node.nodeType === 3) node = node.parentNode
       const parentElem = node ? (node.nodeType === 1 ? node : node.parentElement) : null
       const listItem = parentElem ? parentElem.closest('li') : null
+      const codeBlock = parentElem ? (parentElem.closest('.obe-code-block') || parentElem.closest('.obe-code-snippet-container') || parentElem.closest('pre') || parentElem.closest('code')) : null
+
+      // If inside code block in the editor:
+      if (codeBlock) {
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          e.stopPropagation()
+          if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+            editor.formatter.saveData()
+          }
+          editor.executeCommand('insertHTML', '&nbsp;&nbsp;&nbsp;&nbsp;')
+          return
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+            editor.formatter.saveData()
+          }
+          editor.executeCommand('insertHTML', '<br>')
+          return
+        }
+      }
 
       // ══════════════════════════════════════════════════════════
       // 1. BACKSPACE KEY (MS Word: Erase empty list item 2. or outdent sublist)
@@ -1801,9 +3901,11 @@ Equation description: "${aiEquationPrompt}"`
       }
     }
 
-    // Attach click, dblclick, and keydown handlers to RTE container & iframe
+    // Attach click, dblclick, and keydown handlers to window (capture), RTE container & iframe
     let iframeDoc = null
     const timer = setTimeout(() => {
+      window.addEventListener('keydown', handleMsWordKeyboard, true)
+
       const container = document.querySelector('.e-richtexteditor .e-rte-content')
       if (container) {
         container.addEventListener('click', handleEditorClicks)
@@ -1818,10 +3920,12 @@ Equation description: "${aiEquationPrompt}"`
         iframeDoc.addEventListener('dblclick', handleEditorClicks)
         iframeDoc.addEventListener('keydown', handleMsWordKeyboard, true)
       }
-    }, 500)
+    }, 400)
 
     return () => {
       clearTimeout(timer)
+      window.removeEventListener('keydown', handleMsWordKeyboard, true)
+
       const container = document.querySelector('.e-richtexteditor .e-rte-content')
       if (container) {
         container.removeEventListener('click', handleEditorClicks)
@@ -1835,6 +3939,316 @@ Equation description: "${aiEquationPrompt}"`
       }
     }
   }, [editorValue, loading])
+
+  // Word-Style Editable Font Size Combobox: Direct number typing + dropdown list
+  useEffect(() => {
+    let menuEl = document.getElementById('word-fontsize-menu')
+    if (!menuEl) {
+      menuEl = document.createElement('div')
+      menuEl.id = 'word-fontsize-menu'
+      menuEl.className = 'word-fontsize-menu'
+      menuEl.style.display = 'none'
+
+      const standardSizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]
+      menuEl.innerHTML = standardSizes.map(sz => `
+        <div class="word-fontsize-menu-item" data-val="${sz}">${sz}</div>
+      `).join('')
+
+      document.body.appendChild(menuEl)
+    }
+
+    const handleMenuMouseDown = (e) => {
+      // Prevent mousedown from blurring editor selection
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    menuEl.addEventListener('mousedown', handleMenuMouseDown)
+
+    const handleMenuClick = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const item = e.target.closest('.word-fontsize-menu-item')
+      if (item) {
+        const val = item.getAttribute('data-val')
+        if (val) {
+          const inputs = document.querySelectorAll('.word-fontsize-input')
+          inputs.forEach(inp => { inp.value = val })
+          applyCustomFontSize(val)
+          menuEl.style.display = 'none'
+          const editor = rteRef.current
+          if (editor && typeof editor.focusIn === 'function') {
+            editor.focusIn()
+          }
+        }
+      }
+    }
+    menuEl.addEventListener('click', handleMenuClick)
+
+    const handleDocumentClick = (e) => {
+      const clickedInsidePicker = e.target.closest && e.target.closest('.word-fontsize-wrapper')
+      if (clickedInsidePicker) return
+      if (menuEl && menuEl.contains(e.target)) return
+      if (menuEl) menuEl.style.display = 'none'
+    }
+    document.addEventListener('mousedown', handleDocumentClick)
+
+    const setupPickerEvents = () => {
+      const wrappers = document.querySelectorAll('.word-fontsize-wrapper')
+      wrappers.forEach(wrapper => {
+        if (wrapper.getAttribute('data-initialized') === 'true') return
+        wrapper.setAttribute('data-initialized', 'true')
+
+        const input = wrapper.querySelector('.word-fontsize-input')
+        const btn = wrapper.querySelector('.word-fontsize-btn')
+        if (!input || !btn) return
+
+        const toggleDropdown = (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+
+          const doc = rteRef.current?.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : document
+          const sel = doc ? doc.getSelection() : window.getSelection()
+          const editPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+          if (sel && sel.rangeCount > 0 && editPanel && editPanel.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+            savedEditorRangeRef.current = sel.getRangeAt(0).cloneRange()
+          }
+
+          if (menuEl.style.display === 'block') {
+            menuEl.style.display = 'none'
+          } else {
+            const rect = wrapper.getBoundingClientRect()
+            menuEl.style.top = `${rect.bottom + 2}px`
+            menuEl.style.left = `${rect.left}px`
+            menuEl.style.display = 'block'
+
+            const curVal = input.value.trim()
+            menuEl.querySelectorAll('.word-fontsize-menu-item').forEach(el => {
+              if (el.getAttribute('data-val') === curVal) {
+                el.classList.add('active')
+              } else {
+                el.classList.remove('active')
+              }
+            })
+          }
+        }
+
+        btn.onmousedown = toggleDropdown
+        btn.onclick = (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+
+        input.onfocus = () => {
+          const doc = rteRef.current?.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : document
+          const sel = doc ? doc.getSelection() : window.getSelection()
+          const editPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+          if (sel && sel.rangeCount > 0 && editPanel && editPanel.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+            savedEditorRangeRef.current = sel.getRangeAt(0).cloneRange()
+          }
+          input.select()
+        }
+
+        const commitInput = () => {
+          const raw = input.value.replace(/[^\d\.]/g, '').trim()
+          let num = parseFloat(raw)
+          if (isNaN(num) || num < 4 || num > 144) {
+            num = 12
+          }
+          input.value = `${num}`
+          applyCustomFontSize(num)
+        }
+
+        input.onkeydown = (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            e.stopPropagation()
+            commitInput()
+            menuEl.style.display = 'none'
+            const editor = rteRef.current
+            if (editor && typeof editor.focusIn === 'function') {
+              editor.focusIn()
+            }
+          } else if (e.key === 'Escape') {
+            menuEl.style.display = 'none'
+            input.blur()
+          }
+        }
+
+        input.onblur = () => {
+          commitInput()
+        }
+      })
+    }
+
+    const interval = setInterval(setupPickerEvents, 300)
+
+    // Sync input value with current selection font size
+    const handleSelectionSync = () => {
+      const editor = rteRef.current
+      if (!editor) return
+
+      const activeInp = document.activeElement
+      if (activeInp && activeInp.classList.contains('word-fontsize-input')) {
+        return
+      }
+
+      const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const sel = doc ? doc.getSelection() : window.getSelection()
+      if (!sel || !sel.rangeCount) return
+
+      savedEditorRangeRef.current = sel.getRangeAt(0).cloneRange()
+
+      let node = sel.getRangeAt(0).startContainer
+      if (node && node.nodeType === 3) node = node.parentNode
+      if (!node) return
+
+      const win = doc?.defaultView || window
+      let ptNum = ''
+
+      const elWithInline = node.closest ? node.closest('[style*="font-size"]') : null
+      if (elWithInline && elWithInline.style?.fontSize) {
+        const fs = elWithInline.style.fontSize
+        if (fs.endsWith('pt')) ptNum = String(parseFloat(fs))
+        else if (fs.endsWith('px')) ptNum = String(Math.round(parseFloat(fs) * 0.75))
+      }
+
+      if (!ptNum && win.getComputedStyle) {
+        try {
+          const comp = win.getComputedStyle(node).fontSize
+          if (comp) {
+            if (comp.endsWith('px')) ptNum = String(Math.round(parseFloat(comp) * 0.75))
+            else if (comp.endsWith('pt')) ptNum = String(parseFloat(comp))
+          }
+        } catch (e) {}
+      }
+
+      // Default fallback is always 12pt Times New Roman standard
+      if (!ptNum || isNaN(parseFloat(ptNum))) {
+        ptNum = '12'
+      }
+
+      const inputs = document.querySelectorAll('.word-fontsize-input')
+      inputs.forEach(inp => {
+        if (document.activeElement !== inp) {
+          inp.value = ptNum
+        }
+      })
+    }
+
+    // Delegated click on Syncfusion Line Height dropdown list item
+    const handleLineHeightDropdownClick = (e) => {
+      const item = e.target.closest('.e-dropdown-popup li.e-item, .e-dropdown-popup .e-item')
+      if (!item) return
+      const text = item.textContent?.trim()
+      const heights = ['Default', '1', '1.15', '1.5', '2', '2.5', '3']
+      if (heights.includes(text)) {
+        const popup = item.closest('.e-dropdown-popup')
+        const activeBtn = document.querySelector('.e-toolbar-item button[id*="LineHeight"].e-active, .e-toolbar-item button[id*="lineheight"].e-active')
+        const isLineHeight = activeBtn || (popup && popup.id && popup.id.toLowerCase().includes('lineheight'))
+        if (isLineHeight || heights.slice(1).includes(text)) {
+          const val = text === 'Default' ? '' : text
+          applySelectedLineHeight(val)
+        }
+      }
+    }
+
+    // Global Ctrl+Z / Ctrl+Y undo/redo shortcut handler for Question Paper Editor
+    const handleGlobalUndoRedo = (e) => {
+      const active = document.activeElement
+      // If user is typing in a native input/textarea outside the editor, preserve default browser behavior
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && !active.closest('.e-rte-content')) {
+        return
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        const editor = rteRef.current
+        if (!editor) return
+        e.preventDefault()
+        e.stopPropagation()
+
+        if (e.shiftKey) {
+          // Redo
+          try {
+            if (editor.formatter?.editorManager?.undoRedoManager) {
+              editor.formatter.editorManager.undoRedoManager.redo({
+                callBack: () => {
+                  if (editor.notify) editor.notify('contentChanged', {})
+                  const p = editor.contentModule?.getEditPanel?.()
+                  if (p) setEditorValue(p.innerHTML)
+                }
+              })
+            } else if (editor.executeCommand) {
+              editor.executeCommand('redo')
+            }
+          } catch (err) {
+            console.warn('Global redo error:', err)
+          }
+        } else {
+          // Undo
+          try {
+            if (editor.formatter?.editorManager?.undoRedoManager) {
+              editor.formatter.editorManager.undoRedoManager.undo({
+                callBack: () => {
+                  if (editor.notify) editor.notify('contentChanged', {})
+                  const p = editor.contentModule?.getEditPanel?.()
+                  if (p) setEditorValue(p.innerHTML)
+                }
+              })
+            } else if (editor.executeCommand) {
+              editor.executeCommand('undo')
+            }
+          } catch (err) {
+            console.warn('Global undo error:', err)
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        const active = document.activeElement
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && !active.closest('.e-rte-content')) {
+          return
+        }
+        const editor = rteRef.current
+        if (!editor) return
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          if (editor.formatter?.editorManager?.undoRedoManager) {
+            editor.formatter.editorManager.undoRedoManager.redo({
+              callBack: () => {
+                if (editor.notify) editor.notify('contentChanged', {})
+                const p = editor.contentModule?.getEditPanel?.()
+                if (p) setEditorValue(p.innerHTML)
+              }
+            })
+          } else if (editor.executeCommand) {
+            editor.executeCommand('redo')
+          }
+        } catch (err) {
+          console.warn('Global redo error:', err)
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleGlobalUndoRedo, true)
+    document.addEventListener('click', handleLineHeightDropdownClick, true)
+    document.addEventListener('selectionchange', handleSelectionSync)
+    document.addEventListener('mouseup', handleSelectionSync)
+    document.addEventListener('keyup', handleSelectionSync)
+
+    return () => {
+      clearInterval(interval)
+      menuEl.removeEventListener('mousedown', handleMenuMouseDown)
+      menuEl.removeEventListener('click', handleMenuClick)
+      document.removeEventListener('keydown', handleGlobalUndoRedo, true)
+      document.removeEventListener('click', handleLineHeightDropdownClick, true)
+      document.removeEventListener('mousedown', handleDocumentClick)
+      document.removeEventListener('selectionchange', handleSelectionSync)
+      document.removeEventListener('mouseup', handleSelectionSync)
+      document.removeEventListener('keyup', handleSelectionSync)
+      if (menuEl && menuEl.parentNode) {
+        menuEl.parentNode.removeChild(menuEl)
+      }
+    }
+  }, [applyCustomFontSize])
 
   useEffect(() => {
     loadPaperData()
@@ -1859,12 +4273,14 @@ Equation description: "${aiEquationPrompt}"`
     }
   }, [isFullscreen])
 
-  // Close AI menu when clicking outside
+  // Close AI menus when clicking outside
   useEffect(() => {
-    if (!showAiMenu) return
+    if (!showAiMenu && !showFloatingAiMenu) return
     const handleClickOutside = (e) => {
-      if (!e.target.closest('.ai-command-menu') && !e.target.closest('#ai-commands-btn')) {
+      if (!e.target.closest('.ai-command-menu') && !e.target.closest('#ai-commands-btn') && !e.target.closest('#floating-ai-assistant-btn')) {
         setShowAiMenu(false)
+        setShowFloatingAiMenu(false)
+        setActiveAiSubmenu(null)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -1884,7 +4300,1155 @@ Equation description: "${aiEquationPrompt}"`
         } catch (err) {}
       }
     }
-  }, [showAiMenu])
+  }, [showAiMenu, showFloatingAiMenu])
+
+  // Helpers for Selection-based AI Tag Verifier
+  const getConfidenceBadgeClass = useCallback((confidence = 0) => {
+    if (confidence >= 0.7) return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    if (confidence >= 0.4) return 'bg-amber-50 text-amber-700 border-amber-200'
+    return 'bg-gray-100 text-gray-600 border-gray-200'
+  }, [])
+
+  const getCoDescription = useCallback((code) => {
+    if (!code) return ''
+    const item = (coDetails || []).find(c => c && (c.code || c.id) && (c.code || c.id).toUpperCase() === code.toUpperCase())
+    if (item && item.description) return item.description
+    const rankItem = aiVerifyResult?.co?.rankings?.find(r => r && r.code && r.code.toUpperCase() === code.toUpperCase())
+    if (rankItem && rankItem.description) return rankItem.description
+    if (aiVerifyResult?.co?.description) return aiVerifyResult.co.description
+    return `Course Outcome ${code}`
+  }, [coDetails, aiVerifyResult])
+
+  const calculateClampedPosition = useCallback((rect, isPopover = false) => {
+    if (!rect) return { top: 60, left: 100 }
+    const width = isPopover ? 430 : 256
+    const height = isPopover ? 520 : 42
+    const pad = 16
+
+    const iframe = document.querySelector('.e-rte-content iframe, iframe.e-rte-frame')
+    let iframeLeft = 0
+    let iframeTop = 0
+    if (iframe) {
+      const ifRect = iframe.getBoundingClientRect()
+      iframeLeft = ifRect.left
+      iframeTop = ifRect.top
+    }
+
+    let left = 0
+    let top = 0
+
+    if (isPopover) {
+      const rightSpace = window.innerWidth - (rect.right + iframeLeft)
+      if (rightSpace >= 450) {
+        left = rect.right + iframeLeft + 20
+      } else if (rect.left + iframeLeft >= 450) {
+        left = rect.left + iframeLeft - 430 - 20
+      } else {
+        left = rect.left + iframeLeft + (rect.width / 2) - (430 / 2)
+      }
+      left = Math.max(pad, Math.min(window.innerWidth - 430 - pad, left))
+      top = rect.top + iframeTop - 10
+      top = Math.max(pad, Math.min(window.innerHeight - 520 - pad, top))
+    } else {
+      // Position to the side of the selection so the question text is NOT covered
+      const rightSpace = window.innerWidth - (rect.right + iframeLeft)
+      if (rightSpace >= 280) {
+        // Generous room to the right of the selected text
+        left = rect.right + iframeLeft + 24
+      } else if (rect.left + iframeLeft >= 280) {
+        // Room to the left of the selected text
+        left = rect.left + iframeLeft - 180
+      } else {
+        // Fallback: place towards the right edge of viewport with padding
+        left = window.innerWidth - 200
+      }
+      // Ensure the centered 256px menu won't overflow screen left/right
+      left = Math.max(140, Math.min(window.innerWidth - 150, left))
+
+      // Align vertically with the question line
+      top = rect.top + iframeTop - 4
+      top = Math.max(50, Math.min(window.innerHeight - 80, top))
+    }
+
+    return { top, left }
+  }, [])
+
+  const handleCloseAiVerify = useCallback(() => {
+    setShowAiVerifyPopover(false)
+    setShowFloatingAiMenu(false)
+    setIsContextMenuTriggered(false)
+    showFloatingAiMenuRef.current = false
+    isContextMenuTriggeredRef.current = false
+    setAiVerifySelection(null)
+    setAiVerifyResult(null)
+    setAiVerifySuccessMsg('')
+    setPopoverPos(null)
+    setFloatingBtnPos(null)
+    userMovedFloatingBtnRef.current = false
+  }, [])
+
+
+
+  const handleDragStart = useCallback((e) => {
+    if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select')) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    isDraggingRef.current = true
+    const currentLeft = popoverPos?.left ?? 100
+    const currentTop = popoverPos?.top ?? 60
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialLeft: currentLeft,
+      initialTop: currentTop
+    }
+
+    const handleMouseMove = (moveEv) => {
+      if (!isDraggingRef.current) return
+      const dx = moveEv.clientX - dragStartRef.current.startX
+      const dy = moveEv.clientY - dragStartRef.current.startY
+      const width = 430
+      const height = 520
+      const pad = 8
+
+      const newLeft = Math.max(pad, Math.min(window.innerWidth - width - pad, dragStartRef.current.initialLeft + dx))
+      const newTop = Math.max(pad, Math.min(window.innerHeight - height - pad, dragStartRef.current.initialTop + dy))
+
+      setPopoverPos({ left: newLeft, top: newTop })
+    }
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [popoverPos])
+
+  // Listen for text selection inside the Question Paper Content editor / table cells
+  useEffect(() => {
+    let selectionTimeout = null
+
+    const handleSelectionCheck = () => {
+      if (showFloatingAiMenuRef.current || isContextMenuTriggeredRef.current || showAiVerifyPopoverRef.current || isDraggingBtnRef.current) {
+        return
+      }
+      clearTimeout(selectionTimeout)
+      selectionTimeout = setTimeout(() => {
+        if (showFloatingAiMenuRef.current || isContextMenuTriggeredRef.current || showAiVerifyPopoverRef.current || isDraggingBtnRef.current) {
+          return
+        }
+
+
+        const editor = rteRef.current
+        if (!editor) return
+
+        const editorDoc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+        const sel = (editorDoc && editorDoc.getSelection) ? editorDoc.getSelection() : window.getSelection()
+
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+          setAiVerifySelection(null)
+          userMovedFloatingBtnRef.current = false
+          setFloatingBtnPos(null)
+          return
+        }
+
+        const text = sel.toString().trim()
+        if (text.length <= 10) {
+          setAiVerifySelection(null)
+          userMovedFloatingBtnRef.current = false
+          setFloatingBtnPos(null)
+          return
+        }
+
+        const range = sel.getRangeAt(0)
+        const common = range.commonAncestorContainer
+        const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+
+        if (!editPanel || (!editPanel.contains(common) && editPanel !== common)) {
+          setAiVerifySelection(null)
+          userMovedFloatingBtnRef.current = false
+          setFloatingBtnPos(null)
+          return
+        }
+
+        // Identify target container element (cell or paragraph)
+        let container = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement
+        while (container && container !== editPanel && !['TD', 'TH', 'P', 'LI', 'DIV'].includes(container.tagName)) {
+          container = container.parentElement
+        }
+
+        // Try to identify target question number (e.g. Q1, Q2)
+        let qNumStr = null
+        let qIndex = null
+
+        const tr = container ? container.closest('tr') : null
+        if (tr) {
+          let curr = tr
+          while (curr) {
+            const firstCol = curr.querySelector('td')
+            const textContent = firstCol ? firstCol.textContent.trim() : ''
+            const match = textContent.match(/^(?:Q\s*)?(\d+)/i)
+            if (match) {
+              const num = parseInt(match[1])
+              qNumStr = `Q${num}`
+              qIndex = num - 1
+              break
+            }
+            curr = curr.previousElementSibling
+          }
+        }
+
+        if (!qNumStr && container) {
+          const match = container.textContent.trim().match(/^(?:Q(?:uestion)?\s*(\d+)|\b(\d+)[\.\)])/i)
+          if (match) {
+            const num = parseInt(match[1] || match[2])
+            qNumStr = `Q${num}`
+            qIndex = num - 1
+          }
+        }
+
+        // Extract existing tag from container if present
+        let existingCo = null
+        let existingBloom = null
+        const cellOrContainer = container ? (container.closest('td, li, p') || container) : null
+        const tagSpan = cellOrContainer ? cellOrContainer.querySelector('.co-bloom-tag') : null
+        if (tagSpan) {
+          const spanText = tagSpan.textContent || ''
+          const coMatch = spanText.match(/CO\d+/i)
+          const bloomMatch = spanText.match(/C[1-6]/i)
+          if (coMatch) existingCo = coMatch[0].toUpperCase()
+          if (bloomMatch) existingBloom = bloomMatch[0].toUpperCase()
+        } else if (cellOrContainer) {
+          const rawMatch = cellOrContainer.textContent.match(/\[(?:(CO\d+))?(?:\s*(?:->|→)\s*)?(C[1-6])?\]/i)
+          if (rawMatch) {
+            if (rawMatch[1]) existingCo = rawMatch[1].toUpperCase()
+            if (rawMatch[2]) existingBloom = rawMatch[2].toUpperCase()
+          }
+        }
+
+        // Compute floating coordinates with strict viewport clamping
+        const rect = range.getBoundingClientRect()
+        if (!rect || (rect.width === 0 && rect.height === 0)) {
+          setAiVerifySelection(null)
+          userMovedFloatingBtnRef.current = false
+          setFloatingBtnPos(null)
+          return
+        }
+
+        const btnPos = calculateClampedPosition(rect, false)
+        if (!userMovedFloatingBtnRef.current) {
+          setFloatingBtnPos(btnPos)
+        }
+
+        lastSelectionRangeRef.current = range.cloneRange()
+        setAiVerifySelection({
+          selectedText: text,
+          position: userMovedFloatingBtnRef.current && floatingBtnPos ? floatingBtnPos : btnPos,
+          targetInfo: {
+            containerElement: container,
+            questionNumber: qNumStr,
+            questionIndex: qIndex,
+
+            existingCo,
+            existingBloom,
+            tagSpan
+          }
+        })
+      }, 180)
+    }
+
+    const handleClickOutsideVerify = (e) => {
+      // Don't close on right-click (button 2)
+      if (e.button === 2) return
+      if (isDraggingRef.current || isDraggingBtnRef.current) return
+      if (aiVerifyPopoverRef.current && aiVerifyPopoverRef.current.contains(e.target)) {
+        return
+      }
+      if (e.target && e.target.closest && (
+        e.target.closest('#floating-ai-assistant-wrapper') ||
+        e.target.closest('#floating-ai-assistant-btn') ||
+        e.target.closest('.ai-command-menu') ||
+        e.target.closest('#ai-commands-btn') ||
+        e.target.closest('.e-toolbar') ||
+        e.target.closest('.word-fontsize-wrapper') ||
+        e.target.closest('#word-fontsize-menu')
+      )) {
+        return
+      }
+      handleCloseAiVerify()
+    }
+
+    const handleKeyDownVerify = (e) => {
+      if (e.key === 'Escape') {
+        handleCloseAiVerify()
+      }
+    }
+
+    const handleContextMenu = (e) => {
+      const editor = rteRef.current
+      if (!editor) return
+      const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+      const rteWrapper = document.querySelector('.e-richtexteditor')
+
+      // Only trigger if right-clicked inside the editor content or wrapper
+      const isInside = (editPanel && (editPanel.contains(e.target) || editPanel === e.target)) ||
+                       (rteWrapper && (rteWrapper.contains(e.target) || rteWrapper === e.target))
+      if (!isInside) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      // Calculate coordinates: only add iframe offset if event was dispatched inside an iframe document
+      let clientX = e.clientX
+      let clientY = e.clientY
+
+      if (e.target.ownerDocument && e.target.ownerDocument !== document) {
+        const iframe = document.querySelector('.e-rte-content iframe, iframe.e-rte-frame, .e-richtexteditor iframe')
+        if (iframe) {
+          const ifRect = iframe.getBoundingClientRect()
+          clientX += ifRect.left
+          clientY += ifRect.top
+        }
+      }
+
+      const menuWidth = 260
+      const menuHeight = 360
+      const pad = 16
+
+      let left = clientX
+      let top = clientY
+
+      // Clamp horizontally so menu doesn't overflow right edge
+      if (left + menuWidth > window.innerWidth - pad) {
+        left = window.innerWidth - menuWidth - pad
+      }
+      left = Math.max(pad, left)
+
+      // Clamp vertically so menu doesn't overflow bottom edge
+      if (top + menuHeight > window.innerHeight - pad) {
+        top = window.innerHeight - menuHeight - pad
+      }
+      top = Math.max(pad, top)
+
+      const targetPos = { left, top }
+      setFloatingBtnPos(targetPos)
+      userMovedFloatingBtnRef.current = true
+      isContextMenuTriggeredRef.current = true
+      showFloatingAiMenuRef.current = true
+      setIsContextMenuTriggered(true)
+      setShowFloatingAiMenu(true)
+      setShowAiVerifyPopover(false)
+    }
+
+
+    document.addEventListener('mouseup', handleSelectionCheck)
+    document.addEventListener('keyup', handleSelectionCheck)
+    document.addEventListener('selectionchange', handleSelectionCheck)
+    document.addEventListener('mousedown', handleClickOutsideVerify)
+    document.addEventListener('contextmenu', handleContextMenu)
+    window.addEventListener('keydown', handleKeyDownVerify)
+
+    const editorDoc = rteRef.current?.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : null
+    if (editorDoc && editorDoc !== document) {
+      try {
+        editorDoc.addEventListener('mouseup', handleSelectionCheck)
+        editorDoc.addEventListener('keyup', handleSelectionCheck)
+        editorDoc.addEventListener('selectionchange', handleSelectionCheck)
+        editorDoc.addEventListener('mousedown', handleClickOutsideVerify)
+        editorDoc.addEventListener('contextmenu', handleContextMenu)
+        editorDoc.addEventListener('keydown', handleKeyDownVerify)
+      } catch (err) {}
+    }
+
+    return () => {
+      clearTimeout(selectionTimeout)
+      document.removeEventListener('mouseup', handleSelectionCheck)
+      document.removeEventListener('keyup', handleSelectionCheck)
+      document.removeEventListener('selectionchange', handleSelectionCheck)
+      document.removeEventListener('mousedown', handleClickOutsideVerify)
+      document.removeEventListener('contextmenu', handleContextMenu)
+      window.removeEventListener('keydown', handleKeyDownVerify)
+      if (editorDoc && editorDoc !== document) {
+        try {
+          editorDoc.removeEventListener('mouseup', handleSelectionCheck)
+          editorDoc.removeEventListener('keyup', handleSelectionCheck)
+          editorDoc.removeEventListener('selectionchange', handleSelectionCheck)
+          editorDoc.removeEventListener('mousedown', handleClickOutsideVerify)
+          editorDoc.removeEventListener('contextmenu', handleContextMenu)
+          editorDoc.removeEventListener('keydown', handleKeyDownVerify)
+        } catch (err) {}
+      }
+    }
+
+  }, [handleCloseAiVerify, calculateClampedPosition])
+
+  // Trigger AI metadata analysis from local NLP microservice
+  const handleTriggerAiVerify = useCallback(async () => {
+    let selText = aiVerifySelection?.selectedText || ''
+    let rect = null
+
+    if (!selText && rteRef.current) {
+      const editorDoc = rteRef.current.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : null
+      const sel = (editorDoc && editorDoc.getSelection) ? editorDoc.getSelection() : window.getSelection()
+      selText = sel ? sel.toString().trim() : ''
+      if (sel && sel.rangeCount > 0) {
+        rect = sel.getRangeAt(0).getBoundingClientRect()
+      }
+    }
+
+    if (!selText) {
+      alert('Please select a question or line of text first to verify its CO & Bloom level.')
+      return
+    }
+
+    setShowFloatingAiMenu(false)
+    setShowAiMenu(false)
+
+    // Immediately compute perfectly clamped coordinates for the expanded popover card
+    const targetRect = rect || (lastSelectionRangeRef.current ? lastSelectionRangeRef.current.getBoundingClientRect() : null)
+    setPopoverPos(calculateClampedPosition(targetRect, true))
+
+    setShowAiVerifyPopover(true)
+    setAiVerifyLoading(true)
+    setAiVerifyResult(null)
+    setAiVerifySuccessMsg('')
+
+    try {
+      const token = localStorage.getItem('obe-auth-token')
+      const outcomesPayload = (coDetails && coDetails.length > 0)
+        ? coDetails
+        : availableCOs.map(c => ({ code: c, description: `Course Outcome description for ${offering?.course?.title || c}` }))
+
+      const res = await fetch(`${API_BASE}/api/ai/suggest-metadata`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          questionText: aiVerifySelection.selectedText,
+          courseOutcomes: outcomesPayload
+        })
+      })
+
+      const data = await res.json()
+      if (data && data.success) {
+        setAiVerifyResult({
+          bloom: data.bloom,
+          co: data.co
+        })
+      } else {
+        alert(data?.message || 'Failed to analyze question with OBE AI Engine.')
+        setShowAiVerifyPopover(false)
+      }
+    } catch (err) {
+      console.error('AI Verify error:', err)
+      alert('Failed to connect to AI metadata verification service: ' + err.message)
+      setShowAiVerifyPopover(false)
+    } finally {
+      setAiVerifyLoading(false)
+    }
+  }, [aiVerifySelection, calculateClampedPosition, coDetails, availableCOs, offering])
+
+  // Helper: Trigger AI Tag Verifier for newly inserted suggested question text
+  const triggerAiVerifyForText = useCallback(async (text, rect = null) => {
+    if (!text) return
+    const btnPos = calculateClampedPosition(rect, false)
+    setFloatingBtnPos(btnPos)
+    const cardPos = calculateClampedPosition(rect, true)
+    setPopoverPos(cardPos)
+
+    const selObj = {
+      selectedText: text,
+      position: btnPos,
+      targetInfo: {
+        questionNumber: null,
+        existingCo: null,
+        existingBloom: null
+      }
+    }
+    setAiVerifySelection(selObj)
+    setShowAiVerifyPopover(true)
+    setAiVerifyLoading(true)
+    setAiVerifyResult(null)
+    setAiVerifySuccessMsg('')
+
+    try {
+      const token = localStorage.getItem('obe-auth-token')
+      const outcomesPayload = (coDetails && coDetails.length > 0)
+        ? coDetails
+        : availableCOs.map(c => ({ code: c, description: `Course Outcome description for ${offering?.course?.title || c}` }))
+
+      const res = await fetch(`${API_BASE}/api/ai/suggest-metadata`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          questionText: text,
+          courseOutcomes: outcomesPayload
+        })
+      })
+
+      const data = await res.json()
+      if (data && data.success) {
+        setAiVerifyResult({
+          bloom: data.bloom,
+          co: data.co
+        })
+      }
+    } catch (err) {
+      console.warn('Auto AI Verify error on note insert:', err)
+    } finally {
+      setAiVerifyLoading(false)
+    }
+  }, [calculateClampedPosition, coDetails, availableCOs, offering])
+
+  // Fetch reference notes status for current course on load (shared across sections of same course)
+  const refreshNotesStatus = useCallback(() => {
+    if (notesCourseId) {
+      const cached = getCachedNotesStatus(notesCourseId)
+      if (cached && cached.hasNotes) {
+        setNotesStatusInfo(cached)
+      }
+      getNotesStatus(notesCourseId).then(data => {
+        if (data && typeof data === 'object') {
+          setNotesStatusInfo(data)
+        }
+      }).catch(err => {
+        console.warn('Failed to load notes status:', err)
+        setNotesStatusInfo(getCachedNotesStatus(notesCourseId))
+      })
+    }
+  }, [notesCourseId])
+
+  useEffect(() => {
+    refreshNotesStatus()
+  }, [refreshNotesStatus])
+
+  // Auto-retry fetching notes if not yet loaded (handles ML service still booting up)
+  useEffect(() => {
+    if (notesStatusInfo?.hasNotes || !notesCourseId) return
+
+    const timer1 = setTimeout(() => {
+      refreshNotesStatus()
+    }, 2000)
+
+    const timer2 = setTimeout(() => {
+      refreshNotesStatus()
+    }, 5000)
+
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+    }
+  }, [notesCourseId, notesStatusInfo?.hasNotes, refreshNotesStatus])
+
+  useEffect(() => {
+    const handleNotesUpdated = (e) => {
+      if (!e.detail?.courseId || e.detail.courseId === notesCourseId) {
+        refreshNotesStatus()
+      }
+    }
+    const handleFocus = () => {
+      refreshNotesStatus()
+    }
+    window.addEventListener('teacher_notes_updated', handleNotesUpdated)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      window.removeEventListener('teacher_notes_updated', handleNotesUpdated)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [notesCourseId, refreshNotesStatus])
+
+  // Real-time debounced typing listener (450ms) for Teacher's Reference Notes Question Auto-Suggestion
+  // Real-time debounced typing listener (450ms) for Teacher's Reference Notes Question Auto-Suggestion
+  // Dual-Layer Optimization: Manual toggle gate (Layer 1) + Debounce & AbortController (Layer 2)
+  useEffect(() => {
+    if (!notesStatusInfo?.hasNotes || !isLiveSuggestActive) return
+
+    const executeSuggestQuery = async () => {
+      const activeEl = document.activeElement
+      let activeLineText = ''
+      let currentPrefix = ''
+      let targetObj = null
+
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        if (activeEl.type === 'number' || activeEl.type === 'password') return
+        activeLineText = (activeEl.value || '').trim()
+        targetObj = { type: 'element', element: activeEl }
+      } else {
+        const editor = rteRef.current
+        if (editor) {
+          const editorDoc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+          const sel = (editorDoc && editorDoc.getSelection) ? editorDoc.getSelection() : window.getSelection()
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0)
+            const node = range.startContainer
+            const fullText = (node.nodeType === Node.TEXT_NODE ? node.textContent : node.innerText) || ''
+            
+            if (node.nodeType === Node.TEXT_NODE) {
+              const beforeCursor = fullText.slice(0, range.startOffset ?? fullText.length)
+              const lastBreak = Math.max(beforeCursor.lastIndexOf('\n'), beforeCursor.lastIndexOf('\r'))
+              activeLineText = (lastBreak >= 0 ? beforeCursor.slice(lastBreak + 1) : beforeCursor).trim()
+              if (!activeLineText) activeLineText = fullText.trim()
+            } else {
+              activeLineText = fullText.trim()
+            }
+
+            targetObj = { type: 'rteNode', node, range: range.cloneRange() }
+          }
+        }
+      }
+
+      // Detect and isolate question marker (e.g. "12 ", "3. ", "Q2: ", "a) ", "1.b) ")
+      const prefixMatch = activeLineText.match(/^(\s*(?:(?:Question|Que|Prob|Problem|Q)\s*(?:#|\.)?\s*\d+[:\.\s]|\d+(?:\.\d+)*\s*[-—–]\s*(?:NEW|OLD|REVISED)\s*|\d+[\.\)]\s*|\d+\s+|\([a-zA-Z0-9]+\)\s*|[a-zA-Z][\.\)]\s*))\s*/i)
+      if (prefixMatch) {
+        currentPrefix = prefixMatch[1].trim()
+        activeLineText = activeLineText.slice(prefixMatch[0].length).trim()
+      }
+
+      if (targetObj) {
+        targetObj.currentPrefix = currentPrefix
+        targetObj.queryText = activeLineText
+
+        // Capture current active font family, font size, and color directly from typing position
+        try {
+          const editorDoc = rteRef.current?.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : document
+          const win = editorDoc?.defaultView || window
+          const activeElem = targetObj.node?.nodeType === Node.ELEMENT_NODE ? targetObj.node : targetObj.node?.parentElement
+          if (activeElem) {
+            const comp = win.getComputedStyle(activeElem)
+            targetObj.fontSize = comp.fontSize || '12pt'
+            targetObj.fontFamily = comp.fontFamily || "'Times New Roman', Times, serif"
+            targetObj.color = comp.color || '#000000'
+            targetObj.lineHeight = comp.lineHeight || '1.5'
+          }
+        } catch (e) {}
+      }
+
+      // Allow keyword queries with at least 2 characters (e.g. 'what', 'how', 'explain', 'oop', 'class')
+      if (!activeLineText || activeLineText.length < 2) {
+        setActiveNoteSuggestions([])
+        setShowAllSuggestions(false)
+        return
+      }
+
+      // Abort previous in-flight request before dispatching a new one
+      suggestAbortRef.current?.abort()
+      suggestAbortRef.current = new AbortController()
+
+      // Monotonic request ID counter for race condition prevention
+      const thisRequestId = ++suggestRequestIdRef.current
+
+      try {
+        const suggestions = await suggestQuestionsFromNotes(
+          notesCourseId,
+          activeLineText,
+          20,
+          suggestAbortRef.current.signal
+        )
+
+        // Stale response guard: ensure only the latest request updates the UI
+        if (thisRequestId !== suggestRequestIdRef.current) return
+
+        if (suggestions && suggestions.length > 0) {
+          setActiveNoteSuggestions(suggestions)
+          setActiveInputTarget(targetObj)
+        } else {
+          setActiveNoteSuggestions([])
+          setShowAllSuggestions(false)
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return
+        console.warn('Reference notes suggest error:', err)
+      }
+    }
+
+    const handleTypingQuery = (e) => {
+      if (e.key === 'Escape') {
+        setActiveNoteSuggestions([])
+        setShowAllSuggestions(false)
+        return
+      }
+
+      clearTimeout(noteDebounceTimerRef.current)
+      noteDebounceTimerRef.current = setTimeout(executeSuggestQuery, 450)
+    }
+
+    // Immediately check and fetch suggestions for currently active line when Live is toggled ON
+    executeSuggestQuery()
+
+    document.addEventListener('keyup', handleTypingQuery)
+    document.addEventListener('input', handleTypingQuery)
+
+    const editor = rteRef.current
+    const editorDoc = editor?.contentModule?.getDocument ? editor.contentModule.getDocument() : null
+    if (editorDoc && editorDoc !== document) {
+      try {
+        editorDoc.addEventListener('keyup', handleTypingQuery)
+        editorDoc.addEventListener('input', handleTypingQuery)
+      } catch (e) {}
+    }
+
+    return () => {
+      clearTimeout(noteDebounceTimerRef.current)
+      suggestAbortRef.current?.abort()
+      document.removeEventListener('keyup', handleTypingQuery)
+      document.removeEventListener('input', handleTypingQuery)
+      if (editorDoc && editorDoc !== document) {
+        try {
+          editorDoc.removeEventListener('keyup', handleTypingQuery)
+          editorDoc.removeEventListener('input', handleTypingQuery)
+        } catch (e) {}
+      }
+    }
+  }, [notesStatusInfo, notesCourseId, isLiveSuggestActive])
+
+  // Layer 1 Cleanup: Immediately clear suggestions and cancel pending fetch when Live Suggest is toggled OFF
+  useEffect(() => {
+    if (!isLiveSuggestActive) {
+      clearTimeout(noteDebounceTimerRef.current)
+      suggestAbortRef.current?.abort()
+      setActiveNoteSuggestions([])
+      setShowAllSuggestions(false)
+    }
+  }, [isLiveSuggestActive])
+
+  // Handle "+ Insert Question" from reference notes sidebar panel & modal
+  const handleInsertNoteSuggestion = (suggestion) => {
+    if (!suggestion || !suggestion.questionText) return
+
+    let cleanText = stripQuestionLeadingNumber(suggestion.questionText)
+
+    // Parse scenario context and markdown table from the question
+    const parsed = parseScenarioAndTable(suggestion.questionText)
+    const effectiveQuestion = parsed.scenarioText ? parsed.questionText : cleanText
+    const detected = detectEmbeddedCodeInQuestion(effectiveQuestion)
+
+    let promptToInsert = detected.hasCode ? detected.promptText : effectiveQuestion
+    if (activeInputTarget?.currentPrefix) {
+      promptToInsert = `${activeInputTarget.currentPrefix} ${promptToInsert}`
+    }
+
+    // Determine target font styling (maintain 12pt Times New Roman standard)
+    let targetFontSize = activeInputTarget?.fontSize || '12pt'
+    if (targetFontSize === '13px' || targetFontSize === '14px') {
+      targetFontSize = '12pt'
+    }
+    const targetFontFamily = activeInputTarget?.fontFamily || "'Times New Roman', Times, serif"
+    const targetColor = activeInputTarget?.color || '#000000'
+    const targetLineHeight = activeInputTarget?.lineHeight || '1.5'
+
+    // Build scenario blockquote HTML if applicable
+    const scenarioHtml = parsed.scenarioText
+      ? `<blockquote style="margin:0 0 8px 0;padding:8px 14px;border-left:3px solid #6366f1;background:#eef2ff;font-family:${targetFontFamily};font-size:${targetFontSize};color:#312e81;line-height:${targetLineHeight};font-style:italic;">${parsed.scenarioText}</blockquote>`
+      : ''
+
+    // Build markdown table HTML if applicable
+    const tableHtml = parsed.markdownTable ? markdownTableToHtml(parsed.markdownTable) : ''
+
+    // 1. Fill or replace active HTML input / textarea
+    if (activeInputTarget?.type === 'element' && activeInputTarget.element) {
+      const el = activeInputTarget.element
+      // For plain text inputs, concatenate scenario + question + table as plain text
+      const fullContent = [
+        parsed.scenarioText ? `[Scenario: ${parsed.scenarioText}]` : '',
+        detected.hasCode ? `${promptToInsert}\n\n${detected.codeSnippet}` : promptToInsert,
+      ].filter(Boolean).join('\n')
+      el.value = fullContent
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      el.focus()
+      setActiveNoteSuggestions([])
+      setShowAllSuggestions(false)
+      return
+    }
+
+    // 2. Rich Text Editor Insertion & Replacement
+    const targetNode = activeInputTarget?.type === 'rteNode' ? activeInputTarget.node : null
+    const codeHtml = detected.hasCode
+      ? generateCodeSnippetHtml({
+          code: detected.codeSnippet,
+          language: detected.language || 'cpp',
+          alignment: 'center',
+          hasBorder: true,
+          boxStyle: 'exam',
+          showLineNumbers: false,
+          fontSize: '11pt'
+        })
+      : ''
+
+    let replacedDirectly = false
+
+    if (targetNode && targetNode.isConnected) {
+      try {
+        const pEl = targetNode.nodeType === Node.TEXT_NODE ? targetNode.parentElement : targetNode
+        const blockEl = pEl ? pEl.closest('p, div, td, th') : null
+
+        if (blockEl && (blockEl.tagName === 'P' || blockEl.tagName === 'DIV')) {
+          // Replace the paragraph where user typed query text (e.g. 'what will be')
+          blockEl.style.fontFamily = targetFontFamily
+          blockEl.style.fontSize = targetFontSize
+          blockEl.style.color = targetColor
+          blockEl.style.lineHeight = targetLineHeight
+          blockEl.style.margin = '0 0 6px 0'
+
+          // Insert scenario blockquote before the question if present
+          if (scenarioHtml) {
+            blockEl.insertAdjacentHTML('beforebegin', scenarioHtml)
+          }
+
+          blockEl.innerHTML = promptToInsert
+
+          // Insert embedded table after the question if present
+          if (tableHtml) {
+            blockEl.insertAdjacentHTML('afterend', tableHtml)
+          }
+
+          if (detected.hasCode && codeHtml) {
+            const insertAfter = tableHtml ? blockEl.nextElementSibling || blockEl : blockEl
+            insertAfter.insertAdjacentHTML('afterend', codeHtml + `<p style="margin:0;padding:0;font-family:${targetFontFamily};font-size:${targetFontSize};"><br></p>`)
+          }
+          replacedDirectly = true
+        } else if (blockEl && (blockEl.tagName === 'TD' || blockEl.tagName === 'TH')) {
+          // Inside a table cell directly
+          const newP = targetNode.ownerDocument.createElement('p')
+          newP.style.fontFamily = targetFontFamily
+          newP.style.fontSize = targetFontSize
+          newP.style.color = targetColor
+          newP.style.lineHeight = targetLineHeight
+          newP.style.margin = '0 0 6px 0'
+          newP.innerHTML = promptToInsert
+
+          targetNode.parentNode.replaceChild(newP, targetNode)
+
+          if (detected.hasCode && codeHtml) {
+            newP.insertAdjacentHTML('afterend', codeHtml + `<p style="margin:0;padding:0;font-family:${targetFontFamily};font-size:${targetFontSize};"><br></p>`)
+          }
+          replacedDirectly = true
+        }
+      } catch (err) {
+        console.warn('Direct node replace error, falling back to RTE insert:', err)
+        replacedDirectly = false
+      }
+    }
+
+    // 3. Fallback using RTE execution if direct DOM replacement didn't run
+    if (!replacedDirectly && rteRef.current) {
+      try {
+        const editorDoc = rteRef.current.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : document
+        const sel = editorDoc?.getSelection ? editorDoc.getSelection() : window.getSelection()
+
+        // Delete previous typed text range if available
+        if (activeInputTarget?.range && sel) {
+          try {
+            sel.removeAllRanges()
+            sel.addRange(activeInputTarget.range)
+            sel.deleteFromDocument()
+          } catch (e) {}
+        }
+
+        const htmlToInsert = scenarioHtml +
+          `<p style="font-family:${targetFontFamily};font-size:${targetFontSize};line-height:${targetLineHeight};color:${targetColor};margin:0 0 6px 0;">${promptToInsert}</p>` +
+          tableHtml +
+          (detected.hasCode ? codeHtml + `<p style="margin:0;padding:0;font-family:${targetFontFamily};font-size:${targetFontSize};"><br></p>` : '')
+
+        rteRef.current.executeCommand('insertHTML', htmlToInsert)
+      } catch (e) {
+        console.warn('RTE fallback insert error:', e)
+      }
+    }
+
+    // Sync RTE internal data & history
+    if (rteRef.current?.formatter?.saveData) {
+      rteRef.current.formatter.saveData()
+    }
+    if (rteRef.current?.refreshUI) {
+      rteRef.current.refreshUI()
+    }
+
+    // 4. Clear suggestions
+    setActiveNoteSuggestions([])
+    setShowAllSuggestions(false)
+  }
+
+
+  // Draggable floating pill button & menu (press & hold to move, single click to toggle menu)
+  const handleFloatingBtnMouseDown = useCallback((e) => {
+    // Don't drag if clicking buttons inside menu
+    if (e.target.closest('button') && !e.target.closest('#floating-ai-assistant-btn')) return
+
+    e.stopPropagation()
+
+    isDraggingBtnRef.current = true
+    const currentLeft = floatingBtnPos?.left ?? aiVerifySelection?.position?.left ?? 100
+    const currentTop = floatingBtnPos?.top ?? aiVerifySelection?.position?.top ?? 60
+    btnDragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialLeft: currentLeft,
+      initialTop: currentTop,
+      hasMoved: false
+    }
+
+    const handleMouseMove = (moveEv) => {
+      if (!isDraggingBtnRef.current) return
+      const dx = moveEv.clientX - btnDragStartRef.current.startX
+      const dy = moveEv.clientY - btnDragStartRef.current.startY
+      const dist = Math.hypot(dx, dy)
+
+      // If user drags more than 3px, treat as dragging
+      if (dist > 3) {
+        moveEv.preventDefault()
+        btnDragStartRef.current.hasMoved = true
+        userMovedFloatingBtnRef.current = true
+      }
+
+      const minLeft = 16
+      const maxLeft = window.innerWidth - 270
+      const minTop = 16
+      const maxTop = window.innerHeight - 80
+
+      const newLeft = Math.max(minLeft, Math.min(maxLeft, btnDragStartRef.current.initialLeft + dx))
+      const newTop = Math.max(minTop, Math.min(maxTop, btnDragStartRef.current.initialTop + dy))
+
+      setFloatingBtnPos({ left: newLeft, top: newTop })
+    }
+
+    const handleMouseUp = () => {
+      isDraggingBtnRef.current = false
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+
+      if (btnDragStartRef.current.hasMoved) {
+        // User dragged it somewhere: lock it in place until closed
+        userMovedFloatingBtnRef.current = true
+      }
+    }
+
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [floatingBtnPos, aiVerifySelection])
+
+
+  // Granular In-Place Tag Replacement (Bloom, CO, or Both)
+  const handleApplyAiTag = ({ applyCo = false, applyBloom = false }) => {
+    if (!aiVerifyResult || !aiVerifySelection) return
+
+    const targetInfo = aiVerifySelection.targetInfo || {}
+    const container = targetInfo.containerElement
+    const qIndex = targetInfo.questionIndex
+
+    const selectedQText = (aiVerifySelection.selectedText || '').trim()
+
+    // Determine CO to apply
+    let finalCo = targetInfo.existingCo || (qIndex !== null && questions[qIndex] && questions[qIndex].co !== 'NONE' ? questions[qIndex].co : '')
+    if (finalCo === 'NONE') finalCo = ''
+    if (applyCo && aiVerifyResult.co?.suggested) {
+      finalCo = aiVerifyResult.co.suggested.toUpperCase()
+    }
+
+    // Determine Bloom to apply
+    let finalBloom = targetInfo.existingBloom || (qIndex !== null && questions[qIndex] ? questions[qIndex].bloom : '')
+    if (applyBloom && aiVerifyResult.bloom?.suggested) {
+      finalBloom = aiVerifyResult.bloom.suggested.toUpperCase()
+    }
+
+    // Build Tag String: e.g. [CO2→C4], [CO2], or [C4]
+    let tagStr = ''
+    if (finalCo && finalBloom) {
+      tagStr = `[${finalCo}\u2192${finalBloom}]`
+    } else if (finalCo) {
+      tagStr = `[${finalCo}]`
+    } else if (finalBloom) {
+      tagStr = `[${finalBloom}]`
+    }
+
+    if (!tagStr) return
+
+    const editor = rteRef.current
+    const editPanel = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+
+    // 1. Immediately clear any active text selection in editor to prevent browser/Syncfusion from overwriting highlighted text
+    try {
+      const editorDoc = editor?.contentModule?.getDocument ? editor.contentModule.getDocument() : null
+      const currentSel = (editorDoc && editorDoc.getSelection) ? editorDoc.getSelection() : window.getSelection()
+      if (currentSel && currentSel.removeAllRanges) {
+        currentSel.removeAllRanges()
+      }
+    } catch (e) {}
+
+    // In-place HTML tag replacement inside question container / table cell
+    if (editPanel) {
+      // Find the target container cell or block element
+      let contentCell = null
+
+      if (container && editPanel.contains(container)) {
+        // Check if inside a table row (the standard question paper layout)
+        const tr = container.closest('tr')
+        if (tr && editPanel.contains(tr)) {
+          contentCell = tr.querySelector('td:nth-child(3), td[colspan="2"]') || tr.querySelectorAll('td')[tr.children.length - 2] || container.closest('td')
+        }
+        if (!contentCell) {
+          contentCell = container.closest('td, th, li, p') || container
+        }
+      }
+
+      // Fallback: If container is missing or outside editPanel, search editPanel for the question text
+      if ((!contentCell || !editPanel.contains(contentCell) || contentCell === editPanel) && selectedQText) {
+        const allRows = editPanel.querySelectorAll('tr')
+        for (const tr of allRows) {
+          if (tr.textContent && tr.textContent.includes(selectedQText)) {
+            contentCell = tr.querySelector('td:nth-child(3), td[colspan="2"]') || tr.querySelectorAll('td')[tr.children.length - 2] || tr
+            break
+          }
+        }
+        if (!contentCell) {
+          const allBlocks = editPanel.querySelectorAll('p, li, td, th, div')
+          for (const el of allBlocks) {
+            if (['P', 'LI', 'TD', 'TH'].includes(el.tagName) && el.textContent && el.textContent.includes(selectedQText)) {
+              contentCell = el
+              break
+            }
+          }
+        }
+      }
+
+      if (contentCell && editPanel.contains(contentCell)) {
+        // Tag HTML (bold font, clean spacing)
+        const tagHtml = `<span class="co-bloom-tag" style="font-weight:bold;margin-left:6px;">${tagStr}</span>`
+
+        const cleanManualTags = (str = '') => {
+          return str
+            .replace(/\s*<span[^>]*class=["']?[^"']*co-bloom-tag[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, '')
+            .replace(/\s*<(?:strong|b|span)[^>]*>\s*\[\s*(?:CO\d+)?(?:\s*(?:->|→|&rarr;|&#8594;|&minus;&gt;|,)\s*)?(?:C[1-6])?\s*\]\s*<\/(?:strong|b|span)>/gi, '')
+            .replace(/\s*\[\s*<(?:strong|b|span)[^>]*>[^\]]*?(?:CO\d+|C[1-6])[^\]]*?<\/(?:strong|b|span)>\s*\]/gi, '')
+            .replace(/\s*\[\s*(?:CO\d+)?(?:\s*(?:->|→|&rarr;|&#8594;|&minus;&gt;|,|\s|&nbsp;)*)?(?:C[1-6])?\s*\]/gi, '')
+        }
+
+        // 1. Check if the question content contains a code block, image, figure, or table
+        const snippetOrMedia = contentCell.querySelector(
+          '.obe-code-snippet-container, pre.obe-code-block, table.obe-code-table, img, .question-image, .math-equation-wrapper, svg'
+        )
+
+        if (snippetOrMedia) {
+          // Find top-level block inside contentCell that contains or is the media/code
+          let mediaTopBlock = snippetOrMedia
+          while (mediaTopBlock.parentElement && mediaTopBlock.parentElement !== contentCell && mediaTopBlock.parentElement !== editPanel) {
+            mediaTopBlock = mediaTopBlock.parentElement
+          }
+
+          // Clean all existing .co-bloom-tag elements everywhere in contentCell first
+          contentCell.querySelectorAll('.co-bloom-tag').forEach(el => el.remove())
+
+          // The tag MUST be placed right at the end of the question text BEFORE the code snippet/media!
+          const prevElem = mediaTopBlock.previousElementSibling
+          if (prevElem && ['P', 'DIV', 'LI', 'SPAN'].includes(prevElem.tagName)) {
+            let inner = cleanManualTags(prevElem.innerHTML)
+            inner = inner.replace(/(?:\s|&nbsp;|<br\s*\/?>)*$/i, '')
+            prevElem.innerHTML = `${inner}&nbsp;${tagHtml}`
+          } else {
+            // No preceding element block, check if there are preceding text nodes or insert right before mediaTopBlock
+            let prevNode = mediaTopBlock.previousSibling
+            let inserted = false
+            while (prevNode) {
+              if (prevNode.nodeType === Node.TEXT_NODE && prevNode.textContent.trim().length > 0) {
+                const cleanedText = cleanManualTags(prevNode.textContent).trimEnd()
+                prevNode.textContent = cleanedText + ' '
+                const span = document.createElement('span')
+                span.className = 'co-bloom-tag'
+                span.style.fontWeight = 'bold'
+                span.style.marginLeft = '6px'
+                span.textContent = tagStr
+                if (prevNode.nextSibling) {
+                  prevNode.parentNode.insertBefore(span, prevNode.nextSibling)
+                } else {
+                  prevNode.parentNode.appendChild(span)
+                }
+                inserted = true
+                break
+              }
+              prevNode = prevNode.previousSibling
+            }
+            if (!inserted) {
+              // Insert tag directly right before mediaTopBlock
+              mediaTopBlock.insertAdjacentHTML('beforebegin', `<p style="margin: 0 0 6px 0;">${tagHtml}</p>`)
+            }
+          }
+        } else {
+          // 2. Regular question without code snippet / media
+          contentCell.querySelectorAll('.co-bloom-tag').forEach(el => el.remove())
+
+          // Check if contentCell has child paragraphs/divs with question text
+          const childBlocks = Array.from(contentCell.querySelectorAll('p, div, li')).filter(b => b.textContent.trim().length > 0)
+          if (childBlocks.length > 0) {
+            const lastBlock = childBlocks[childBlocks.length - 1]
+            let inner = cleanManualTags(lastBlock.innerHTML)
+            inner = inner.replace(/(?:\s|&nbsp;|<br\s*\/?>)*$/i, '')
+            lastBlock.innerHTML = `${inner}&nbsp;${tagHtml}`
+          } else {
+            let html = cleanManualTags(contentCell.innerHTML)
+            if (/<\/(p|div)>\s*$/i.test(html)) {
+              contentCell.innerHTML = html.replace(/(\s*(?:&nbsp;)*)<\/(p|div)>\s*$/i, `&nbsp;${tagHtml}</$2>`)
+            } else {
+              contentCell.innerHTML = `${html.replace(/\s+$/, '')}&nbsp;${tagHtml}`
+            }
+          }
+        }
+
+        // Sync updated HTML back to Syncfusion RTE and React state
+        if (editor) {
+          const newHtml = editPanel.innerHTML
+          setEditorValue(newHtml)
+          if (typeof editor.value !== 'undefined') editor.value = newHtml
+          if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+            editor.formatter.saveData()
+          }
+        }
+      }
+    }
+
+    // Update questions state if qIndex was identified
+    if (qIndex !== null && qIndex >= 0 && qIndex < questions.length) {
+      setQuestions(prev => {
+        const updated = [...prev]
+        const currentItem = updated[qIndex] || {}
+        updated[qIndex] = {
+          ...currentItem,
+          co: (applyCo && finalCo) ? finalCo : currentItem.co,
+          bloom: (applyBloom && finalBloom) ? finalBloom : currentItem.bloom
+        }
+        return updated
+      })
+    }
+
+    // Update targetInfo in selection state
+    setAiVerifySelection(prev => {
+      if (!prev) return null
+      return {
+        ...prev,
+        targetInfo: {
+          ...prev.targetInfo,
+          existingCo: finalCo,
+          existingBloom: finalBloom
+        }
+      }
+    })
+
+    const appliedLabel = (applyCo && applyBloom) ? `Updated tag to ${tagStr}` : (applyBloom ? `Bloom level updated to ${finalBloom}` : `Course Outcome updated to ${finalCo}`)
+    setAiVerifySuccessMsg(`✓ ${appliedLabel}`)
+    setTimeout(() => {
+      setAiVerifySuccessMsg('')
+      handleCloseAiVerify()
+    }, 1200)
+  }
 
   const loadPaperData = async () => {
     setLoading(true)
@@ -1925,7 +5489,14 @@ Equation description: "${aiEquationPrompt}"`
       setCoDetails(cosFullList)
 
       const res = await apiService.getQuestionPaper(assessment._id)
-      const content = res.content || '<p>Write your questions here...</p>'
+      let content = res.content || '<p style="font-family:\'Times New Roman\', Times, serif; font-size:12pt;">Write your questions here...</p>'
+      // Normalize legacy drafts that had 13px or Georgia to 12pt Times New Roman standard
+      if (content.includes('font-size:13px') || content.includes('font-size: 13px')) {
+        content = content.replace(/font-size:\s*13px;?/gi, 'font-size:12pt;')
+      }
+      if (content.includes('Georgia,serif') || content.includes('Georgia, serif')) {
+        content = content.replace(/'Times New Roman',\s*Georgia,\s*serif/gi, "'Times New Roman', Times, serif")
+      }
       setEditorValue(content)
       if (content.includes('src="blob:') || content.includes("src='blob:")) {
         setShowBlobWarning(true)
@@ -2348,36 +5919,35 @@ Equation description: "${aiEquationPrompt}"`
 
       return `
         <div class="qp-official-header" style="font-family: 'Times New Roman', Times, serif !important; color: #000 !important; margin-bottom: 12px !important;">
-          <!-- Top Confidential Header -->
-          <div style="text-align: center !important; font-size: 11px !important; font-weight: bold !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; margin-bottom: 6px !important;">
+          <!-- Top Confidential Header (Static in preview, replaced by fixed on print) -->
+          <div class="static-top-confidential" style="text-align: center !important; font-size: 11px !important; font-weight: bold !important; text-transform: uppercase !important; letter-spacing: 0.8px !important; margin-bottom: 6px !important;">
             ${confText}
           </div>
 
-          <!-- University Logo & Name Table (3-Column Perfect Centering) -->
-          <table style="width: 100% !important; border: none !important; border-collapse: collapse !important; margin-bottom: 6px !important; table-layout: fixed !important;">
+          <!-- University Logo & Name Table (2-Column Perfectly Centered, Zero Overlap) -->
+          <table style="margin: 0 auto 6px auto !important; border: none !important; border-collapse: collapse !important;">
             <tr>
-              <td style="width: 70px !important; vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 !important;">
-                <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 60px !important; width: auto !important; display: block !important;" />
+              <td style="vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 14px 0 0 !important; width: 62px !important;">
+                <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 58px !important; width: auto !important; display: block !important;" />
               </td>
-              <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 5px !important;">
-                <div style="font-size: 16px !important; font-weight: bold !important; color: #000 !important; line-height: 1.25 !important; font-family: 'Times New Roman', Times, serif !important;">
+              <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 !important; white-space: nowrap !important;">
+                <div style="font-size: 15.8px !important; font-weight: bold !important; color: #000 !important; line-height: 1.25 !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important;">
                   ${bengaliName}
                 </div>
-                <div style="font-size: 13px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.2px !important; margin-top: 2px !important; font-family: 'Times New Roman', Times, serif !important;">
+                <div style="font-size: 11.8px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.15px !important; margin-top: 3px !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important;">
                   ${englishName}
                 </div>
               </td>
-              <td style="width: 70px !important; border: none !important; padding: 0 !important;"></td>
             </tr>
           </table>
 
           <!-- Exam & Course Info Block -->
           <div style="text-align: center !important; font-size: 13.5px !important; line-height: 1.35 !important; margin-top: 4px !important;">
-            <div style="font-size: 15px !important; font-weight: bold !important;">${examTitleStr}</div>
-            <div style="font-weight: bold !important;">Department of ${deptName}</div>
-            <div style="font-weight: bold !important;">${levelTermLine}</div>
-            <div style="font-weight: bold !important;">Course Code: ${courseCode}</div>
-            <div style="font-weight: bold !important;">Course Title: ${courseTitle}</div>
+            <div style="font-size: 16.5px !important; font-weight: bold !important; margin-bottom: 3px !important; letter-spacing: 0.2px !important;">${examTitleStr}</div>
+            <div style="font-weight: bold !important; font-size: 13.8px !important;">Department of ${deptName}</div>
+            <div style="font-weight: bold !important; font-size: 13.8px !important;">${levelTermLine}</div>
+            <div style="font-weight: bold !important; font-size: 13.8px !important;">Course Code: ${courseCode}</div>
+            <div style="font-weight: bold !important; font-size: 13.8px !important;">Course Title: ${courseTitle}</div>
             <div>Credit Hour: ${creditHours}</div>
             <div>${timeOrDeadlineLabel}: ${timeOrDeadlineValue}</div>
             <div>Full Marks: ${fullMarks}</div>
@@ -2601,126 +6171,369 @@ Equation description: "${aiEquationPrompt}"`
         text-align: justify;
       }
 
-      .math-equation-wrapper {
-        display: inline-flex !important;
-        align-items: center !important;
-        vertical-align: middle !important;
-        padding: 1px 4px !important;
-        margin: 2px 3px !important;
-        line-height: normal !important;
-        border: none !important;
-        background-color: transparent !important;
-        position: relative;
-        z-index: 1;
-      }
       .math-eq-badge {
         display: none !important;
       }
-      .math-print-img {
+      .math-equation-wrapper {
+        background-color: transparent !important;
+        border: none !important;
+        position: relative;
+        overflow: visible !important;
+        line-height: normal !important;
+      }
+      .math-equation-wrapper.math-display-block {
+        display: block !important;
+        margin: 10px 0 10px 4px !important;
+        clear: both !important;
+        text-align: left !important;
+        overflow: visible !important;
+      }
+      .math-equation-wrapper.math-display-block .katex-display {
+        display: block !important;
+        margin: 4px 0 !important;
+        text-align: left !important;
+        overflow: visible !important;
+      }
+      .math-equation-wrapper.math-inline {
         display: inline-block !important;
         vertical-align: middle !important;
-        margin: 2px 6px !important;
-        height: auto !important;
-        max-height: 3.5em !important;
+        margin: 0 4px !important;
+        overflow: visible !important;
       }
 
-      .katex-display {
-        display: inline-block !important;
-        margin: 0.2em 0 !important;
-      }
       .katex {
-        font-size: 1.1em !important;
-        line-height: 1.2 !important;
+        font-size: 1.12em !important;
+        line-height: normal !important;
         text-indent: 0 !important;
+        overflow: visible !important;
+        white-space: nowrap;
+      }
+      .katex-display {
+        overflow: visible !important;
+      }
+      .katex-html, .katex .base {
+        overflow: visible !important;
+      }
+      p:has(> .math-equation-wrapper.math-display-block) {
+        margin-top: 6px !important;
+        margin-bottom: 6px !important;
+        line-height: normal !important;
+        text-align: left !important;
+      }
+
+      /* Code Snippet Styles for Print / PDF / Word Export */
+      .obe-code-snippet-container {
+        margin: 8px 0 !important;
+        clear: both !important;
+        page-break-inside: avoid !important;
+      }
+      .obe-code-snippet-container[data-align="center"] {
+        text-align: center !important;
+      }
+      .obe-code-snippet-container[data-align="left"] {
+        text-align: left !important;
+      }
+      .obe-code-block {
+        display: inline-block !important;
+        font-family: Consolas, 'Courier New', Monaco, monospace !important;
+        line-height: 1.35 !important;
+        letter-spacing: 0 !important;
+        tab-size: 4 !important;
+        -moz-tab-size: 4 !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+      }
+      .obe-code-block,
+      .obe-code-block *,
+      .obe-code-block code,
+      .obe-code-block span,
+      .obe-code-table,
+      .obe-code-table * {
+        color: #000000 !important;
+        background-color: transparent !important;
+      }
+      .obe-code-block strong {
+        font-weight: 700 !important;
+        color: #000000 !important;
+      }
+      .obe-code-table {
+        border-collapse: collapse !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: auto !important;
+      }
+      .obe-code-table td {
+        border: none !important;
+        padding: 1px 0 !important;
+        line-height: 1.35 !important;
+        vertical-align: top !important;
+      }
+      .obe-code-table .obe-code-ln {
+        color: #555555 !important;
+        user-select: none !important;
+        text-align: right !important;
+        padding-right: 12px !important;
+        border-right: 1px solid #999999 !important;
+      }
+      .obe-code-table .obe-code-txt {
+        padding-left: 12px !important;
+        white-space: pre-wrap !important;
+      }
+
+      /* Question Paper Structure Table Formatting for Print & PDF */
+      table.obe-paper-structure-table,
+      table[data-obe-paper-structure="true"] {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        table-layout: auto !important;
+        margin-top: 6px !important;
+        margin-bottom: 6px !important;
+      }
+      table.obe-paper-structure-table col.col-qnum,
+      table[data-obe-paper-structure="true"] col.col-qnum {
+        width: 28px !important;
+        max-width: 32px !important;
+      }
+      table.obe-paper-structure-table col.col-subq,
+      table[data-obe-paper-structure="true"] col.col-subq {
+        width: 24px !important;
+        max-width: 28px !important;
+      }
+      table.obe-paper-structure-table col.col-content,
+      table[data-obe-paper-structure="true"] col.col-content {
+        width: auto !important;
+      }
+      table.obe-paper-structure-table col.col-marks,
+      table[data-obe-paper-structure="true"] col.col-marks {
+        width: 50px !important;
+        max-width: 55px !important;
+      }
+
+      /* Specific column padding overrides to prevent huge print gaps */
+      table.obe-paper-structure-table td,
+      table[data-obe-paper-structure="true"] td {
+        vertical-align: top !important;
+        font-family: 'Times New Roman', Times, serif !important;
+        font-size: 12pt !important;
+        line-height: 1.4 !important;
+      }
+      table.obe-paper-structure-table td.col-qnum-cell,
+      table[data-obe-paper-structure="true"] td.col-qnum-cell,
+      table[data-obe-paper-structure="true"] td:first-child:not([colspan]) {
+        width: 28px !important;
+        max-width: 32px !important;
+        padding: 4px 2px 4px 0px !important;
+        text-align: left !important;
+        white-space: nowrap !important;
+      }
+      table.obe-paper-structure-table td.col-subq-cell,
+      table[data-obe-paper-structure="true"] td.col-subq-cell,
+      table[data-obe-paper-structure="true"] tr:not([data-obe-row="or-separator"]) td:nth-child(2):not([colspan]) {
+        width: 24px !important;
+        max-width: 28px !important;
+        padding: 4px 4px 4px 0px !important;
+        text-align: left !important;
+        white-space: nowrap !important;
+      }
+      table.obe-paper-structure-table td.col-content-cell,
+      table[data-obe-paper-structure="true"] td.col-content-cell,
+      table[data-obe-paper-structure="true"] tr:not([data-obe-row="or-separator"]) td:nth-child(3):not([colspan]) {
+        padding: 4px 8px 4px 2px !important;
+      }
+      table.obe-paper-structure-table td.col-marks-cell,
+      table[data-obe-paper-structure="true"] td.col-marks-cell,
+      table[data-obe-paper-structure="true"] td:last-child:not([colspan]) {
+        width: 50px !important;
+        max-width: 55px !important;
+        padding: 4px 0px 4px 4px !important;
+        text-align: right !important;
+        white-space: nowrap !important;
+      }
+
+      /* Force zero margin for all content paragraphs inside table cells so they stay aligned with Q# and Sub-Q */
+      table.obe-paper-structure-table td p,
+      table[data-obe-paper-structure="true"] td p,
+      table td p {
+        margin: 0 !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        padding: 0 !important;
+        line-height: inherit !important;
+        display: inline !important;
+      }
+
+      /* When borders are cleared, force borders to none in print */
+      table.obe-paper-structure-table.borders-cleared,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"],
+      table.obe-paper-structure-table[style*="border: none"],
+      table.obe-paper-structure-table[style*="border:none"] {
+        border: none !important;
+      }
+      table.obe-paper-structure-table.borders-cleared td,
+      table.obe-paper-structure-table.borders-cleared th,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] td,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] th,
+      table.obe-paper-structure-table[style*="border: none"] td,
+      table.obe-paper-structure-table[style*="border:none"] td {
+        border: none !important;
       }
     `
   }
 
-  // Convert KaTeX equation wrappers into crisp, self-contained high-resolution PNG/SVG images ONLY for Print/PDF export
-  const convertEquationsToImages = async (htmlContent) => {
+  // Render KaTeX equation wrappers into native vector KaTeX HTML for 100% unclipped, crisp Print/PDF export
+  const renderEquationsForPrint = (htmlContent) => {
     if (!htmlContent || (!htmlContent.includes('math-equation-wrapper') && !htmlContent.includes('data-latex'))) {
       return htmlContent
     }
 
     const tempDiv = document.createElement('div')
-    tempDiv.style.position = 'absolute'
-    tempDiv.style.left = '-9999px'
-    tempDiv.style.top = '-9999px'
-    tempDiv.style.width = '850px'
-    tempDiv.style.background = '#ffffff'
-    tempDiv.style.color = '#000000'
-    tempDiv.style.fontFamily = "'Times New Roman', Times, serif"
     tempDiv.innerHTML = htmlContent
-    document.body.appendChild(tempDiv)
 
     const wrappers = Array.from(tempDiv.querySelectorAll('.math-equation-wrapper, [data-latex]'))
-
-    if (wrappers.length === 0) {
-      document.body.removeChild(tempDiv)
-      return htmlContent
-    }
 
     for (const wrapper of wrappers) {
       try {
         const encodedLatex = wrapper.getAttribute('data-latex') || ''
         const latexStr = encodedLatex ? decodeURIComponent(encodedLatex) : wrapper.textContent || ''
-
         if (!latexStr.trim()) continue
 
-        // Render KaTeX offscreen with generous padding so tall fractions & square roots are never clipped
-        const renderContainer = document.createElement('div')
-        renderContainer.style.display = 'inline-block'
-        renderContainer.style.padding = '10px 14px'
-        renderContainer.style.background = '#ffffff'
-        renderContainer.style.color = '#000000'
-        renderContainer.style.fontFamily = "'Times New Roman', Times, serif"
-        renderContainer.style.fontSize = '20px'
-        renderContainer.style.lineHeight = 'normal'
-        renderContainer.style.overflow = 'visible'
-        renderContainer.innerHTML = katex.renderToString(latexStr, {
-          displayMode: false,
+        // Check if equation is standalone on its line / in its paragraph
+        const parentP = wrapper.closest('p, div, li')
+        const isStandalone = !wrapper.previousSibling ||
+          (wrapper.previousSibling.nodeType === Node.TEXT_NODE && !wrapper.previousSibling.textContent.trim()) ||
+          (parentP && parentP.querySelectorAll('.math-equation-wrapper').length <= 2 && parentP.textContent.trim() === '')
+
+        // Render native vector KaTeX HTML
+        const katexHtml = katex.renderToString(latexStr, {
+          displayMode: isStandalone,
           throwOnError: false,
-          output: 'html' // Omit MathML <annotation> tags so raw LaTeX is never extracted by PDF parsers
-        })
-        document.body.appendChild(renderContainer)
-
-        const canvas = await html2canvas(renderContainer, {
-          scale: 3, // 3x high-resolution capture for sharp vector-like print quality
-          backgroundColor: '#ffffff',
-          logging: false,
-          useCORS: true
+          output: 'html'
         })
 
-        const dataUrl = canvas.toDataURL('image/png')
-        document.body.removeChild(renderContainer)
-
-        // Exact proportional width and height scaling (0.85 scale to match surrounding print font size)
-        const printScale = 0.85
-        const displayWidth = (canvas.width / 3) * printScale
-        const displayHeight = (canvas.height / 3) * printScale
-
-        // Replace ONLY the equation wrapper with clean crisp <img> tag
-        const img = document.createElement('img')
-        img.src = dataUrl
-        img.alt = latexStr
-        img.style.width = `${displayWidth.toFixed(1)}px`
-        img.style.height = `${displayHeight.toFixed(1)}px`
-        img.style.verticalAlign = 'middle'
-        img.style.margin = '2px 4px'
-        img.style.display = 'inline-block'
-        img.className = 'math-print-img'
+        const container = document.createElement('span')
+        container.className = `math-equation-wrapper math-rendered ${isStandalone ? 'math-display-block' : 'math-inline'}`
+        container.innerHTML = katexHtml
 
         if (wrapper.parentNode) {
-          wrapper.parentNode.replaceChild(img, wrapper)
+          wrapper.parentNode.replaceChild(container, wrapper)
         }
       } catch (err) {
-        console.error('Error converting equation to image for print:', err)
+        console.error('Error rendering equation for print:', err)
       }
     }
 
-    const processedHtml = tempDiv.innerHTML
-    document.body.removeChild(tempDiv)
-    return processedHtml
+    return tempDiv.innerHTML
+  }
+
+  // Helper to paginate exam paper content into discrete, collision-free A4 pages
+  const buildExamPages = (headerHtml, coDescriptions, annotatedContent) => {
+    try {
+      const container = document.createElement('div')
+      container.style.position = 'absolute'
+      container.style.visibility = 'hidden'
+      container.style.left = '-9999px'
+      container.style.width = '178mm' // 210mm - 32mm margins
+      container.style.fontFamily = "'Times New Roman', Times, serif"
+      container.style.fontSize = '12pt'
+      container.style.lineHeight = '1.4'
+      document.body.appendChild(container)
+
+      const tempWrap = document.createElement('div')
+      tempWrap.innerHTML = annotatedContent
+      const table = tempWrap.querySelector('table.obe-paper-structure-table, table[data-obe-paper-structure="true"]')
+
+      if (!table) {
+        document.body.removeChild(container)
+        return null
+      }
+
+      const colgroupHtml = table.querySelector('colgroup') ? table.querySelector('colgroup').outerHTML : ''
+      const tableClass = table.className
+      const tableStyle = table.getAttribute('style') || ''
+      const rows = Array.from(table.querySelectorAll('tbody > tr, tr'))
+
+      if (rows.length === 0) {
+        document.body.removeChild(container)
+        return null
+      }
+
+      // Measure header on Page 1
+      container.innerHTML = `<div style="font-family: 'Times New Roman', Times, serif;">${headerHtml}${coDescriptions}</div>`
+      const page1HeaderHeight = container.scrollHeight
+
+      // A4 printable height at 96 DPI: 297mm ≈ 1122px
+      // With 12mm top and 12mm bottom padding: 273mm ≈ 1030px
+      // Top header block: ~26px, Bottom footer block: ~48px
+      // Usable height for page body: ~930px
+      const maxPageBodyHeight = 930
+      const page1UsableHeight = Math.max(250, maxPageBodyHeight - page1HeaderHeight)
+
+      const pagesRows = []
+      let currentPageRows = []
+      let currentHeight = 0
+      let isFirstPage = true
+
+      rows.forEach((row) => {
+        container.innerHTML = `<table class="${tableClass}" style="${tableStyle}">${colgroupHtml}<tbody>${row.outerHTML}</tbody></table>`
+        const rowHeight = container.scrollHeight || 35
+
+        const currentLimit = isFirstPage ? page1UsableHeight : maxPageBodyHeight
+
+        if (currentHeight + rowHeight > currentLimit && currentPageRows.length > 0) {
+          pagesRows.push(currentPageRows)
+          currentPageRows = [row]
+          currentHeight = rowHeight
+          isFirstPage = false
+        } else {
+          currentPageRows.push(row)
+          currentHeight += rowHeight
+        }
+      })
+
+      if (currentPageRows.length > 0) {
+        pagesRows.push(currentPageRows)
+      }
+
+      document.body.removeChild(container)
+
+      const totalPages = Math.max(1, pagesRows.length)
+
+      return pagesRows.map((pageRowList, pageIdx) => {
+        const isP1 = pageIdx === 0
+        const pageRowsHtml = pageRowList.map(r => r.outerHTML).join('')
+        const pageTableHtml = `<table class="${tableClass}" style="${tableStyle}">${colgroupHtml}<tbody>${pageRowsHtml}</tbody></table>`
+
+        return `
+          <div class="exam-page" style="width: 210mm; min-height: 296mm; height: 296mm; max-height: 296mm; box-sizing: border-box; padding: 12mm 15mm 12mm 15mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: ${pageIdx === totalPages - 1 ? 'auto' : 'always'}; break-after: ${pageIdx === totalPages - 1 ? 'auto' : 'page'}; position: relative; overflow: hidden; background: #fff;">
+            <!-- Top Header Block: Fixed on every page -->
+            <div class="exam-top-block" style="text-align: center; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; font-family: 'Times New Roman', Times, serif; color: #000; margin-bottom: 6px; flex-shrink: 0;">
+              EXAMINATION CONFIDENTIAL
+            </div>
+
+            <!-- Page Body Content Area -->
+            <div class="exam-page-body" style="flex: 1; display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;">
+              ${isP1 ? `<div style="flex-shrink: 0;">${headerHtml}${coDescriptions}</div>` : ''}
+              <div style="flex: 1;">
+                ${pageTableHtml}
+              </div>
+            </div>
+
+            <!-- Bottom Footer Block: Fixed on every page -->
+            <div class="exam-bottom-block" style="text-align: center; font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.35; margin-top: 6px; flex-shrink: 0;">
+              <div style="font-size: 11pt; font-weight: normal; margin-bottom: 2px;">${pageIdx + 1} of ${totalPages}</div>
+              <div style="font-size: 10.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">EXAMINATION CONFIDENTIAL</div>
+            </div>
+          </div>
+        `
+      }).join('')
+    } catch (err) {
+      console.error('buildExamPages error:', err)
+      return null
+    }
   }
 
   // Word export
@@ -2766,31 +6579,93 @@ Equation description: "${aiEquationPrompt}"`
     const coDescriptions = getCoDescriptionsHtml()
     const rawAnnotatedContent = injectQuestionAnnotations(currentContent)
 
-    // Convert equations to self-contained crisp high-res PNG images for 100% PDF/Print reliability
-    const annotatedContent = await convertEquationsToImages(rawAnnotatedContent)
+    // Render equations into native vector KaTeX HTML for 100% crisp, unclipped PDF/Print reliability
+    const annotatedContent = renderEquationsForPrint(rawAnnotatedContent)
+
+    let katexCssInline = ''
+    try {
+      for (const sheet of document.styleSheets) {
+        try {
+          const rules = sheet.cssRules || sheet.rules
+          if (rules) {
+            for (const rule of rules) {
+              if (rule.cssText && (rule.cssText.includes('.katex') || rule.cssText.includes('KaTeX_'))) {
+                katexCssInline += rule.cssText + '\n'
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    // Build discrete paged layout with dedicated Header, Content, and Footer blocks
+    const paginatedHtml = buildExamPages(headerHtml, coDescriptions, annotatedContent)
+    const finalPrintBody = paginatedHtml || `
+      <div class="exam-page" style="width: 210mm; min-height: 296mm; height: 296mm; box-sizing: border-box; padding: 12mm 15mm 12mm 15mm; display: flex; flex-direction: column; justify-content: space-between; background: #fff;">
+        <div style="text-align: center; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; font-family: 'Times New Roman', Times, serif; margin-bottom: 6px;">
+          EXAMINATION CONFIDENTIAL
+        </div>
+        <div style="flex: 1;">
+          ${headerHtml}
+          ${coDescriptions}
+          <div>${annotatedContent}</div>
+        </div>
+        <div style="text-align: center; font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.35; margin-top: 6px;">
+          <div style="font-size: 11pt; font-weight: normal; margin-bottom: 2px;">1 of 1</div>
+          <div style="font-size: 10.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">EXAMINATION CONFIDENTIAL</div>
+        </div>
+      </div>
+    `
 
     const printWindow = window.open('', '_blank')
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Print Question Paper</title>
+          <title>&nbsp;</title>
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
           <style>
-            body { font-family: 'Times New Roman', Times, serif; padding: 40px; line-height: 1.6; color: #000; }
-            table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-            th, td { border: 1px solid #000; padding: 8px; text-align: left; }
+            ${katexCssInline}
+            @page {
+              size: A4 portrait;
+              margin: 0 !important; /* Zero margin forces browsers (Chrome/Edge) to completely suppress date, time, and about:blank URL! */
+            }
+            * {
+              box-sizing: border-box;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #fff !important;
+              color: #000 !important;
+              font-family: 'Times New Roman', Times, serif;
+            }
+            table { border-collapse: collapse; width: 100%; }
+            table:not(.obe-paper-structure-table) th, table:not(.obe-paper-structure-table) td { border: 1px solid #000; padding: 6px 8px; text-align: left; }
             ${getPrintStyles()}
+
+            /* Hide static duplicate confidential tags in header */
+            .exam-page .static-top-confidential {
+              display: none !important;
+            }
+
             @media print {
-              body { padding: 0; }
-              button { display: none; }
+              html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #fff !important;
+              }
+              button, .no-print { display: none !important; }
+              .exam-page {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
             }
           </style>
         </head>
         <body>
-          ${headerHtml}
-          ${coDescriptions}
-          <div>${annotatedContent}</div>
+          ${finalPrintBody}
+
           <script>
             async function doPrint() {
               try {
@@ -2798,6 +6673,8 @@ Equation description: "${aiEquationPrompt}"`
                   await document.fonts.ready;
                 }
               } catch(e) {}
+              // Suppress browser page title so browser never prints page title
+              document.title = '';
               setTimeout(function() {
                 window.print();
                 setTimeout(function() { window.close(); }, 800);
@@ -2840,8 +6717,6 @@ Equation description: "${aiEquationPrompt}"`
     }
     input.click()
   }
-
-  const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1") ? "https://student-outcome-analyzer-api.onrender.com" : "");
 
   const insertImageSettings = {
     saveUrl: `${API_BASE}/api/upload/image`,
@@ -3343,8 +7218,8 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     const updated = [...edgeRows]
     updated[index][field] = value
     setEdgeRows(updated)
-    // Sync to graphEdgesText
-    const text = updated.map(e => `${e.from}-${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
+    // Sync to graphEdgesText using " -> " so negative nodes (e.g. -5) never conflict with dash
+    const text = updated.map(e => `${e.from} -> ${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
     setGraphEdgesText(text)
   }
 
@@ -3354,14 +7229,14 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     const to = nodeLabels[1] || 'B'
     const updated = [...edgeRows, { from, to, weight: '' }]
     setEdgeRows(updated)
-    const text = updated.map(e => `${e.from}-${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
+    const text = updated.map(e => `${e.from} -> ${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
     setGraphEdgesText(text)
   }
 
   const handleRemoveEdgeRow = (index) => {
     const updated = edgeRows.filter((_, i) => i !== index)
     setEdgeRows(updated)
-    const text = updated.map(e => `${e.from}-${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
+    const text = updated.map(e => `${e.from} -> ${e.to}${e.weight ? `: ${e.weight}` : ''}`).join('\n')
     setGraphEdgesText(text)
   }
 
@@ -3372,14 +7247,31 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     if (editor.formatter && typeof editor.formatter.saveData === 'function') {
       editor.formatter.saveData()
     }
-    const svgMarkup = generateGraphSvg(graphEdgesText, graphType, graphTheme, customNodePositions)
+    const svgMarkup = generateGraphSvg(graphEdgesText, graphType, graphTheme, customNodePositions, {
+      startState: graphCategory === 'automata' ? startState : null,
+      acceptStates: graphCategory === 'automata' ? acceptStates : []
+    })
     
     // Base64 encoding avoids URL fragment truncation (# symbol parsing issue) in browsers
     const svgBase64 = btoa(unescape(encodeURIComponent(svgMarkup)))
     const dataUrl = `data:image/svg+xml;base64,${svgBase64}`
 
+    // Calculate proportional width matching diagram geometry
+    const { nodes: nodeList, edges } = parseGraphLines(graphEdgesText)
+    const positions = computeGraphLayout(nodeList, edges, graphType, customNodePositions)
+    let minX = Infinity, maxX = -Infinity
+    nodeList.forEach(n => {
+      const p = positions[n]
+      if (p) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x) }
+    })
+    if (graphCategory === 'automata' && startState && positions[startState]) {
+      minX = Math.min(minX, positions[startState].x - 50)
+    }
+    const spanW = isFinite(minX) ? (maxX - minX + 68) : 340
+    const displayWidth = Math.min(Math.max(Math.round(spanW * 0.95), 180), 440)
+
     // Insert image inside block container with clear: both to prevent text wrapping or auto-floating shift
-    const htmlToInsert = `<p style="clear: both; text-align: center; margin: 14px 0;"><img src="${dataUrl}" alt="Graph Diagram" class="e-rte-image e-imgbreak e-imgcenter" style="min-width: 120px; max-width: 100%; width: 440px; height: auto;" /></p><p style="clear: both;"><br></p>`
+    const htmlToInsert = `<p style="clear: both; text-align: center; margin: 8px 0;"><img src="${dataUrl}" alt="Graph Diagram" class="e-rte-image e-imgbreak e-imgcenter obe-graph-diagram" data-obe-diagram="true" style="min-width: 120px; max-width: 100%; width: ${displayWidth}px; height: auto;" /></p><p style="clear: both;"><br></p>`
     editor.executeCommand('insertHTML', htmlToInsert)
     setShowGraphGenModal(false)
   }
@@ -3526,7 +7418,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const newMarks = Array(effectiveCount).fill(10)
           if (q.marks) q.marks.forEach((m, k) => { if (k < effectiveCount) newMarks[k] = m })
           // Preserve existing typed content
-          const newContents = Array(effectiveCount).fill('&nbsp;')
+          const newContents = Array(effectiveCount).fill('')
           if (q.contents) q.contents.forEach((c, k) => { if (k < effectiveCount) newContents[k] = c })
           // Preserve existing blooms
           const newBlooms = Array(effectiveCount).fill('')
@@ -3537,7 +7429,50 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           if (Array.isArray(q.subSpaceRows)) {
             q.subSpaceRows.forEach((sp, k) => { if (k < effectiveCount) newSubSpaces[k] = sp })
           }
-          return { ...q, subCount: newCount, marks: newMarks, contents: newContents, blooms: newBlooms, subSpaceRows: newSubSpaces }
+
+          // Preserve existing sub-question level OR settings
+          const newSubHasOr = Array(effectiveCount).fill(false)
+          if (q.subHasOr) q.subHasOr.forEach((h, k) => { if (k < effectiveCount) newSubHasOr[k] = h })
+          const newSubOrMarks = Array(effectiveCount).fill(10)
+          if (q.subOrMarks) q.subOrMarks.forEach((m, k) => { if (k < effectiveCount) newSubOrMarks[k] = m })
+          const newSubOrBlooms = Array(effectiveCount).fill('')
+          if (q.subOrBlooms) q.subOrBlooms.forEach((b, k) => { if (k < effectiveCount) newSubOrBlooms[k] = b })
+          const newSubOrContents = Array(effectiveCount).fill('')
+          if (q.subOrContents) q.subOrContents.forEach((c, k) => { if (k < effectiveCount) newSubOrContents[k] = c })
+
+          // Preserve question-level OR settings
+          const newQOrMarks = Array(effectiveCount).fill(10)
+          if (q.questionOrMarks) q.questionOrMarks.forEach((m, k) => { if (k < effectiveCount) newQOrMarks[k] = m })
+          const newQOrBlooms = Array(effectiveCount).fill('')
+          if (q.questionOrBlooms) q.questionOrBlooms.forEach((b, k) => { if (k < effectiveCount) newQOrBlooms[k] = b })
+          const newQOrContents = Array(effectiveCount).fill('')
+          if (q.questionOrContents) q.questionOrContents.forEach((c, k) => { if (k < effectiveCount) newQOrContents[k] = c })
+
+          const newSubOrBeforeSpace = Array(effectiveCount).fill(1)
+          if (Array.isArray(q.subOrBeforeSpace)) q.subOrBeforeSpace.forEach((v, k) => { if (k < effectiveCount) newSubOrBeforeSpace[k] = v })
+          const newSubOrAfterSpace = Array(effectiveCount).fill(1)
+          if (Array.isArray(q.subOrAfterSpace)) q.subOrAfterSpace.forEach((v, k) => { if (k < effectiveCount) newSubOrAfterSpace[k] = v })
+
+          return {
+            ...q,
+            subCount: newCount,
+            marks: newMarks,
+            contents: newContents,
+            blooms: newBlooms,
+            subSpaceRows: newSubSpaces,
+            subHasOr: newSubHasOr,
+            subOrMarks: newSubOrMarks,
+            subOrBlooms: newSubOrBlooms,
+            subOrContents: newSubOrContents,
+            subOrBeforeSpace: newSubOrBeforeSpace,
+            subOrAfterSpace: newSubOrAfterSpace,
+            hasQuestionOr: Boolean(q.hasQuestionOr),
+            questionOrMarks: newQOrMarks,
+            questionOrBlooms: newQOrBlooms,
+            questionOrContents: newQOrContents,
+            qOrBeforeSpace: q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 1,
+            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1
+          }
         })
       }
     }))
@@ -3554,7 +7489,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const maxLimit = assessment.maxMarks || 200
           const parsed = parseInt(mark)
           newMarks[subIdx] = isNaN(parsed) ? 0 : Math.max(0, Math.min(maxLimit, parsed))
-          return { ...q, marks: newMarks }
+          const newSubOrMarks = Array.isArray(q.subOrMarks) ? [...q.subOrMarks] : [...newMarks]
+          newSubOrMarks[subIdx] = newMarks[subIdx]
+          const newQOrMarks = Array.isArray(q.questionOrMarks) ? [...q.questionOrMarks] : [...newMarks]
+          if (newQOrMarks[subIdx] !== undefined) newQOrMarks[subIdx] = newMarks[subIdx]
+          return { ...q, marks: newMarks, subOrMarks: newSubOrMarks, questionOrMarks: newQOrMarks }
         })
       }
     }))
@@ -3571,6 +7510,156 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           if (q.blooms) q.blooms.forEach((b, k) => { if (k < q.subCount) newBlooms[k] = b })
           newBlooms[subIdx] = bloomVal
           return { ...q, blooms: newBlooms }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureToggleSubOr = (partIdx, qIdx, subIdx) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const currentSubHasOr = Array.isArray(q.subHasOr) ? [...q.subHasOr] : Array(count).fill(false)
+          currentSubHasOr[subIdx] = !currentSubHasOr[subIdx]
+
+          const currentSubOrBlooms = Array.isArray(q.subOrBlooms) ? [...q.subOrBlooms] : Array(count).fill('')
+          if (!currentSubOrBlooms[subIdx] && q.blooms && q.blooms[subIdx]) {
+            currentSubOrBlooms[subIdx] = q.blooms[subIdx]
+          }
+
+          const currentSubOrMarks = Array.isArray(q.subOrMarks) ? [...q.subOrMarks] : Array(count).fill(q.marks[subIdx] || 10)
+          currentSubOrMarks[subIdx] = q.marks[subIdx] || 10
+
+          return {
+            ...q,
+            subHasOr: currentSubHasOr,
+            subOrBlooms: currentSubOrBlooms,
+            subOrMarks: currentSubOrMarks
+          }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureToggleQuestionOr = (partIdx, qIdx) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const newHasQuestionOr = !q.hasQuestionOr
+          const currentQOrBlooms = Array.isArray(q.questionOrBlooms) ? [...q.questionOrBlooms] : Array(count).fill('')
+          if (newHasQuestionOr && q.blooms) {
+            q.blooms.forEach((b, idx) => {
+              if (idx < count && !currentQOrBlooms[idx]) currentQOrBlooms[idx] = b
+            })
+          }
+          return {
+            ...q,
+            hasQuestionOr: newHasQuestionOr,
+            questionOrMarks: [...(q.marks || Array(count).fill(10))],
+            questionOrBlooms: currentQOrBlooms
+          }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetSubOrBloom = (partIdx, qIdx, subIdx, bloomVal) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const newBlooms = Array.isArray(q.subOrBlooms) ? [...q.subOrBlooms] : Array(count).fill('')
+          newBlooms[subIdx] = bloomVal
+          return { ...q, subOrBlooms: newBlooms }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetQuestionOrBloom = (partIdx, qIdx, subIdx, bloomVal) => {
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const newBlooms = Array.isArray(q.questionOrBlooms) ? [...q.questionOrBlooms] : Array(count).fill('')
+          newBlooms[subIdx] = bloomVal
+          return { ...q, questionOrBlooms: newBlooms }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetQuestionOrBeforeSpace = (partIdx, qIdx, val) => {
+    const parsed = Math.max(0, Math.min(10, parseInt(val) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          return { ...q, qOrBeforeSpace: parsed }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetQuestionOrAfterSpace = (partIdx, qIdx, val) => {
+    const parsed = Math.max(0, Math.min(10, parseInt(val) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          return { ...q, qOrAfterSpace: parsed }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetSubOrBeforeSpace = (partIdx, qIdx, subIdx, val) => {
+    const parsed = Math.max(0, Math.min(10, parseInt(val) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const newBefore = Array.isArray(q.subOrBeforeSpace) ? [...q.subOrBeforeSpace] : Array(count).fill(1)
+          newBefore[subIdx] = parsed
+          return { ...q, subOrBeforeSpace: newBefore }
+        })
+      }
+    }))
+  }
+
+  const handlePaperStructureSetSubOrAfterSpace = (partIdx, qIdx, subIdx, val) => {
+    const parsed = Math.max(0, Math.min(10, parseInt(val) || 0))
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return {
+        ...part,
+        questions: part.questions.map((q, j) => {
+          if (j !== qIdx) return q
+          const count = q.subCount === 0 ? 1 : (q.subCount || 1)
+          const newAfter = Array.isArray(q.subOrAfterSpace) ? [...q.subOrAfterSpace] : Array(count).fill(1)
+          newAfter[subIdx] = parsed
+          return { ...q, subOrAfterSpace: newAfter }
         })
       }
     }))
@@ -3786,25 +7875,443 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     setShowPaperStructureModal(false)
   }
 
-  // Clear Table Borders — makes the question paper table look professional (like MS Word "Clear" table style)
+  // ─── Code Snippet Generator Handlers ───
+  const pushCodeHistorySnapshot = (contentToSave = codeContent, start = null, end = null) => {
+    const textarea = codeTextareaRef.current
+    const selStart = start !== null ? start : (textarea ? textarea.selectionStart : (contentToSave ? contentToSave.length : 0))
+    const selEnd = end !== null ? end : (textarea ? textarea.selectionEnd : (contentToSave ? contentToSave.length : 0))
+
+    const stack = codeUndoStackRef.current
+    if (stack.length > 0 && stack[stack.length - 1].value === contentToSave) {
+      return
+    }
+
+    stack.push({
+      value: contentToSave,
+      selectionStart: selStart,
+      selectionEnd: selEnd
+    })
+    if (stack.length > 60) stack.shift()
+    codeRedoStackRef.current = []
+    setCanCodeUndo(true)
+    setCanCodeRedo(false)
+  }
+
+  const handleCodeUndo = () => {
+    if (codeUndoStackRef.current.length === 0) return
+    const textarea = codeTextareaRef.current
+    const currentSnapshot = {
+      value: codeContent,
+      selectionStart: textarea ? textarea.selectionStart : (codeContent ? codeContent.length : 0),
+      selectionEnd: textarea ? textarea.selectionEnd : (codeContent ? codeContent.length : 0)
+    }
+    const previous = codeUndoStackRef.current.pop()
+    codeRedoStackRef.current.push(currentSnapshot)
+
+    setCodeContent(previous.value)
+    setCanCodeUndo(codeUndoStackRef.current.length > 0)
+    setCanCodeRedo(true)
+
+    setTimeout(() => {
+      if (codeTextareaRef.current) {
+        codeTextareaRef.current.value = previous.value
+        codeTextareaRef.current.selectionStart = previous.selectionStart ?? previous.value.length
+        codeTextareaRef.current.selectionEnd = previous.selectionEnd ?? previous.value.length
+        codeTextareaRef.current.focus()
+      }
+    }, 10)
+  }
+
+  const handleCodeRedo = () => {
+    if (codeRedoStackRef.current.length === 0) return
+    const textarea = codeTextareaRef.current
+    const currentSnapshot = {
+      value: codeContent,
+      selectionStart: textarea ? textarea.selectionStart : (codeContent ? codeContent.length : 0),
+      selectionEnd: textarea ? textarea.selectionEnd : (codeContent ? codeContent.length : 0)
+    }
+    const next = codeRedoStackRef.current.pop()
+    codeUndoStackRef.current.push(currentSnapshot)
+
+    setCodeContent(next.value)
+    setCanCodeUndo(true)
+    setCanCodeRedo(codeRedoStackRef.current.length > 0)
+
+    setTimeout(() => {
+      if (codeTextareaRef.current) {
+        codeTextareaRef.current.value = next.value
+        codeTextareaRef.current.selectionStart = next.selectionStart ?? next.value.length
+        codeTextareaRef.current.selectionEnd = next.selectionEnd ?? next.value.length
+        codeTextareaRef.current.focus()
+      }
+    }, 10)
+  }
+
+  const handleCodeTextareaChange = (e) => {
+    const newVal = e.target.value
+    const now = Date.now()
+    if (now - lastCodeSnapshotTimeRef.current > 450) {
+      pushCodeHistorySnapshot(codeContent, e.target.selectionStart, e.target.selectionEnd)
+    }
+    lastCodeSnapshotTimeRef.current = now
+    setCodeContent(newVal)
+  }
+
+  const handleOpenCodeSnippetModal = (existingData = null, autoRunSmartOutput = false) => {
+    try {
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        savedCodeRangeRef.current = sel.getRangeAt(0).cloneRange()
+      }
+    } catch (e) {
+      savedCodeRangeRef.current = null
+    }
+
+    codeUndoStackRef.current = []
+    codeRedoStackRef.current = []
+    lastCodeSnapshotTimeRef.current = 0
+    setCanCodeUndo(false)
+    setCanCodeRedo(false)
+
+    let codeToAnalyze = ''
+    let langToAnalyze = 'cpp'
+
+    if (existingData && existingData.element) {
+      setEditingCodeElement(existingData.element)
+      const rawCode = existingData.code || ''
+      const lang = existingData.language || 'cpp'
+      // Auto-orient / format if the code is single-line or squished
+      const orientedCode = isCodeLikelySingleLine(rawCode) ? smartFormatCode(rawCode, lang) : rawCode
+      codeToAnalyze = orientedCode
+      langToAnalyze = lang
+      setCodeContent(orientedCode)
+      setCodeLanguage(lang)
+      setCodeAlignment(existingData.alignment || 'center')
+      setCodeHasBorder(existingData.hasBorder !== false)
+      setCodeBoxStyle(existingData.hasBorder === false ? 'borderless' : 'exam')
+      setCodeShowLineNumbers(Boolean(existingData.showLineNumbers))
+      setCodeFontSize(existingData.fontSize || '11pt')
+    } else {
+      setEditingCodeElement(null)
+      if (!codeContent) {
+        setCodeContent(CODE_SNIPPET_PRESETS.cpp[0].code)
+        codeToAnalyze = CODE_SNIPPET_PRESETS.cpp[0].code
+      } else {
+        codeToAnalyze = codeContent
+      }
+      langToAnalyze = codeLanguage || 'cpp'
+    }
+    setSmartOutputResult(null)
+    setSmartOutputError('')
+    setSmartOutputLoading(false)
+    setShowCodeSnippetModal(true)
+
+    if (autoRunSmartOutput && codeToAnalyze) {
+      setTimeout(() => {
+        handleRunSmartOutput(codeToAnalyze, langToAnalyze)
+      }, 150)
+    }
+  }
+
+  const handleSmartFormatCode = () => {
+    if (!codeContent) return
+    pushCodeHistorySnapshot(codeContent)
+    const formatted = smartFormatCode(codeContent, codeLanguage)
+    setCodeContent(formatted)
+    setFormatNotice('Code formatted and auto-indented with 4 spaces.')
+    setTimeout(() => setFormatNotice(''), 2500)
+  }
+
+  const handleSelectCodeLanguage = (lang) => {
+    if (codeContent) pushCodeHistorySnapshot(codeContent)
+    setCodeLanguage(lang)
+    setSmartOutputResult(null)
+    setSmartOutputError('')
+    const presets = CODE_SNIPPET_PRESETS[lang]
+    if (presets && presets.length > 0) {
+      setCodeContent(presets[0].code)
+    }
+  }
+
+  const handleSelectCodePreset = (presetCode) => {
+    if (codeContent) pushCodeHistorySnapshot(codeContent)
+    setCodeContent(presetCode)
+    setSmartOutputResult(null)
+    setSmartOutputError('')
+  }
+
+  // Smart Code Output: Simulates execution & checks for syntax/compile/runtime errors with Gemini
+  const handleRunSmartOutput = async (overrideCode = null, overrideLang = null) => {
+    const codeToRun = (overrideCode !== null ? overrideCode : codeContent || '').trim()
+    const langToRun = overrideLang || codeLanguage || 'cpp'
+    if (!codeToRun) {
+      alert('Please enter or paste code first to analyze its execution output.')
+      return
+    }
+
+    setSmartOutputLoading(true)
+    setSmartOutputError('')
+    setSmartOutputResult(null)
+
+    try {
+      const token = localStorage.getItem('obe-auth-token')
+      const res = await fetch(`${API_BASE}/api/ai/smart-code-output`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          code: codeToRun,
+          language: langToRun
+        })
+      })
+
+      const data = await res.json()
+      if (data && data.success && data.data) {
+        setSmartOutputResult(data.data)
+      } else {
+        setSmartOutputError(data?.message || 'Failed to simulate code execution.')
+      }
+    } catch (err) {
+      console.error('Smart code output error:', err)
+      setSmartOutputError('Failed to connect to smart output service: ' + err.message)
+    } finally {
+      setSmartOutputLoading(false)
+    }
+  }
+
+  const handleCodeTextareaKeyDown = (e) => {
+    // Undo: Ctrl+Z or Cmd+Z (without Shift)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+      e.preventDefault()
+      handleCodeUndo()
+      return
+    }
+
+    // Redo: Ctrl+Y or Cmd+Y, or Ctrl+Shift+Z
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+      e.preventDefault()
+      handleCodeRedo()
+      return
+    }
+
+    // Shortcut: Ctrl+Shift+F or Alt+Shift+F for instant smart formatting
+    if ((e.ctrlKey || e.metaKey || e.altKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+      e.preventDefault()
+      handleSmartFormatCode()
+      return
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      const textarea = e.target
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const value = textarea.value
+
+      pushCodeHistorySnapshot(value, start, end)
+
+      if (e.shiftKey) {
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1
+        if (value.substring(lineStart, lineStart + 4) === '    ') {
+          textarea.value = value.substring(0, lineStart) + value.substring(lineStart + 4)
+          textarea.selectionStart = Math.max(lineStart, start - 4)
+          textarea.selectionEnd = Math.max(lineStart, end - 4)
+        } else if (value[lineStart] === '\t') {
+          textarea.value = value.substring(0, lineStart) + value.substring(lineStart + 1)
+          textarea.selectionStart = Math.max(lineStart, start - 1)
+          textarea.selectionEnd = Math.max(lineStart, end - 1)
+        }
+      } else {
+        textarea.value = value.substring(0, start) + '    ' + value.substring(end)
+        textarea.selectionStart = textarea.selectionEnd = start + 4
+      }
+      setCodeContent(textarea.value)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const textarea = e.target
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const value = textarea.value
+
+      pushCodeHistorySnapshot(value, start, end)
+
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1
+      const currentLine = value.substring(lineStart, start)
+      const matchIndent = currentLine.match(/^\s*/)
+      let indent = matchIndent ? matchIndent[0] : ''
+
+      if (/[:{]\s*$/.test(currentLine)) {
+        indent += '    '
+      }
+
+      const toInsert = '\n' + indent
+      textarea.value = value.substring(0, start) + toInsert + value.substring(end)
+      textarea.selectionStart = textarea.selectionEnd = start + toInsert.length
+      setCodeContent(textarea.value)
+    }
+  }
+
+  const handleCopyCodeToClipboard = () => {
+    if (!codeContent) return
+    navigator.clipboard.writeText(codeContent).then(() => {
+      setCopiedCodeNotice(true)
+      setTimeout(() => setCopiedCodeNotice(false), 2000)
+    }).catch(() => {})
+  }
+
+  const handleDeleteSelectedCodeBlock = () => {
+    if (!selectedCodeBlockInfo?.element) return
+    const editor = rteRef.current
+    if (editor && editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+    const elem = selectedCodeBlockInfo.element
+    const nextP = elem.nextElementSibling
+    if (nextP && nextP.tagName === 'P' && (nextP.innerHTML === '<br>' || nextP.innerHTML === '')) {
+      nextP.remove()
+    }
+    elem.remove()
+    if (editor?.contentModule?.getEditPanel) {
+      const newHtml = editor.contentModule.getEditPanel().innerHTML
+      setEditorValue(newHtml)
+      if (typeof editor.value !== 'undefined') editor.value = newHtml
+    }
+    setSelectedCodeBlockInfo(null)
+  }
+
+  const handleToggleSelectedCodeBorder = () => {
+    if (!selectedCodeBlockInfo?.element) return
+    const editor = rteRef.current
+    if (editor && editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+    const container = selectedCodeBlockInfo.element
+    const pre = container.querySelector('pre.obe-code-block')
+    const currentHasBorder = container.getAttribute('data-hasborder') !== 'false'
+    const newHasBorder = !currentHasBorder
+
+    container.setAttribute('data-hasborder', newHasBorder ? 'true' : 'false')
+    if (pre) {
+      pre.style.border = newHasBorder ? '1px solid #000000' : 'none'
+      pre.style.background = newHasBorder ? '#ffffff' : 'transparent'
+      pre.style.padding = newHasBorder ? '8px 14px' : '4px 6px'
+      pre.style.borderRadius = newHasBorder ? '4px' : '0'
+    }
+
+    if (editor?.contentModule?.getEditPanel) {
+      const newHtml = editor.contentModule.getEditPanel().innerHTML
+      setEditorValue(newHtml)
+      if (typeof editor.value !== 'undefined') editor.value = newHtml
+    }
+
+    setSelectedCodeBlockInfo(prev => prev ? {
+      ...prev,
+      hasBorder: newHasBorder,
+      rect: container.getBoundingClientRect()
+    } : null)
+  }
+
+  const handleInsertCodeSnippet = () => {
+    if (!codeContent.trim()) {
+      alert('Please enter or select code first.')
+      return
+    }
+
+    // Auto-Format Safety Check: If single-line or squished code was entered and not yet formatted, format it now!
+    const effectiveCode = isCodeLikelySingleLine(codeContent)
+      ? smartFormatCode(codeContent, codeLanguage)
+      : codeContent
+    if (effectiveCode !== codeContent) {
+      setCodeContent(effectiveCode)
+    }
+
+    const editor = rteRef.current
+    if (!editor) return
+
+    const snippetHtml = generateCodeSnippetHtml({
+      code: effectiveCode,
+      language: codeLanguage,
+      alignment: codeAlignment,
+      hasBorder: codeHasBorder,
+      boxStyle: codeHasBorder ? 'exam' : 'borderless',
+      showLineNumbers: codeShowLineNumbers,
+      fontSize: codeFontSize
+    })
+
+    if (editingCodeElement) {
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      editingCodeElement.outerHTML = snippetHtml
+      if (editor.contentModule && editor.contentModule.getEditPanel) {
+        const newHtml = editor.contentModule.getEditPanel().innerHTML
+        setEditorValue(newHtml)
+        if (typeof editor.value !== 'undefined') editor.value = newHtml
+      }
+      setEditingCodeElement(null)
+    } else {
+      editor.focusIn()
+      try {
+        if (savedCodeRangeRef.current) {
+          const sel = window.getSelection()
+          sel.removeAllRanges()
+          sel.addRange(savedCodeRangeRef.current)
+        }
+      } catch (e) {
+        // Fallback
+      }
+
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      editor.executeCommand('insertHTML', snippetHtml)
+      // DO NOT call saveData() here so Syncfusion undo stack records the undo rollback correctly!
+      savedCodeRangeRef.current = null
+    }
+
+    setShowCodeSnippetModal(false)
+    setTimeout(() => {
+      try {
+        if (editor?.contentModule?.getEditPanel) {
+          editor.contentModule.getEditPanel().focus()
+        } else if (typeof editor?.focusIn === 'function') {
+          editor.focusIn()
+        }
+      } catch (e) {}
+    }, 60)
+  }
+
+  // Toggle Table Borders (Clear / Restore) — makes the question paper table look professional (like MS Word "Clear" table style)
   const handleClearTableBorders = () => {
     if (!rteRef.current) return
     const editor = rteRef.current
     const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
     if (!editArea) return
 
-    // Find the table the cursor is currently inside (walk up to the OUTERMOST table closest to editArea)
-    const selection = editArea.ownerDocument?.getSelection ? editArea.ownerDocument.getSelection() : window.getSelection()
-    let node = selection?.anchorNode
+    // Find the target table
     let targetTable = null
-    // Walk up and collect ALL ancestor tables — use the outermost one (closest to editArea)
-    while (node && node !== editArea) {
-      if (node.nodeName === 'TABLE') { targetTable = node }
-      node = node.parentNode
+
+    // 1. If user clicked gripper / handle, cells have multi-cell selection
+    const multiCell = editArea.querySelector('.e-cell-select.e-multi-cells-select, .e-multi-cells-select')
+    if (multiCell) {
+      targetTable = multiCell.closest('table')
     }
+
+    // 2. Or walk up from current selection / cursor position
     if (!targetTable) {
-      // Fallback: find the last .e-rte-table in the editor
-      const tables = editArea.querySelectorAll('table.e-rte-table')
+      const selection = editArea.ownerDocument?.getSelection ? editArea.ownerDocument.getSelection() : window.getSelection()
+      let node = selection?.anchorNode
+      while (node && node !== editArea) {
+        if (node.nodeName === 'TABLE') { targetTable = node; break }
+        node = node.parentNode
+      }
+    }
+
+    // 3. Fallback: find the OBE structure table or last table in the editor
+    if (!targetTable) {
+      const tables = editArea.querySelectorAll('table.obe-paper-structure-table, table[data-obe-paper-structure="true"], table.e-rte-table')
       if (tables.length > 0) targetTable = tables[tables.length - 1]
     }
     if (!targetTable) return
@@ -3814,26 +8321,52 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       editor.formatter.saveData()
     }
 
-    // Toggle borders: if currently has visible borders, clear them; otherwise restore them
-    const currentBorder = targetTable.style.border
-    const isBorderVisible = !currentBorder || !currentBorder.includes('none')
-
-    // Only affect DIRECT cells of this table — NOT cells inside nested tables within content cells
     const tbody = targetTable.querySelector(':scope > tbody') || targetTable
     const directCells = Array.from(tbody.querySelectorAll(':scope > tr > td, :scope > tr > th'))
 
-    if (isBorderVisible) {
-      // Clear borders on this table only (professional look)
-      targetTable.style.border = 'none'
-      directCells.forEach(cell => {
-        cell.style.border = 'none'
-      })
-    } else {
-      // Restore borders on this table only (for editing)
+    // Determine if borders are currently cleared:
+    const isExplicitlyCleared = targetTable.getAttribute('data-obe-borders-cleared') === 'true' ||
+      targetTable.classList.contains('borders-cleared') ||
+      targetTable.style.border === 'none' ||
+      targetTable.style.borderWidth === '0px' ||
+      (directCells.length > 0 && (
+        directCells[0].style.border === 'none' ||
+        directCells[0].style.borderWidth === '0px' ||
+        directCells[0].style.borderStyle === 'none'
+      ))
+
+    if (isExplicitlyCleared) {
+      // ── RESTORE BORDERS ──
+      targetTable.removeAttribute('data-obe-borders-cleared')
+      targetTable.classList.remove('borders-cleared')
       targetTable.style.border = '1px solid #000'
       directCells.forEach(cell => {
         cell.style.border = '1px solid #000'
       })
+
+      // Update button text in quick toolbar
+      const btn = document.getElementById('clear-borders-btn')
+      if (btn) {
+        const textSpan = btn.querySelector('span')
+        if (textSpan) textSpan.textContent = 'Clear Borders'
+        btn.classList.remove('e-active')
+      }
+    } else {
+      // ── CLEAR BORDERS ──
+      targetTable.setAttribute('data-obe-borders-cleared', 'true')
+      targetTable.classList.add('borders-cleared')
+      targetTable.style.border = 'none'
+      directCells.forEach(cell => {
+        cell.style.border = 'none'
+      })
+
+      // Update button text in quick toolbar
+      const btn = document.getElementById('clear-borders-btn')
+      if (btn) {
+        const textSpan = btn.querySelector('span')
+        if (textSpan) textSpan.textContent = 'Restore Borders'
+        btn.classList.add('e-active')
+      }
     }
 
     // Save undo history after border mutation
@@ -3964,63 +8497,188 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     }
   }
 
-  // Auto-hide floating quick toolbar as soon as user clicks/focuses inside a cell to write text
-  // Uses delayed hide to catch Syncfusion's async popup rendering that happens AFTER click events
-  useEffect(() => {
-    const hideQuickPopup = () => {
-      const quickPopup = document.querySelector('.e-rte-quick-popup')
-      if (quickPopup) {
-        quickPopup.style.display = 'none'
-      }
+  // Helper to check if a table is explicitly selected (via the top-left corner move/select handle or multi-cell selection)
+  // Ensures regular typing or single-cell cursor focus NEVER triggers table design or table quick toolbars!
+  const isTableFullySelected = (targetEl = null) => {
+    const editor = rteRef.current
+    if (!editor) return false
+    const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+
+    // 1. Gripper / Table Handle check (the top-left corner ✢ move/drag icon)
+    if (targetEl) {
+      const isGripper = targetEl.classList?.contains?.('e-move') ||
+                        targetEl.classList?.contains?.('e-drag-and-drop') ||
+                        targetEl.closest?.('.e-rte-table-resize') ||
+                        targetEl.closest?.('.e-table-box') ||
+                        (typeof targetEl.className === 'string' && (targetEl.className.includes('e-move') || targetEl.className.includes('e-drag-and-drop')))
+      if (isGripper) return true
     }
 
-    const handleCellClickOrFocus = (e) => {
-      const isQuickToolbar = e.target.closest ? e.target.closest('.e-rte-quick-popup') : null
-      // If clicking INSIDE the quick toolbar itself, don't hide it
-      if (isQuickToolbar) return
+    // Check if the gripper in the document is currently active
+    const activeGripper = (editArea || doc).querySelector?.('.e-icons.e-move.e-active, .e-icons.e-drag-and-drop.e-active')
+    if (activeGripper) return true
+
+    // 2. Multi-cell selection check: In Syncfusion RTE, clicking the top-left table handle
+    // highlights all cells in the table with .e-multi-cells-select (light pink background)
+    const multiSelectedCells = (editArea || doc).querySelectorAll?.('.e-cell-select.e-multi-cells-select, .e-multi-cells-select')
+    if (multiSelectedCells && multiSelectedCells.length > 0) return true
+
+    return false
+  }
+
+  // Update contextual Table Design ribbon button visibility (Word-style Contextual Ribbon Tab)
+  // ONLY displays when the table is explicitly selected via top-left corner handle or multi-cell selection.
+  // Stays hidden during normal typing and single-cell editing.
+  const updateTableDesignRibbonVisibility = (targetEl = null) => {
+    const editor = rteRef.current
+    if (!editor) return
+
+    const isSelected = isTableFullySelected(targetEl)
+
+    const ribbonBtns = document.querySelectorAll('#table-design-ribbon-btn')
+    ribbonBtns.forEach(btn => {
+      const item = btn.closest('.e-toolbar-item')
+      if (item) {
+        item.style.display = isSelected ? 'inline-flex' : 'none'
+      }
+    })
+  }
+
+  // Intercept Syncfusion Quick Toolbar before it opens.
+  // The table quick toolbar should ONLY open when the table is explicitly selected (via the corner handle).
+  // When the user is simply typing or moving the cursor inside a cell, it is cancelled immediately.
+  const handleBeforeQuickToolbarOpen = (args) => {
+    if (!args) return
+
+    const popupEl = args.popup?.element
+    const id = popupEl?.id || ''
+    const isTablePopup = id.includes('Table') || id.includes('table') ||
+                         Boolean(popupEl?.querySelector?.('#quick-table-design-btn, #clear-borders-btn, .e-rte-table-quick-toolbar')) ||
+                         Boolean(args.targetElement?.closest?.('table'))
+
+    if (isTablePopup) {
+      const tableSelected = isTableFullySelected(args.targetElement)
+      if (!tableSelected) {
+        // User is just typing or cursor is inside a cell — cancel the floating table quick toolbar!
+        args.cancel = true
+        return
+      }
+
+      // Sync Clear / Restore Borders button label to current table border state
+      setTimeout(() => {
+        const editor = rteRef.current
+        const editArea = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+        const targetTable = args.targetElement?.closest?.('table') ||
+                            editArea?.querySelector?.('.e-cell-select.e-multi-cells-select, .e-multi-cells-select')?.closest('table') ||
+                            editArea?.querySelector?.('table.obe-paper-structure-table, table[data-obe-paper-structure="true"]')
+        const btn = document.getElementById('clear-borders-btn')
+        if (btn && targetTable) {
+          const isCleared = targetTable.getAttribute('data-obe-borders-cleared') === 'true' ||
+                            targetTable.classList.contains('borders-cleared') ||
+                            targetTable.style.border === 'none' ||
+                            targetTable.style.borderWidth === '0px'
+          const textSpan = btn.querySelector('span')
+          if (textSpan) textSpan.textContent = isCleared ? 'Restore Borders' : 'Clear Borders'
+          if (isCleared) btn.classList.add('e-active')
+          else btn.classList.remove('e-active')
+        }
+      }, 30)
+    }
+  }
+
+  const handleQuickToolbarClose = () => {
+    setTimeout(() => updateTableDesignRibbonVisibility(null), 50)
+  }
+
+  useEffect(() => {
+    const handleCellInteraction = (e) => {
+      // If typing (keyup), ensure Table Design ribbon button and table quick toolbar remain hidden!
+      if (e.type === 'keyup') {
+        updateTableDesignRibbonVisibility(null)
+        return
+      }
+
+      // If user clicked inside a cell for typing (and NOT on the table move/select handle),
+      // dismiss any open table quick toolbar immediately so it doesn't linger!
+      const isGripper = e.target?.classList?.contains?.('e-move') ||
+                        e.target?.classList?.contains?.('e-drag-and-drop') ||
+                        e.target?.closest?.('.e-rte-table-resize') ||
+                        e.target?.closest?.('.e-table-box')
 
       const targetCell = e.target.closest ? e.target.closest('td, th') : null
+      if (targetCell && !isGripper) {
+        try {
+          const editor = rteRef.current
+          if (editor?.quickToolbarModule) {
+            editor.quickToolbarModule.hideQuickToolbars()
+          }
+        } catch (err) {}
+      }
+
+      // Let Syncfusion finish updating selection state before evaluating table selection
+      updateTableDesignRibbonVisibility(e.target)
+      setTimeout(() => updateTableDesignRibbonVisibility(e.target), 30)
+
       if (targetCell) {
-        // Hide immediately and also after a short delay to catch Syncfusion's async popup
-        hideQuickPopup()
-        setTimeout(hideQuickPopup, 0)
-        setTimeout(hideQuickPopup, 50)
-        setTimeout(hideQuickPopup, 150)
+        // Automatically clean any orphan &nbsp; / \u00a0 space in the cell so the cursor is strictly flush left
+        try {
+          const paras = targetCell.querySelectorAll('p, div')
+          paras.forEach(p => {
+            if (/^(?:&nbsp;|\u00a0|\s)+$/i.test(p.innerHTML.trim())) {
+              p.innerHTML = '<br>'
+            } else if (/^(?:&nbsp;|\u00a0|\s)+/i.test(p.innerHTML)) {
+              p.innerHTML = p.innerHTML.replace(/^(?:&nbsp;|\u00a0|\s)+/gi, '')
+            }
+          })
+          if (/^(?:&nbsp;|\u00a0|\s)+<span/i.test(targetCell.innerHTML.trim())) {
+            targetCell.innerHTML = targetCell.innerHTML.replace(/^(?:&nbsp;|\u00a0|\s)+/gi, '')
+          }
+        } catch (err) {}
       }
     }
 
     const editArea = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
     if (editArea) {
-      editArea.addEventListener('mousedown', handleCellClickOrFocus, true)
-      editArea.addEventListener('click', handleCellClickOrFocus, true)
-      editArea.addEventListener('focusin', handleCellClickOrFocus)
-      editArea.addEventListener('keydown', handleCellClickOrFocus)
+      editArea.addEventListener('click', handleCellInteraction, true)
+      editArea.addEventListener('keyup', handleCellInteraction, true)
+      editArea.addEventListener('mouseup', handleCellInteraction, true)
+      editArea.addEventListener('focusin', handleCellInteraction, true)
+      const onSelectionChange = () => {
+        updateTableDesignRibbonVisibility(null)
+      }
+      document.addEventListener('selectionchange', onSelectionChange)
+
+      // Initial check (hidden by default)
+      setTimeout(() => updateTableDesignRibbonVisibility(null), 200)
+
       return () => {
-        editArea.removeEventListener('mousedown', handleCellClickOrFocus, true)
-        editArea.removeEventListener('click', handleCellClickOrFocus, true)
-        editArea.removeEventListener('focusin', handleCellClickOrFocus)
-        editArea.removeEventListener('keydown', handleCellClickOrFocus)
+        editArea.removeEventListener('click', handleCellInteraction, true)
+        editArea.removeEventListener('keyup', handleCellInteraction, true)
+        editArea.removeEventListener('mouseup', handleCellInteraction, true)
+        editArea.removeEventListener('focusin', handleCellInteraction, true)
+        document.removeEventListener('selectionchange', onSelectionChange)
       }
     }
   }, [loading])
 
-  // Quick Toolbar settings for tables — restores floating toolbar with cycle buttons & clear borders
+  const handleOpenTableDesignModal = () => {
+    setShowTableDesignModal(true)
+  }
+
+  // Quick Toolbar settings for tables & images — streamlined toolbar with Word Table Design & Image Removal
   const quickToolbarSettings = {
+    image: [
+      'Replace', 'Align', 'Caption', 'Remove', '|', 'Display', 'AltText', 'Dimension'
+    ],
     table: [
-      'TableHeader', 'TableRows', 'TableColumns', 'TableCell', '-',
-      'BackgroundColor', 'TableRemove', 'TableCellVerticalAlign', 'Styles',
-      '|',
+      'TableHeader', 'TableRows', 'TableColumns', 'TableCell', '|',
+      'BackgroundColor', 'TableRemove', '|',
       {
-        tooltipText: `Table Align (${tableAlignState.toUpperCase()}) — Click to cycle: Center ➔ Left ➔ Right`,
-        template: `<button class="e-tbar-btn e-control e-btn e-lib" id="table-align-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6H6"/><path d="M21 12H3"/><path d="M18 18H6"/></svg><span style="font-size:11px;font-weight:600;">Table: ${tableAlignState.charAt(0).toUpperCase() + tableAlignState.slice(1)}</span></button>`,
-        click: handleCycleTableAlign
+        tooltipText: 'Open Table Design & Styles Modal (Word Table Ribbon)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="quick-table-design-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:#eff6ff;padding:2px 8px;border-radius:4px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg><span style="font-size:11px;font-weight:700;color:#2563eb;">Table Design</span></button>',
+        click: () => handleOpenTableDesignModal()
       },
-      {
-        tooltipText: `Data Align (${dataAlignState.toUpperCase()}) — Click to cycle: Left ➔ Center ➔ Right ➔ Justify`,
-        template: `<button class="e-tbar-btn e-control e-btn e-lib" id="cell-align-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"/><line x1="15" y1="12" x2="3" y2="12"/><line x1="17" y1="18" x2="3" y2="18"/></svg><span style="font-size:11px;font-weight:600;">Data: ${dataAlignState.charAt(0).toUpperCase() + dataAlignState.slice(1)}</span></button>`,
-        click: handleCycleDataAlign
-      },
-      '|',
       {
         tooltipText: 'Toggle Borders (Clear / Restore)',
         template: '<button class="e-tbar-btn e-control e-btn e-lib" id="clear-borders-btn" tabIndex="-1" style="display:flex;align-items:center;gap:4px;border:none;background:transparent;padding:2px 8px;cursor:pointer;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 2"/><line x1="3" y1="12" x2="21" y2="12" stroke-dasharray="4 2"/><line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="4 2"/></svg><span style="font-size:11px;font-weight:600;">Clear Borders</span></button>',
@@ -4029,60 +8687,194 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     ]
   }
 
-  const toolbarSettings = {
+  // Handlers for Microsoft Word-Style Paragraph Ribbon Tools
+  const handleToggleParagraphMarks = () => {
+    setShowParagraphMarks(prev => {
+      const next = !prev
+      const btns = document.querySelectorAll('#show-hide-pilcrow-btn')
+      btns.forEach(btn => {
+        if (next) btn.classList.add('e-active')
+        else btn.classList.remove('e-active')
+      })
+      return next
+    })
+  }
+
+  const handleSortAlphabetical = () => {
+    const editor = rteRef.current
+    if (!editor) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      alert('Please highlight/select lines or list items first to sort them alphabetically.')
+      return
+    }
+    const text = sel.toString()
+    if (!text.trim()) return
+
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    if (lines.length <= 1) return
+
+    lines.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    const sortedHtml = lines.map(l => `<p>${l}</p>`).join('')
+
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+    editor.executeCommand('insertHTML', sortedHtml)
+  }
+
+  const handleToggleMultilevelList = () => {
+    const editor = rteRef.current
+    if (!editor) return
+    editor.focusIn()
+    editor.executeCommand('insertOrderedList')
+  }
+
+  // Microsoft Word-Style Font Family and Font Size Configurations
+  const fontFamilyConfig = useMemo(() => ({
+    default: 'Times New Roman,Times,serif',
+    width: '148px',
+    items: [
+      { text: 'Times New Roman', value: 'Times New Roman,Times,serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Calibri', value: 'Calibri,Candara,Segoe,Segoe UI,Arial,sans-serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Cambria', value: 'Cambria,Georgia,serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Arial', value: 'Arial,Helvetica,sans-serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Segoe UI', value: "'Segoe UI',Tahoma,Geneva,Verdana,sans-serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Garamond', value: 'Garamond,Baskerville,Hoefler Text,Times New Roman,serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Georgia', value: 'Georgia,Times,serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Century Gothic', value: "'Century Gothic',CenturyGothic,AppleGothic,sans-serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Trebuchet MS', value: "'Trebuchet MS',Lucida Sans Unicode,Lucida Grande,sans-serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Tahoma', value: 'Tahoma,Verdana,Segoe,sans-serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Verdana', value: 'Verdana,Geneva,sans-serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Book Antiqua', value: "'Book Antiqua',Palatino,Palatino Linotype,serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Palatino Linotype', value: "'Palatino Linotype',Palatino,Book Antiqua,serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Consolas', value: 'Consolas,monaco,Courier New,monospace', command: 'Font', subCommand: 'FontName' },
+      { text: 'Courier New', value: "'Courier New',Courier,monospace", command: 'Font', subCommand: 'FontName' },
+      { text: 'Comic Sans MS', value: "'Comic Sans MS',Chalkboard SE,Comic Neue,cursive", command: 'Font', subCommand: 'FontName' },
+      { text: 'Franklin Gothic Medium', value: "'Franklin Gothic Medium',Arial Bold,sans-serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Impact', value: 'Impact,Haettenschweiler,Arial Narrow Bold,sans-serif', command: 'Font', subCommand: 'FontName' },
+      { text: 'Nirmala UI', value: "'Nirmala UI', sans-serif", command: 'Font', subCommand: 'FontName' },
+      { text: 'Aptos', value: 'Aptos,Calibri,sans-serif', command: 'Font', subCommand: 'FontName' }
+    ]
+  }), [])
+
+  const fontSizeConfig = useMemo(() => ({
+    default: '12pt',
+    width: '65px',
+    items: [
+      { text: '8 pt', value: '8pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '9 pt', value: '9pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '10 pt', value: '10pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '11 pt', value: '11pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '12 pt', value: '12pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '14 pt', value: '14pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '16 pt', value: '16pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '18 pt', value: '18pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '20 pt', value: '20pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '22 pt', value: '22pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '24 pt', value: '24pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '26 pt', value: '26pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '28 pt', value: '28pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '36 pt', value: '36pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '48 pt', value: '48pt', command: 'Font', subCommand: 'FontSize' },
+      { text: '72 pt', value: '72pt', command: 'Font', subCommand: 'FontSize' }
+    ]
+  }), [])
+
+  const toolbarSettings = useMemo(() => ({
     type: 'MultiRow',
     items: [
+      // 📋 CLIPBOARD GROUP
       'Undo', 'Redo', '|',
-      'FormatPainter', '|',
-      'ImportWord', 'ExportWord', 'ExportPdf', '|',
+
+      // 🔤 FONT GROUP (Microsoft Word Ribbon Layout)
+      'FontName',
+      {
+        tooltipText: 'Font Size (Type size e.g. 11, or click arrow)',
+        template: '<div class="word-fontsize-wrapper" id="word-fontsize-wrapper"><input type="text" id="word-fontsize-input" class="word-fontsize-input" value="12" maxlength="4" autocomplete="off" spellcheck="false" title="Font Size (e.g. 11, 12, 14)" /><button type="button" id="word-fontsize-btn" class="word-fontsize-btn" title="Font Size Options" tabIndex="-1"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg></button></div>'
+      },
+      '|',
       'Bold', 'Italic', 'Underline', 'StrikeThrough', '|',
       'SubScript', 'SuperScript', '|',
-      'FontName', 'FontSize', 'FontColor', 'BackgroundColor', '|',
-      'EmojiPicker', 'CreateLink', '|',
-      'Formats', 'Blockquote', '|',
-      'NumberFormatList', 'BulletFormatList', '|',
+      'FontColor', '|',
+      'LowerCase', 'UpperCase', '|',
+      'ClearFormat', '|',
+
+      // 📄 PARAGRAPH GROUP (Exact Microsoft Word Paragraph Ribbon Module)
+      // Top Row of Word Paragraph Module: Bullets, Numbering, Multilevel, Indents, Sort, Pilcrow
+      'BulletFormatList', 'NumberFormatList',
+      {
+        tooltipText: 'Multilevel List (1 ➔ a ➔ i) for Exam Sub-questions',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="multilevel-list-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; padding: 0 4px;" title="Multilevel List (1 ➔ a ➔ i)"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 6H9"/><path d="M21 12H9"/><path d="M21 18H9"/><path d="M4 6V4l1 1"/><path d="M3 11a1 1 0 0 1 1-1h1v3"/><path d="M3 18h2v-2"/></svg></button>',
+        click: handleToggleMultilevelList
+      },
+      '|',
       'Outdent', 'Indent', '|',
       {
-        tooltipText: 'Equation Generator (AI, Presets, Symbols)',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="math-equation-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19L11 5"/><path d="M9 19L16 5"/><path d="M5 12h14"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Equation Generator</span></button>',
-        click: () => handleOpenEquationModal()
+        tooltipText: 'Sort Lines / List Items Alphabetically (A to Z)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="sort-az-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; padding: 0 4px;" title="Sort Alphabetically (A to Z)"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/><path d="M15 4h5l-5 6h5"/><path d="M15 20v-3.5a2.5 2.5 0 0 1 5 0V20"/><path d="M15 18h5"/></svg></button>',
+        click: handleSortAlphabetical
       },
       '|',
       {
-        tooltipText: 'Graph Generator (Trees, Maps, Weighted Graphs)',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="graph-generator-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Graph Generator</span></button>',
-        click: () => setShowGraphGenModal(true)
+        tooltipText: 'Show / Hide Paragraph Marks (¶) & Formatting Guides',
+        template: `<button class="e-tbar-btn e-control e-btn e-lib ${showParagraphMarks ? 'e-active' : ''}" id="show-hide-pilcrow-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; padding: 0 4px;" title="Show/Hide Paragraph Marks (¶)"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4v16"/><path d="M17 4v16"/><path d="M19 4H9.5a4.5 4.5 0 0 0 0 9H13"/></svg></button>`,
+        click: handleToggleParagraphMarks
       },
       '|',
+      // Bottom Row of Word Paragraph Module: Align Left, Center, Align Right, Justify, Line Spacing, Shading, Borders
+      'JustifyLeft', 'JustifyCenter', 'JustifyRight', 'JustifyFull', '|',
+      'LineHeight', '|',
+      'BackgroundColor', '|',
+      {
+        tooltipText: 'Table Borders: Toggle / Clear borders on tables',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="toolbar-table-borders-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; padding: 0 4px;" title="Table Borders"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 12h18"/><path d="M12 3v18"/></svg></button>',
+        click: handleClearTableBorders
+      },
+      '|',
+      'Formats', 'Blockquote', '|',
+
+      // 🛠️ ACADEMIC EXAM & INSERT TOOLS GROUP
       {
         tooltipText: 'Exam Paper Structure Builder (Mid/Final Question Format)',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="paper-structure-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Paper Structure</span></button>',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="paper-structure-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 8px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">Paper Structure</span></button>',
         click: handleOpenPaperStructureModal
       },
-      '|',
-      'Image', 'CreateTable', '|',
-      'LowerCase', 'UpperCase', '|',
-      'Alignments', '|',
-      'ClearFormat', 'Print', 'SourceCode', '|',
+      'CreateTable',
       {
-        tooltipText: 'AI Commands (Select text first)',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="ai-commands-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">AI</span></button>',
+        tooltipText: 'Table Design & Styles (Word Table Ribbon: Presets, Borders, Shading)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="table-design-ribbon-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 8px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg><span style="font-size:11px;font-weight:700;color:#2563eb;">Table Design</span></button>',
+        click: () => handleOpenTableDesignModal()
+      },
+      'Image', 'CreateLink', 'EmojiPicker', '|',
+      {
+        tooltipText: 'Programming Code Snippet Generator (C++, Python, Pseudocode)',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="code-snippet-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 8px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span style="font-size:11px;font-weight:700;color:#2563eb;">Code</span></button>',
+        click: () => handleOpenCodeSnippetModal()
+      },
+      '|',
+      {
+        tooltipText: 'AI Assistant & Question Suggestions',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="ai-commands-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 8px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg><span style="font-size:11px;font-weight:700;color:#059669;">AI</span></button>',
         click: handleAiButtonClick
+      },
+      '|',
+
+      // 💾 FILE & EXPORT GROUP
+      'ExportWord', 'ExportPdf', 'Print', '|',
+      {
+        tooltipText: 'Import Word Document (.docx) via Mammoth',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="import-word-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; gap: 4px; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-up"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 12v6"/><path d="m9 15 3-3 3 3"/></svg><span style="font-size:11px;font-weight:600;color:#4b5563;">Import</span></button>',
+        click: handleCustomImportClick
       },
       '|',
       {
         tooltipText: 'Fullscreen Editor (Toggle view)',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="fullscreen-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg></button>',
+        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="fullscreen-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent; padding: 0 6px;"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg></button>',
         click: handleToggleFullscreen
-      },
-      '|',
-      {
-        tooltipText: 'Import Word Document (.docx) via Mammoth',
-        template: '<button class="e-tbar-btn e-control e-btn e-lib" id="import-word-btn" tabIndex="-1" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; background: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-up" style="display: inline-block; vertical-align: middle;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 12v6"/><path d="m9 15 3-3 3 3"/></svg></button>',
-        click: handleCustomImportClick
       }
     ]
-  }
+  }), [showParagraphMarks])
 
   // Paste Cleanup configuration - prompts user when pasting from Word
   const pasteCleanupConfig = {
@@ -4100,55 +8892,494 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     )
   }
 
-  const renderSimilarityCheckerCard = (inFullscreen = false) => (
-    <div className={`bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4 ${inFullscreen ? 'flex flex-col h-full overflow-hidden' : ''}`}>
-      <div className="flex items-center justify-between border-b pb-3 font-sans shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200/80 shadow-xs">
-            <ShieldCheck size={20} />
+  const renderQuestionCoMappingCard = (inFullscreen = false) => {
+    const totalAllocated = questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)
+    const isMarksExact = totalAllocated === assessment.maxMarks
+
+    return (
+      <div
+        className={`bg-white rounded-2xl shadow-md border border-gray-150 p-5 ${
+          inFullscreen
+            ? 'flex flex-col h-full overflow-hidden select-text shadow-xl'
+            : 'space-y-4'
+        }`}
+      >
+        {/* Header */}
+        <div className="border-b pb-3 shrink-0 font-sans space-y-2.5">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 shadow-2xs">
+              <CheckSquare size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-gray-800 leading-tight">Question wise CO Mapping</h3>
+              <p className="text-[11px] text-gray-500 font-medium">Map each question to its marks and CO</p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-lg font-extrabold text-gray-800">Question Similarity Checker</h3>
-            <p className="text-[11px] text-gray-500 font-medium">AI-powered originality analysis against archived papers</p>
+
+          {inFullscreen && (
+            <div className="flex items-center justify-between bg-gray-50/80 border border-gray-200 rounded-xl px-3 py-1.5 shadow-2xs">
+              <span className="text-xs font-bold text-gray-600">Number of Questions:</span>
+              <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleNumQuestionsChange(Math.max(0, Number(numQuestions) - 1))}
+                  disabled={Number(numQuestions) <= 0}
+                  className="w-6 h-6 rounded bg-gray-50 hover:bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-xs disabled:opacity-40 cursor-pointer transition-colors"
+                  title="Decrease questions"
+                >
+                  <Minus size={12} strokeWidth={2.5} />
+                </button>
+                <span className="px-2 text-xs font-black text-gray-800 min-w-[28px] text-center">{numQuestions}</span>
+                <button
+                  type="button"
+                  onClick={() => handleNumQuestionsChange(Number(numQuestions) + 1)}
+                  className="w-6 h-6 rounded bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center font-bold text-xs cursor-pointer transition-colors"
+                  title="Increase questions"
+                >
+                  <Plus size={12} strokeWidth={2.5} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {isExtraCT && (
+          <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl text-[11px] font-semibold text-indigo-900 flex items-center gap-2 shrink-0">
+            <AlertCircle size={15} className="text-indigo-600 shrink-0" />
+            <span>All questions auto-mapped to <strong>{assessment.co || 'Target CO'}</strong> (inherited from {parentName}).</span>
+          </div>
+        )}
+
+        {/* Question List */}
+        {questions.length === 0 ? (
+          <div className={`text-center py-8 ${inFullscreen ? 'flex-1 flex flex-col justify-center items-center' : ''}`}>
+            <p className="text-sm text-gray-400 font-semibold">No questions configured.</p>
+            <p className="text-xs text-gray-400 mt-1">Set the number of questions above.</p>
+          </div>
+        ) : (
+          <div
+            className={`space-y-3 pr-1.5 ${
+              inFullscreen
+                ? 'flex-1 min-h-0 overflow-y-auto'
+                : 'max-h-[370px] overflow-y-auto'
+            }`}
+          >
+            {questions.map((q, idx) => (
+              <div key={q.questionNumber || idx} className="border border-gray-200/90 hover:border-emerald-300 p-3 rounded-xl space-y-2.5 bg-gray-50/40 transition-colors">
+                <div className="flex justify-between items-center border-b border-gray-200/70 pb-1.5">
+                  <span className="font-black text-xs text-gray-800">{q.questionNumber}</span>
+                  {q.co && q.co !== 'NONE' && (
+                    <span className="text-[10px] font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                      [{q.co}]
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 mb-0.5">Max Marks</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={assessment.maxMarks || 200}
+                      value={q.maxMarks}
+                      onChange={(e) => handleMetadataChange(idx, 'maxMarks', e.target.value)}
+                      className="w-full border border-gray-300 px-2.5 py-1.5 rounded-lg bg-white font-bold text-gray-800 text-xs focus:ring-1 focus:ring-emerald-500 outline-none shadow-2xs"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <label className="block text-[10px] font-bold text-gray-500">Mapped CO</label>
+                      {isExtraCT && (
+                        <span className="text-[8px] font-extrabold text-indigo-700 bg-indigo-50 px-1 py-0.2 rounded border border-indigo-200">
+                          Auto
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      value={q.co}
+                      disabled={isExtraCT}
+                      onChange={(e) => !isExtraCT && handleMetadataChange(idx, 'co', e.target.value)}
+                      className={`w-full border border-gray-300 px-2 py-1.5 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-2xs ${
+                        isExtraCT ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-dashed' : 'bg-white text-gray-800'
+                      }`}
+                    >
+                      {availableCOs.map(coVal => (
+                        <option key={coVal} value={coVal}>{coVal}</option>
+                      ))}
+                      <option value="NONE">NONE</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Footer: Total Allocated Marks */}
+        <div className={`pt-2 shrink-0 ${inFullscreen ? 'mt-auto' : ''}`}>
+          <div className="flex justify-between items-center text-xs font-bold text-gray-700 bg-gray-50 p-2.5 rounded-xl border border-gray-200 shadow-2xs">
+            <span>Total Allocated Marks:</span>
+            <span className={`text-xs font-black px-2 py-0.5 rounded-md ${
+              isMarksExact
+                ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                : 'text-amber-800 bg-amber-50 border border-amber-200'
+            }`}>
+              {totalAllocated} / {assessment.maxMarks}
+            </span>
           </div>
         </div>
       </div>
+    )
+  }
 
-      <p className="text-xs text-gray-600 font-medium leading-relaxed shrink-0">
-        Compare your current question paper with all archived question papers for this course across semesters, batches, and sections to check for repetitive questions or high content overlap.
-      </p>
-
-      {/* Run Check Action Button */}
-      <button
-        type="button"
-        onClick={handleRunSimilarityCheck}
-        disabled={similarityLoading}
-        className="w-full bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-800 hover:to-teal-900 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
-      >
-        {similarityLoading ? (
-          <>
-            <Loader2 size={16} className="animate-spin text-emerald-200" />
-            <span>Analyzing Similarity with AI...</span>
-          </>
-        ) : (
-          <>
-            <Sparkles size={16} className="text-emerald-300" />
-            <span>{similarityResults ? 'Re-run Similarity Check' : 'Run Similarity Check'}</span>
-          </>
-        )}
-      </button>
-
-      {/* Error Message */}
-      {similarityError && (
-        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2 animate-fadeIn shrink-0">
-          <AlertCircle size={16} className="text-rose-600 shrink-0 mt-0.5" />
-          <span>{similarityError}</span>
+  const renderReferenceNotesCard = (inFullscreen = false) => {
+    if (!notesStatusInfo?.hasNotes) {
+      if (inFullscreen) return null
+      return (
+        /* Upload Reference Notes Prompt Card when notes are not yet attached */
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/90 p-4 space-y-3 transition-all hover:border-gray-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center border border-gray-200/80 shadow-2xs shrink-0">
+                <BookOpen size={16} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-gray-800 tracking-tight">
+                  Reference Questions
+                </h4>
+                <p className="text-[11px] text-gray-500 font-normal">
+                  Course: <span className="font-semibold text-gray-700">{offering?.course?.courseCode || notesCourseId || 'Active Course'}</span>
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 border border-gray-200">
+              Not Attached
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            Upload teacher's reference question files (.docx, .pdf, .pptx) to unlock real-time question suggestions while writing exam papers.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowNotesModal(true)}
+            className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>Attach Reference Questions</span>
+          </button>
         </div>
-      )}
+      )
+    }
 
-      {/* Results Display Area */}
-      {similarityResults && (
-        <div className={`space-y-4 pt-1 animate-fadeIn ${inFullscreen ? 'flex-1 min-h-0 overflow-y-auto pr-1' : ''}`}>
+    const suggestionsCount = activeNoteSuggestions.length
+    const displayedSuggestions = showAllSuggestions ? activeNoteSuggestions : activeNoteSuggestions.slice(0, 5)
+
+    return (
+      <div className={`bg-white rounded-2xl shadow-sm border border-gray-200/90 p-4 space-y-3.5 transition-all hover:border-gray-300 ${inFullscreen ? 'shrink-0 shadow-md' : ''}`}>
+        {/* Clean, Minimal Professional Academic Header */}
+        <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center justify-center shadow-2xs shrink-0">
+              <BookOpen size={16} strokeWidth={2.2} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h4 className="text-xs font-bold text-gray-900 tracking-tight">
+                  Reference Questions
+                </h4>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveSuggestActive ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`}
+                  title={isLiveSuggestActive ? 'Live suggestions active' : 'Live suggestions paused'}
+                />
+              </div>
+              <p className="text-[11px] text-gray-500 font-normal truncate">
+                Course: <span className="font-semibold text-gray-700">{offering?.course?.courseCode || notesCourseId}</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Live Suggestions Toggle Switch */}
+            <button
+              type="button"
+              onClick={() => setIsLiveSuggestActive(prev => !prev)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer border shadow-2xs ${
+                isLiveSuggestActive
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+              }`}
+              title={isLiveSuggestActive ? 'Live suggestions are active — click to pause' : 'Suggestions paused — click to enable'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isLiveSuggestActive ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+              {isLiveSuggestActive ? 'Live' : 'Paused'}
+            </button>
+            <span className="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
+              {notesStatusInfo.totalChunks} Qs
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md border border-transparent hover:border-gray-200 transition-colors cursor-pointer flex items-center justify-center"
+              title="Manage / View Reference Notes"
+            >
+              <Edit3 size={13} />
+            </button>
+          </div>
+        </div>
+
+        {/* File Info Bar */}
+        <div className="bg-gray-50/80 border border-gray-200/70 rounded-xl px-2.5 py-1.5 text-xs text-gray-700 flex items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FileText size={12} className="text-gray-400 shrink-0" />
+            <span className="truncate font-medium text-gray-700 text-[11px]" title={notesStatusInfo.fileName || 'Course Reference Notes'}>
+              {notesStatusInfo.fileName || 'Course Reference Notes'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] font-semibold text-gray-600 bg-white border border-gray-200 px-1.5 py-0.5 rounded uppercase">
+              {notesStatusInfo.fileType || 'Active'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 hover:underline cursor-pointer"
+            >
+              Manage
+            </button>
+          </div>
+        </div>
+
+        {/* Real-time Suggestions Section */}
+        {suggestionsCount > 0 ? (
+          <div className="space-y-2 pt-1 border-t border-gray-100 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-gray-800">
+                  Matched Suggestions
+                </span>
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {suggestionsCount}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveNoteSuggestions([])
+                  setShowAllSuggestions(false)
+                }}
+                className="text-[11px] font-medium text-gray-400 hover:text-red-500 transition-colors px-1.5 py-0.5 rounded hover:bg-gray-100 cursor-pointer"
+                title="Dismiss suggestions"
+              >
+                Clear ✕
+              </button>
+            </div>
+
+            {/* Scrollable Container with dynamic height */}
+            <div className={`${inFullscreen ? 'max-h-[260px] xl:max-h-[300px]' : 'max-h-[340px]'} overflow-y-auto space-y-2 pr-1 custom-scrollbar`}>
+              {displayedSuggestions.map((sug) => {
+                const cleanedText = stripQuestionLeadingNumber(sug.questionText)
+                const parsed = parseScenarioAndTable(sug.questionText)
+                const displayQuestion = parsed.scenarioText ? parsed.questionText : cleanedText
+                const detected = detectEmbeddedCodeInQuestion(displayQuestion)
+                return (
+                  <div
+                    key={sug.id}
+                    className="p-2.5 rounded-xl border border-gray-200 bg-white hover:border-emerald-400 hover:bg-emerald-50/30 transition-all shadow-2xs space-y-2 group"
+                  >
+                    {/* Scenario Context Callout */}
+                    {parsed.scenarioText && (
+                      <div className="bg-indigo-50/70 rounded-lg px-2.5 py-1.5 border border-indigo-200/80 text-[10.5px] text-indigo-900 leading-snug font-medium flex items-start gap-1.5">
+                        <span className="text-indigo-500 shrink-0 mt-0.5">📋</span>
+                        <span className="line-clamp-3">{parsed.scenarioText}</span>
+                      </div>
+                    )}
+                    <p className="text-[11.5px] text-gray-800 font-medium leading-relaxed">
+                      "{detected.hasCode ? detected.promptText : displayQuestion}"
+                    </p>
+                    {detected.hasCode && (
+                      <div className="bg-gray-900 rounded-lg p-2 font-mono text-[10.5px] text-emerald-300 leading-snug overflow-x-auto max-h-[90px] border border-gray-700 shadow-inner">
+                        <pre className="m-0 whitespace-pre font-mono">{detected.codeSnippet}</pre>
+                      </div>
+                    )}
+                    {/* Markdown Table Preview */}
+                    {parsed.markdownTable && (
+                      <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-2xs">
+                        <table className="w-full text-left text-[10.5px] border-collapse">
+                          <thead>
+                            <tr className="bg-gray-100 border-b border-gray-300">
+                              {parsed.markdownTable.headers.map((h, hi) => (
+                                <th key={hi} className="px-2.5 py-1 font-bold text-gray-800 border-r border-gray-200 last:border-r-0">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parsed.markdownTable.rows.map((row, ri) => (
+                              <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50/80'}>
+                                {row.map((cell, ci) => (
+                                  <td key={ci} className="px-2.5 py-1 text-gray-700 border-r border-gray-100 last:border-r-0">{cell}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-1 pt-1.5 border-t border-gray-100">
+                      <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                        {sug.matchPercentage}% Match
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertNoteSuggestion({ ...sug, questionText: cleanedText })}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-lg text-xs font-semibold shadow-2xs hover:shadow-xs transition-all cursor-pointer"
+                      >
+                        <Plus size={12} />
+                        <span>Insert Question</span>
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Smart Expand/Collapse Toggle when results exceed 5 */}
+            {suggestionsCount > 5 && (
+              <button
+                type="button"
+                onClick={() => setShowAllSuggestions(prev => !prev)}
+                className="w-full py-1.5 px-3 bg-gray-50 hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 rounded-lg border border-gray-200 hover:border-emerald-300 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              >
+                {showAllSuggestions ? (
+                  <>
+                    <span>Show top 5 only</span>
+                    <ChevronUp size={13} />
+                  </>
+                ) : (
+                  <>
+                    <span>Show all {suggestionsCount} matching questions (+{suggestionsCount - 5} more)</span>
+                    <ChevronDown size={13} />
+                  </>
+                )}
+              </button>
+            )}
+
+            <p className="text-[10.5px] text-gray-400 italic text-center pt-0.5">
+              Click "Insert Question" to insert into current line
+            </p>
+          </div>
+        ) : !isLiveSuggestActive ? (
+          /* Subtle Paused Helper Tip when Live Suggestions are turned OFF */
+          <div className="bg-amber-50/70 rounded-xl p-2.5 border border-amber-200/60 text-[11px] text-amber-900 leading-snug font-medium space-y-1.5 animate-in fade-in duration-150">
+            <div className="flex items-start gap-2">
+              <span className="text-amber-600 text-xs mt-0.5">⏸️</span>
+              <p>
+                Suggestions are paused Click{' '}
+                <button
+                  type="button"
+                  onClick={() => setIsLiveSuggestActive(true)}
+                  className="font-bold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer inline"
+                >
+                  Live
+                </button>{' '}
+                to resume real-time question suggestions.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className="text-[11px] font-semibold text-amber-800 hover:text-amber-900 hover:underline flex items-center gap-1 cursor-pointer pl-5"
+            >
+              <span>Browse all {notesStatusInfo.totalChunks} indexed questions manually &rarr;</span>
+            </button>
+          </div>
+        ) : (
+          /* Subtle Idle Helper Tip */
+          <div className="bg-gray-50/70 rounded-xl p-2.5 border border-gray-200/60 text-[11px] text-gray-600 leading-snug font-medium space-y-1.5">
+            <div className="flex items-start gap-2">
+              <span className="text-emerald-600 text-xs mt-0.5">💡</span>
+              <p>
+                Question suggestions will automatically appear here as you type in the editor.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer pl-5"
+            >
+              <span>Browse all {notesStatusInfo.totalChunks} indexed questions &rarr;</span>
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderSimilarityCheckerCard = (inFullscreen = false) => {
+    const hasActiveNotes = Boolean(notesStatusInfo?.hasNotes)
+
+    return (
+      <div className={`bg-white rounded-2xl shadow-md border border-gray-150 ${
+        inFullscreen
+          ? hasActiveNotes
+            ? 'p-5 space-y-3.5 shrink-0 shadow-lg'
+            : 'p-6 space-y-4 flex flex-col h-full overflow-hidden'
+          : 'p-6 space-y-4'
+      }`}>
+        <div className="flex items-center justify-between border-b pb-3 font-sans shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200/80 shadow-xs">
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-gray-800">Question Similarity Checker</h3>
+              <p className="text-[11px] text-gray-500 font-medium">AI-powered originality analysis against archived papers</p>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-600 font-medium leading-relaxed shrink-0">
+          Compare your current question paper with all archived question papers for this course across semesters, batches, and sections to check for repetitive questions or high content overlap.
+        </p>
+
+        {/* Run Check Action Button */}
+        <button
+          type="button"
+          onClick={handleRunSimilarityCheck}
+          disabled={similarityLoading}
+          className="w-full bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-800 hover:to-teal-900 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+        >
+          {similarityLoading ? (
+            <>
+              <Loader2 size={16} className="animate-spin text-emerald-200" />
+              <span>Analyzing Similarity with AI...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles size={16} className="text-emerald-300" />
+              <span>{similarityResults ? 'Re-run Similarity Check' : 'Run Similarity Check'}</span>
+            </>
+          )}
+        </button>
+
+        {/* Error Message */}
+        {similarityError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2 animate-fadeIn shrink-0">
+            <AlertCircle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+            <span>{similarityError}</span>
+          </div>
+        )}
+
+        {/* Results Display Area */}
+        {similarityResults && (
+          <div className={`space-y-4 pt-1 animate-fadeIn ${
+            inFullscreen
+              ? hasActiveNotes
+                ? 'max-h-[350px] xl:max-h-[420px] overflow-y-auto pr-1 custom-scrollbar'
+                : 'flex-1 min-h-0 overflow-y-auto pr-1'
+              : ''
+          }`}>
           {similarityResults.message ? (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs font-semibold text-amber-900 flex items-center gap-2">
               <AlertTriangle size={16} className="text-amber-600 shrink-0" />
@@ -4436,7 +9667,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         </div>
       )}
     </div>
-  )
+    )
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -4745,15 +9977,21 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
           {/* Syncfusion Editor (Inline Normal View) */}
           {!isFullscreen && (
-            <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-4">
+            <div className={`bg-white rounded-2xl shadow-md border border-gray-150 p-4 ${showParagraphMarks ? 'show-paragraph-marks' : ''}`}>
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Question Paper Content</h3>
               <RichTextEditorComponent
                 ref={rteRef}
+                created={onRteCreated}
                 value={editorValue}
                 change={(e) => { if (e && e.value !== undefined) setEditorValue(e.value) }}
                 actionBegin={onActionBegin}
+                actionComplete={onActionComplete}
                 toolbarSettings={toolbarSettings}
                 quickToolbarSettings={quickToolbarSettings}
+                beforeQuickToolbarOpen={handleBeforeQuickToolbarOpen}
+                quickToolbarClose={handleQuickToolbarClose}
+                fontFamily={fontFamilyConfig}
+                fontSize={fontSizeConfig}
                 insertImageSettings={insertImageSettings}
                 imageUploading={onImageUploading}
                 imageUploadSuccess={onImageUploadSuccess}
@@ -4782,6 +10020,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowNotesModal(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 border border-emerald-400/50 text-emerald-300 rounded-lg text-xs font-bold shadow-xs cursor-pointer select-none mr-1 transition-colors"
+                    title={notesStatusInfo?.hasNotes ? `Reference Notes Active: ${notesStatusInfo.fileName || 'Notes'} (${notesStatusInfo.totalChunks || 0} questions available) - Click to manage` : 'Upload Reference Notes'}
+                  >
+                    <span className="text-amber-400 font-extrabold">⚡</span>
+                    <span>{notesStatusInfo?.hasNotes ? `Ref Questions (${notesStatusInfo.totalChunks})` : 'Reference Questions'}</span>
+                  </button>
+
                   <button onClick={savePaper} disabled={saving || uploadingCount > 0} className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50">
                     <Save size={14} /> Save
                   </button>
@@ -4798,17 +10046,28 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 </div>
               </div>
 
-              {/* Middle Flex Container (Editor + Similarity Checker) */}
-              <div className="flex-1 min-h-0 overflow-hidden flex justify-center items-stretch gap-6 p-4">
-                {/* Left: Text Editor Container */}
-                <div className="w-full max-w-[880px] bg-white shadow-2xl rounded-sm flex flex-col h-full overflow-hidden shrink-0">
+              {/* Middle Flex Container (CO Mapping + Editor + Similarity Checker) */}
+              <div className="flex-1 min-h-0 overflow-hidden flex justify-center items-stretch gap-4 p-3 xl:p-4">
+                {/* Left: Question wise CO Mapping Container */}
+                <div className="w-[300px] xl:w-[330px] shrink-0 h-full overflow-hidden">
+                  {renderQuestionCoMappingCard(true)}
+                </div>
+
+                {/* Center: Text Editor Container */}
+                <div className={`flex-1 min-w-[500px] max-w-[880px] bg-white shadow-2xl rounded-sm flex flex-col h-full overflow-hidden shrink-0 ${showParagraphMarks ? 'show-paragraph-marks' : ''}`}>
                   <RichTextEditorComponent
                     ref={rteRef}
+                    created={onRteCreated}
                     value={editorValue}
                     change={(e) => { if (e && e.value !== undefined) setEditorValue(e.value) }}
                     actionBegin={onActionBegin}
+                    actionComplete={onActionComplete}
                     toolbarSettings={toolbarSettings}
                     quickToolbarSettings={quickToolbarSettings}
+                    beforeQuickToolbarOpen={handleBeforeQuickToolbarOpen}
+                    quickToolbarClose={handleQuickToolbarClose}
+                    fontFamily={fontFamilyConfig}
+                    fontSize={fontSizeConfig}
                     insertImageSettings={insertImageSettings}
                     imageUploading={onImageUploading}
                     imageUploadSuccess={onImageUploadSuccess}
@@ -4823,8 +10082,13 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </RichTextEditorComponent>
                 </div>
 
-                {/* Right: Similarity Checker Container (NO outer scrollbar, height matches editor exactly) */}
-                <div className="w-[380px] shrink-0 h-full overflow-hidden">
+                {/* Right: Reference Notes + Similarity Checker Container */}
+                <div className={`w-[340px] xl:w-[380px] shrink-0 h-full select-text ${
+                  notesStatusInfo?.hasNotes
+                    ? 'overflow-y-auto space-y-3.5 pr-1.5 custom-scrollbar'
+                    : 'overflow-hidden flex flex-col'
+                }`}>
+                  {notesStatusInfo?.hasNotes && renderReferenceNotesCard(true)}
                   {renderSimilarityCheckerCard(true)}
                 </div>
               </div>
@@ -4845,44 +10109,57 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
             <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3 font-sans">Assessment Settings</h3>
             <div className="space-y-4 text-xs font-semibold text-gray-600">
-              <div className="grid grid-cols-2 gap-3">
+              {isAssignmentOrReport ? (
                 <div>
-                  <label className="block font-bold text-gray-600 mb-1">Level</label>
-                  <select
-                    value={level || '1'}
-                    onChange={(e) => setLevel(e.target.value)}
-                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-white font-extrabold text-gray-800 shadow-2xs"
-                  >
-                    <option value="1">Level 1</option>
-                    <option value="2">Level 2</option>
-                    <option value="3">Level 3</option>
-                    <option value="4">Level 4</option>
-                  </select>
+                  <label className="block font-bold text-gray-700 mb-1 text-xs">Submission Deadline</label>
+                  <input
+                    type="text"
+                    value={deadline}
+                    onChange={(e) => setDeadline(e.target.value)}
+                    placeholder="e.g. 10 August 2026"
+                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none bg-white font-bold text-gray-800 text-xs shadow-2xs"
+                  />
                 </div>
-                <div>
-                  <label className="block font-bold text-gray-600 mb-1">Term</label>
-                  <select
-                    value={term || 'I'}
-                    onChange={(e) => setTerm(e.target.value)}
-                    className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-white font-extrabold text-gray-800 shadow-2xs"
-                  >
-                    <option value="I">Term I</option>
-                    <option value="II">Term II</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block font-bold text-gray-600 mb-1">
-                  {(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? 'Submission Deadline' : 'Exam Duration'}
-                </label>
-                <input
-                  type="text"
-                  value={(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? deadline : examDuration}
-                  onChange={(e) => (assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? setDeadline(e.target.value) : setExamDuration(e.target.value)}
-                  placeholder={(assessment.type === 'assignment' || assessment.type === 'assignments' || (assessment.name && assessment.name.toLowerCase().includes('assignment')) || assessment.type === 'presentation' || (assessment.name && assessment.name.toLowerCase().includes('presentation')) || assessment.type === 'projectReport' || (assessment.name && assessment.name.toLowerCase().includes('project'))) ? 'e.g. 10 August 2026' : 'e.g. 30 Minutes'}
-                  className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none bg-gray-50/50 font-bold text-gray-800"
-                />
-              </div>
+              ) : (() => {
+                const parsedDuration = parseExamDuration(examDuration)
+                return (
+                  <div>
+                    <label className="block font-bold text-gray-700 mb-1 text-xs">Exam Duration</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={parsedDuration.hours}
+                        onChange={(e) => handleUpdateExamDuration(parseInt(e.target.value, 10), parsedDuration.minutes)}
+                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none bg-white font-bold text-gray-800 shadow-2xs text-xs cursor-pointer"
+                      >
+                        <option value="0">0 hr</option>
+                        <option value="1">1 hr</option>
+                        <option value="2">2 hrs</option>
+                        <option value="3">3 hrs</option>
+                        <option value="4">4 hrs</option>
+                        <option value="5">5 hrs</option>
+                      </select>
+                      <select
+                        value={parsedDuration.minutes}
+                        onChange={(e) => handleUpdateExamDuration(parsedDuration.hours, parseInt(e.target.value, 10))}
+                        className="w-full border border-gray-300 px-3 py-2 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none bg-white font-bold text-gray-800 shadow-2xs text-xs cursor-pointer"
+                      >
+                        <option value="0">0 min</option>
+                        <option value="5">5 min</option>
+                        <option value="10">10 min</option>
+                        <option value="15">15 min</option>
+                        <option value="20">20 min</option>
+                        <option value="25">25 min</option>
+                        <option value="30">30 min</option>
+                        <option value="35">35 min</option>
+                        <option value="40">40 min</option>
+                        <option value="45">45 min</option>
+                        <option value="50">50 min</option>
+                        <option value="55">55 min</option>
+                      </select>
+                    </div>
+                  </div>
+                )
+              })()}
               <div>
                 <label className="block font-bold text-gray-600 mb-1">Number of Questions</label>
                 <div className="flex items-center">
@@ -4916,86 +10193,522 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           </div>
 
           {/* Question wise CO Mapping Card */}
-          <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
-            <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3 font-sans">Question wise CO Mapping</h3>
-            {isExtraCT && (
-              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-semibold text-indigo-900 flex items-center gap-2">
-                <AlertCircle size={16} className="text-indigo-600 shrink-0" />
-                <span>All questions for this Extra CT are auto-mapped to <strong>{assessment.co || 'Target CO'}</strong> (inherited from {parentName}). Question count remains fully customizable.</span>
-              </div>
-            )}
-            <p className="text-xs text-gray-500 font-semibold mb-4">Map each question to its marks and CO.</p>
+          {renderQuestionCoMappingCard(false)}
 
-            {questions.length === 0 ? (
-              <p className="text-sm text-gray-500 font-semibold text-center py-6">No questions configured. Set the number of questions in assessment settings above.</p>
-            ) : (
-              <div className="space-y-4 max-h-[450px] overflow-y-auto pr-1">
-                {questions.map((q, idx) => (
-                  <div key={q.questionNumber} className="border p-4 rounded-xl space-y-3 bg-gray-50/30">
-                    <div className="flex justify-between items-center border-b pb-1.5">
-                      <span className="font-extrabold text-gray-800">{q.questionNumber}</span>
-                      {q.co && q.co !== 'NONE' && (
-                        <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                          [{q.co}]
-                        </span>
-                      )}
-                    </div>
+          {/* Reference Notes Card with Integrated Real-time Suggestions (Above Question Similarity Checker) */}
+          {renderReferenceNotesCard(false)}
 
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <label className="block font-bold text-gray-600 mb-1">Max Marks</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max={assessment.maxMarks || 200}
-                          value={q.maxMarks}
-                          onChange={(e) => handleMetadataChange(idx, 'maxMarks', e.target.value)}
-                          className="w-full border border-gray-300 px-2 py-1.5 rounded-lg bg-white font-semibold"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block font-bold text-gray-600">Mapped CO</label>
-                          {isExtraCT && (
-                            <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
-                              Auto-Mapped
-                            </span>
-                          )}
-                        </div>
-                        <select
-                          value={q.co}
-                          disabled={isExtraCT}
-                          onChange={(e) => !isExtraCT && handleMetadataChange(idx, 'co', e.target.value)}
-                          className={`w-full border border-gray-300 px-2 py-1.5 rounded-lg font-semibold ${isExtraCT ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-dashed' : 'bg-white'}`}
-                        >
-                          {availableCOs.map(coVal => (
-                            <option key={coVal} value={coVal}>{coVal}</option>
-                          ))}
-                          <option value="NONE">NONE</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="pt-2">
-              <div className="flex justify-between items-center text-sm font-bold text-gray-700 bg-gray-50 p-3 rounded-lg border">
-                <span>Total Allocated Marks:</span>
-                <span className={questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0) === assessment.maxMarks ? 'text-green-700' : 'text-yellow-700'}>
-                  {questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)} / {assessment.maxMarks}
-                </span>
-              </div>
-            </div>
-          </div>
 
           {/* Question Similarity Checker Card (Normal View Sidebar) */}
           {renderSimilarityCheckerCard(false)}
         </div>
       </div>
+
+      {/* Selection-based & Right-Click Floating AI Assistant Toolbox & Granular Popover */}
+      {(aiVerifySelection || showFloatingAiMenu || showAiVerifyPopover) && (
+        <ModalPortal>
+          <div
+            ref={aiVerifyPopoverRef}
+            onMouseDown={(e) => {
+              // Prevent clearing editor text selection when interacting with popover or button
+              e.stopPropagation()
+            }}
+            className="fixed z-[9999999] pointer-events-auto select-none font-sans"
+            style={showAiVerifyPopover && popoverPos ? {
+              top: `${popoverPos.top}px`,
+              left: `${popoverPos.left}px`
+            } : {
+              top: `${(floatingBtnPos || aiVerifySelection?.position || { top: 100, left: 100 }).top}px`,
+              left: `${(floatingBtnPos || aiVerifySelection?.position || { top: 100, left: 100 }).left}px`
+            }}
+          >
+            {!showAiVerifyPopover ? (
+              <div id="floating-ai-assistant-wrapper" className="relative flex flex-col items-center">
+                {/* Floating Button (Green/Emerald Theme + Draggable on Press & Hold) - Hidden when opened via right-click */}
+                {!isContextMenuTriggered && (
+                  <div
+                    id="floating-ai-assistant-btn"
+                    onMouseDown={handleFloatingBtnMouseDown}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (!btnDragStartRef.current?.hasMoved) {
+                        setShowFloatingAiMenu(prev => !prev)
+                      }
+                    }}
+                    className="group flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-600 hover:to-teal-600 active:from-emerald-800 text-white text-xs font-bold rounded-full shadow-2xl hover:shadow-emerald-500/40 border border-emerald-300/40 backdrop-blur-md transition-shadow duration-200 cursor-grab active:cursor-grabbing select-none shrink-0"
+                    title="Click to open AI Assistant, or drag to move anywhere"
+                  >
+                    <GripHorizontal size={13} className="text-emerald-200 opacity-80 group-hover:opacity-100 shrink-0" />
+                    <Sparkles size={14} className="text-amber-300 animate-pulse shrink-0" />
+                    <span>AI Assistant</span>
+                    <ChevronDown size={13} className={`text-emerald-200 transition-transform duration-150 ${showFloatingAiMenu ? 'rotate-180' : ''}`} />
+                  </div>
+                )}
+
+                {/* Floating AI Assistant Dropdown Menu (Symmetrically Centered or Direct Context Menu) */}
+                {showFloatingAiMenu && (
+                  <div
+                    onMouseLeave={() => setActiveAiSubmenu(null)}
+                    className={`ai-command-menu ${
+                      isContextMenuTriggered
+                        ? 'relative'
+                        : `absolute ${
+                            ((floatingBtnPos?.top || aiVerifySelection?.position?.top || 0) > (window.innerHeight - 400))
+                              ? 'bottom-full mb-2'
+                              : 'top-full mt-2'
+                          } left-1/2 -translate-x-1/2`
+                    } z-[9999999] bg-white rounded-xl shadow-2xl border border-emerald-200/80 p-1.5 w-[256px] font-sans text-xs animate-in fade-in zoom-in-95 duration-150`}
+                  >
+                    {/* Menu Header Bar (Draggable) */}
+                    <div
+                      onMouseDown={handleFloatingBtnMouseDown}
+                      className="bg-gradient-to-r from-emerald-800 to-teal-800 text-white font-extrabold text-[10px] uppercase tracking-wider py-2 px-3 rounded-lg flex items-center justify-between shadow-sm mb-1.5 cursor-grab active:cursor-grabbing select-none"
+                      title="Drag to move anywhere"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <GripHorizontal size={12} className="text-emerald-300/80" />
+                        <Sparkles size={12} className="text-emerald-300" />
+                        AI ASSISTANT
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] text-emerald-200/90 font-normal">OBE TOOLS</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setShowFloatingAiMenu(false)
+                            setIsContextMenuTriggered(false)
+                            setActiveAiSubmenu(null)
+                          }}
+                          className="hover:bg-emerald-700/80 p-0.5 rounded text-emerald-200 hover:text-white transition-colors cursor-pointer"
+                          title="Close"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* AI CREATION TOOLS */}
+                    <div className="px-2 py-1 text-[9px] font-bold text-emerald-800 uppercase tracking-wider">AI Creation Tools</div>
+                    
+                    {/* First Option: AI Verify [CO / Bloom Level] */}
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        handleTriggerAiVerify();
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 hover:bg-emerald-100 text-emerald-950 font-bold transition-all text-left border border-emerald-200/70 shadow-2xs mb-1 group"
+                    >
+                      <span className="text-sm">🎯</span>
+                      <span className="flex-1 text-[11px]">AI Verify [CO / Bloom Level]</span>
+                      <span className="text-[8px] bg-emerald-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wide">OBE</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        setShowQuestionGenModal(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                    >
+                      <span className="text-sm">📝</span>
+                      <span>Automated Question Gen</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        setShowTableGenModal(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                    >
+                      <span className="text-sm">📊</span>
+                      <span>Automated Data Table</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        handleOpenEquationModal();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                    >
+                      <span className="text-sm">🧮</span>
+                      <span>Math Equation Editor</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        setShowGraphGenModal(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                    >
+                      <span className="text-sm">📈</span>
+                      <span>CS Diagram Studio</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveAiSubmenu(null)}
+                      onClick={() => {
+                        setShowFloatingAiMenu(false);
+                        setIsContextMenuTriggered(false);
+                        setActiveAiSubmenu(null);
+                        handleOpenCodeSnippetModal();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                    >
+                      <span className="text-sm">💻</span>
+                      <span>Code Snippet Editor</span>
+                    </button>
+
+                    <div className="border-t border-gray-100 my-1.5"></div>
+
+
+                    {/* Quick Commands (Text Refinement) */}
+                    <div className="px-2 py-1 text-[9px] font-bold text-gray-400 uppercase tracking-wider">Text Refinement (Select text)</div>
+                    {[
+                      { icon: '✨', label: 'Improve Content', cmd: 'improve' },
+                      { icon: '📝', label: 'Shorten', cmd: 'shorten' },
+                      { icon: '📖', label: 'Elaborate', cmd: 'elaborate' },
+                      { icon: '📋', label: 'Summarize', cmd: 'summarize' },
+                      { icon: '✅', label: 'Check Grammar & Spelling', cmd: 'grammar' },
+                    ].map(item => (
+                      <button
+                        key={item.cmd}
+                        type="button"
+                        onMouseEnter={() => setActiveAiSubmenu(null)}
+                        onClick={() => {
+                          setShowFloatingAiMenu(false);
+                          setActiveAiSubmenu(null);
+                          handleAICommand(item.cmd);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
+                      >
+                        <span className="text-sm">{item.icon}</span>
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+
+                    <div className="border-t border-gray-100 my-1"></div>
+
+                    {/* Change Tone submenu */}
+                    <div
+                      className="group relative"
+                      onMouseEnter={() => setActiveAiSubmenu('tone')}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveAiSubmenu(prev => prev === 'tone' ? null : 'tone')}
+                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-left font-medium transition-all ${
+                          activeAiSubmenu === 'tone'
+                            ? 'bg-emerald-100/90 text-emerald-900 font-bold'
+                            : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-sm">🎭</span>
+                          <span>Change Tone</span>
+                        </div>
+                        <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'tone' ? 'translate-x-0.5' : ''}`} />
+                      </button>
+                      <div
+                        className={`absolute left-full top-0 pl-1.5 z-[100] ${
+                          activeAiSubmenu === 'tone' ? 'block' : 'hidden group-hover:block'
+                        }`}
+                      >
+                        <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] animate-in fade-in duration-100">
+                          {['Academic', 'Formal', 'Professional', 'Casual', 'Friendly'].map(tone => (
+                            <button
+                              key={tone}
+                              type="button"
+                              onClick={() => {
+                                setShowFloatingAiMenu(false);
+                                setActiveAiSubmenu(null);
+                                handleAICommand('tone', tone);
+                              }}
+                              className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-medium transition-all"
+                            >
+                              {tone}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Change Style submenu */}
+                    <div
+                      className="group relative"
+                      onMouseEnter={() => setActiveAiSubmenu('style')}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveAiSubmenu(prev => prev === 'style' ? null : 'style')}
+                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-left font-medium transition-all ${
+                          activeAiSubmenu === 'style'
+                            ? 'bg-emerald-100/90 text-emerald-900 font-bold'
+                            : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-sm">🎨</span>
+                          <span>Change Style</span>
+                        </div>
+                        <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'style' ? 'translate-x-0.5' : ''}`} />
+                      </button>
+                      <div
+                        className={`absolute left-full top-0 pl-1.5 z-[100] ${
+                          activeAiSubmenu === 'style' ? 'block' : 'hidden group-hover:block'
+                        }`}
+                      >
+                        <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] animate-in fade-in duration-100">
+                          {['Formal', 'Informal', 'Concise', 'Detailed'].map(style => (
+                            <button
+                              key={style}
+                              type="button"
+                              onClick={() => {
+                                setShowFloatingAiMenu(false);
+                                setActiveAiSubmenu(null);
+                                handleAICommand('style', style);
+                              }}
+                              className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-medium transition-all"
+                            >
+                              {style}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Translate submenu */}
+                    <div
+                      className="group relative"
+                      onMouseEnter={() => setActiveAiSubmenu('translate')}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveAiSubmenu(prev => prev === 'translate' ? null : 'translate')}
+                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-left font-medium transition-all ${
+                          activeAiSubmenu === 'translate'
+                            ? 'bg-emerald-100/90 text-emerald-900 font-bold'
+                            : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-sm">🌐</span>
+                          <span>Translate</span>
+                        </div>
+                        <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'translate' ? 'translate-x-0.5' : ''}`} />
+                      </button>
+                      <div
+                        className={`absolute left-full bottom-0 pl-1.5 z-[100] ${
+                          activeAiSubmenu === 'translate' ? 'block' : 'hidden group-hover:block'
+                        }`}
+                      >
+                        <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[150px] animate-in fade-in duration-100">
+                          {['Bengali', 'English'].map(lang => (
+                            <button
+                              key={lang}
+                              type="button"
+                              onClick={() => {
+                                setShowFloatingAiMenu(false);
+                                setActiveAiSubmenu(null);
+                                handleAICommand('translate', lang);
+                              }}
+                              className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-medium transition-all"
+                            >
+                              {lang}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Granular Result Popover Card (Green/Emerald Theme with Drag Handle) */
+              <div className="w-[430px] max-w-[95vw] max-h-[92vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-emerald-300 ring-1 ring-emerald-500/20 overflow-hidden font-sans text-xs animate-in fade-in zoom-in-95">
+                {/* Popover Header Bar (System Emerald Gradient + Drag Handle) */}
+                <div
+                  onMouseDown={handleDragStart}
+                  className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-3.5 py-2.5 cursor-move flex items-center justify-between select-none shadow-sm shrink-0"
+                  title="Click and drag to move this box anywhere"
+                >
+                  <div className="flex items-center gap-2 pointer-events-none">
+                    <span className="p-1 bg-white/15 rounded-md border border-white/20">
+                      <Sparkles size={13} className="text-emerald-300" />
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-extrabold text-xs tracking-wide">AI Tag Verifier</span>
+                      {aiVerifySelection.targetInfo?.questionNumber && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-700/90 text-emerald-100 rounded border border-emerald-500/40">
+                          {aiVerifySelection.targetInfo.questionNumber}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Center Drag Hint */}
+                  <div className="flex items-center gap-1 text-[10px] text-emerald-200/80 pointer-events-none font-medium">
+                    <GripHorizontal size={14} className="opacity-80" />
+                    <span>Drag to move</span>
+                  </div>
+
+                  {/* Header Right: Engine badge & Prominent Close Button */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-emerald-200/90 bg-white/10 px-1.5 py-0.5 rounded border border-white/15 font-semibold">
+                      OBE AI Engine
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCloseAiVerify}
+                      className="p-1 hover:bg-white/20 active:bg-white/30 rounded-lg text-emerald-100 hover:text-white transition-all cursor-pointer"
+                      title="Close (ESC)"
+                    >
+                      <X size={16} className="stroke-[2.5]" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Popover Body */}
+                <div className="p-4 space-y-3 bg-white overflow-y-auto max-h-[calc(92vh-50px)]">
+                  {/* Selected Text Excerpt */}
+                  <div 
+                    title={aiVerifySelection.selectedText}
+                    className="px-3 py-2 bg-emerald-50/50 border border-emerald-200/60 rounded-xl text-[11px] text-gray-700 italic font-serif leading-relaxed line-clamp-2"
+                  >
+                    "{aiVerifySelection.selectedText}"
+                  </div>
+
+                  {/* Loading State with Micro-spinner */}
+                  {aiVerifyLoading && (
+                    <div className="py-6 flex flex-col items-center justify-center gap-2.5">
+                      <Loader2 className="animate-spin text-emerald-600" size={26} />
+                      <p className="text-gray-800 font-bold text-xs">Analyzing Bloom taxonomy & Course Outcomes...</p>
+                      <p className="text-gray-400 text-[10px]">Processing via OBE AI Engine</p>
+                    </div>
+                  )}
+
+                  {/* Success Banner */}
+                  {aiVerifySuccessMsg && (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      <span>{aiVerifySuccessMsg}</span>
+                    </div>
+                  )}
+
+                  {/* Results Section */}
+                  {!aiVerifyLoading && aiVerifyResult && (
+                    <div className="space-y-3">
+                      {/* Row 1 (Bloom Suggestion) */}
+                      <div className="p-3 bg-purple-50/40 border border-purple-200/80 rounded-xl space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">🧠</span>
+                            <span className="font-bold text-gray-900 text-xs">Bloom:</span>
+                            <span className="font-extrabold text-purple-800 bg-purple-100 px-2.5 py-0.5 rounded text-[11px] border border-purple-300/80">
+                              {aiVerifyResult.bloom?.suggested} ({aiVerifyResult.bloom?.name || getBloomInfo(aiVerifyResult.bloom?.suggested)?.name})
+                            </span>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getConfidenceBadgeClass(aiVerifyResult.bloom?.confidence)}`}>
+                            {Math.round((aiVerifyResult.bloom?.confidence || 0) * 100)}% confidence
+                          </span>
+                        </div>
+
+                        {/* Full Bloom details - Always fully visible */}
+                        <div className="text-[11px] text-gray-700 leading-relaxed font-normal bg-white/85 rounded-lg p-2.5 border border-purple-100/90 shadow-2xs break-words">
+                          {aiVerifyResult.bloom?.description || getBloomInfo(aiVerifyResult.bloom?.suggested)?.cognitiveExpectation || 'Cognitive domain level'}
+                        </div>
+
+                        <div className="flex justify-between items-center pt-1.5 border-t border-purple-100">
+                          <span className="text-[10px] text-gray-500">
+                            Current: <strong className="text-gray-700">{aiVerifySelection.targetInfo?.existingBloom || 'None'}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyAiTag({ applyBloom: true })}
+                            className="px-3 py-1 bg-purple-700 hover:bg-purple-800 active:bg-purple-900 text-white rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all shadow-sm hover:shadow cursor-pointer"
+                          >
+                            <Check size={12} /> Apply Bloom
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Row 2 (CO Suggestion) */}
+                      <div className="p-3 bg-teal-50/50 border border-teal-200/80 rounded-xl space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">🎯</span>
+                            <span className="font-bold text-gray-900 text-xs">CO:</span>
+                            <span className="font-extrabold text-blue-800 bg-blue-100 px-2.5 py-0.5 rounded text-[11px] border border-blue-300/80">
+                              {aiVerifyResult.co?.suggested}
+                            </span>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getConfidenceBadgeClass(aiVerifyResult.co?.confidence)}`}>
+                            {Math.round((aiVerifyResult.co?.confidence || 0) * 100)}% match
+                          </span>
+                        </div>
+
+                        {/* Full CO details - Always fully visible without dot dot or truncation */}
+                        <div className="text-[11px] text-gray-700 leading-relaxed font-normal bg-white/85 rounded-lg p-2.5 border border-teal-100/90 shadow-2xs break-words">
+                          {getCoDescription(aiVerifyResult.co?.suggested)}
+                        </div>
+
+                        <div className="flex justify-between items-center pt-1.5 border-t border-teal-100">
+                          <span className="text-[10px] text-gray-500">
+                            Current: <strong className="text-gray-700">{aiVerifySelection.targetInfo?.existingCo || 'None'}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyAiTag({ applyCo: true })}
+                            className="px-3.5 py-1 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all shadow-sm hover:shadow cursor-pointer"
+                          >
+                            <Check size={12} /> Apply CO
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Batch Action: Apply Both (Emerald/Teal Gradient) */}
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleApplyAiTag({ applyCo: true, applyBloom: true })}
+                          className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all cursor-pointer"
+                        >
+                          <Sparkles size={14} className="text-amber-300" />
+                          Apply Both [{aiVerifyResult.co?.suggested}→{aiVerifyResult.bloom?.suggested}]
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </ModalPortal>
+      )}
 
       {/* AI Processing Overlay */}
       {aiProcessing && (
@@ -5014,6 +10727,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       {showAiMenu && (
         <ModalPortal>
           <div
+            onMouseLeave={() => setActiveAiSubmenu(null)}
             className="ai-command-menu fixed z-[9999999] bg-white rounded-xl shadow-2xl border border-emerald-200/80 p-1.5 w-[240px] font-sans text-xs animate-in fade-in duration-150"
             style={{ top: aiMenuPosition.top, left: aiMenuPosition.left }}
           >
@@ -5028,19 +10742,62 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
             {/* AI CREATION TOOLS (NEW) */}
             <div className="px-2 py-1 text-[9px] font-bold text-emerald-800 uppercase tracking-wider">AI Creation Tools</div>
+            
+            {/* First Option: AI Verify [CO / Bloom Level] */}
             <button
-              onClick={() => { setShowAiMenu(false); setShowQuestionGenModal(true); }}
+              type="button"
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => {
+                setShowAiMenu(false);
+                setActiveAiSubmenu(null);
+                handleTriggerAiVerify();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 hover:bg-emerald-100 text-emerald-950 font-bold transition-all text-left border border-emerald-200/70 shadow-2xs mb-1 group"
+            >
+              <span className="text-sm">🎯</span>
+              <span className="flex-1 text-[11px]">AI Verify [CO / Bloom Level]</span>
+              <span className="text-[8px] bg-emerald-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wide">OBE</span>
+            </button>
+
+            <button
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); setShowQuestionGenModal(true); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
             >
               <span className="text-sm">🎯</span>
               <span>Automated Question Gen</span>
             </button>
             <button
-              onClick={() => { setShowAiMenu(false); setShowTableGenModal(true); }}
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); setShowTableGenModal(true); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
             >
               <span className="text-sm">📊</span>
               <span>Automated Data Table</span>
+            </button>
+            <button
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); handleOpenEquationModal(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
+            >
+              <span className="text-sm">🧮</span>
+              <span>Math Equation Editor</span>
+            </button>
+            <button
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); setShowGraphGenModal(true); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
+            >
+              <span className="text-sm">📈</span>
+              <span>CS Diagram Studio</span>
+            </button>
+            <button
+              onMouseEnter={() => setActiveAiSubmenu(null)}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); handleOpenCodeSnippetModal(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
+            >
+              <span className="text-sm">💻</span>
+              <span>Code Snippet Editor</span>
             </button>
 
             <div className="border-t border-gray-100 my-1.5"></div>
@@ -5056,7 +10813,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             ].map(item => (
               <button
                 key={item.cmd}
-                onClick={() => handleAICommand(item.cmd)}
+                onMouseEnter={() => setActiveAiSubmenu(null)}
+                onClick={() => { setActiveAiSubmenu(null); handleAICommand(item.cmd); }}
                 className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left"
               >
                 <span className="text-sm">{item.icon}</span>
@@ -5067,56 +10825,134 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             <div className="border-t border-gray-100 my-1"></div>
 
             {/* Change Tone submenu */}
-            <div className="group relative">
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+            <div
+              className="group relative"
+              onMouseEnter={() => setActiveAiSubmenu('tone')}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveAiSubmenu(prev => prev === 'tone' ? null : 'tone')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg font-semibold transition-all text-left ${
+                  activeAiSubmenu === 'tone'
+                    ? 'bg-emerald-100/90 text-emerald-900'
+                    : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                }`}
+              >
                 <div className="flex items-center gap-2.5">
                   <span className="text-sm">🎭</span>
                   <span>Change Tone</span>
                 </div>
-                <ChevronRight size={14} className="text-emerald-600/70" />
+                <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'tone' ? 'translate-x-0.5' : ''}`} />
               </button>
-              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
-                {['Academic', 'Formal', 'Professional', 'Casual', 'Friendly'].map(tone => (
-                  <button key={tone} onClick={() => handleAICommand('tone', tone)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                    {tone}
-                  </button>
-                ))}
+              <div
+                className={`absolute left-full top-0 pl-1.5 z-[100] ${
+                  activeAiSubmenu === 'tone' ? 'block' : 'hidden group-hover:block'
+                }`}
+              >
+                <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] animate-in fade-in duration-100">
+                  {['Academic', 'Formal', 'Professional', 'Casual', 'Friendly'].map(tone => (
+                    <button
+                      key={tone}
+                      type="button"
+                      onClick={() => {
+                        setShowAiMenu(false);
+                        setActiveAiSubmenu(null);
+                        handleAICommand('tone', tone);
+                      }}
+                      className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all"
+                    >
+                      {tone}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Change Style submenu */}
-            <div className="group relative">
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+            <div
+              className="group relative"
+              onMouseEnter={() => setActiveAiSubmenu('style')}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveAiSubmenu(prev => prev === 'style' ? null : 'style')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg font-semibold transition-all text-left ${
+                  activeAiSubmenu === 'style'
+                    ? 'bg-emerald-100/90 text-emerald-900'
+                    : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                }`}
+              >
                 <div className="flex items-center gap-2.5">
                   <span className="text-sm">🎨</span>
                   <span>Change Style</span>
                 </div>
-                <ChevronRight size={14} className="text-emerald-600/70" />
+                <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'style' ? 'translate-x-0.5' : ''}`} />
               </button>
-              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] hidden group-hover:block animate-in fade-in duration-150">
-                {['Formal', 'Informal', 'Concise', 'Detailed'].map(style => (
-                  <button key={style} onClick={() => handleAICommand('style', style)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                    {style}
-                  </button>
-                ))}
+              <div
+                className={`absolute left-full top-0 pl-1.5 z-[100] ${
+                  activeAiSubmenu === 'style' ? 'block' : 'hidden group-hover:block'
+                }`}
+              >
+                <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[160px] animate-in fade-in duration-100">
+                  {['Formal', 'Informal', 'Concise', 'Detailed'].map(style => (
+                    <button
+                      key={style}
+                      type="button"
+                      onClick={() => {
+                        setShowAiMenu(false);
+                        setActiveAiSubmenu(null);
+                        handleAICommand('style', style);
+                      }}
+                      className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all"
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Translate submenu (Restricted to Bengali & English) */}
-            <div className="group relative">
-              <button className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 font-semibold transition-all text-left">
+            <div
+              className="group relative"
+              onMouseEnter={() => setActiveAiSubmenu('translate')}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveAiSubmenu(prev => prev === 'translate' ? null : 'translate')}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg font-semibold transition-all text-left ${
+                  activeAiSubmenu === 'translate'
+                    ? 'bg-emerald-100/90 text-emerald-900'
+                    : 'hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800'
+                }`}
+              >
                 <div className="flex items-center gap-2.5">
                   <span className="text-sm">🌐</span>
                   <span>Translate</span>
                 </div>
-                <ChevronRight size={14} className="text-emerald-600/70" />
+                <ChevronRight size={14} className={`text-emerald-600/70 transition-transform ${activeAiSubmenu === 'translate' ? 'translate-x-0.5' : ''}`} />
               </button>
-              <div className="absolute left-full top-0 ml-1.5 bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[150px] hidden group-hover:block animate-in fade-in duration-150">
-                {['Bengali', 'English'].map(lang => (
-                  <button key={lang} onClick={() => handleAICommand('translate', lang)} className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all">
-                    {lang}
-                  </button>
-                ))}
+              <div
+                className={`absolute left-full bottom-0 pl-1.5 z-[100] ${
+                  activeAiSubmenu === 'translate' ? 'block' : 'hidden group-hover:block'
+                }`}
+              >
+                <div className="bg-white rounded-xl shadow-2xl border border-emerald-100 p-1 w-[150px] animate-in fade-in duration-100">
+                  {['Bengali', 'English'].map(lang => (
+                    <button
+                      key={lang}
+                      type="button"
+                      onClick={() => {
+                        setShowAiMenu(false);
+                        setActiveAiSubmenu(null);
+                        handleAICommand('translate', lang);
+                      }}
+                      className="w-full px-3 py-1.5 rounded-lg hover:bg-emerald-50/80 text-gray-700 hover:text-emerald-800 text-left font-semibold transition-all"
+                    >
+                      {lang}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -5652,8 +11488,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     <Share2 size={20} className="text-emerald-300" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-base leading-tight">Automated Graph & Tree Generator</h3>
-                    <p className="text-xs text-emerald-200">Create vector SVG trees, maps & weighted graphs for exam papers</p>
+                    <h3 className="font-extrabold text-base leading-tight">CS Diagram Studio</h3>
+                    <p className="text-xs text-emerald-200">Create vector SVG graphs, trees, automata state diagrams & maps for exam papers</p>
                   </div>
                 </div>
                 <button onClick={() => setShowGraphGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
@@ -5668,9 +11504,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => {
+                        setGraphCategory('tree')
                         setGraphType('tree')
                         setCustomNodePositions({})
-                        const text = '15-35\n15-9\n15-40\n35-3\n35-6\n40-5\n40-7\n3-1\n3-10\n5-8\n5-4\n5-41'
+                        const text = '15 -> 35\n15 -> 9\n15 -> 40\n35 -> 3\n35 -> 6\n40 -> 5\n40 -> 7\n3 -> 1\n3 -> 10\n5 -> 8\n5 -> 4\n5 -> 41'
                         setGraphEdgesText(text)
                         setEdgeRows([
                           { from: '15', to: '35', weight: '' }, { from: '15', to: '9', weight: '' }, { from: '15', to: '40', weight: '' },
@@ -5680,15 +11517,20 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                           { from: '5', to: '8', weight: '' }, { from: '5', to: '4', weight: '' }, { from: '5', to: '41', weight: '' }
                         ])
                       }}
-                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                        graphCategory === 'tree'
+                          ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
+                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                      }`}
                     >
                       🌳 Tree (Hierarchical)
                     </button>
                     <button
                       onClick={() => {
+                        setGraphCategory('map')
                         setGraphType('map')
                         setCustomNodePositions({})
-                        const text = 'ORADEA-ZERIND: 71\nZERIND-ARAD: 75\nARAD-SIBIU: 140\nSIBIU-FAGARAS: 99\nSIBIU-RIMNICU: 80\nRIMNICU-PITESTI: 97\nPITESTI-BUCHAREST: 101\nBUCHAREST-URZICENI: 85\nURZICENI-VASLUI: 142\nVASLUI-IASI: 92\nIASI-NEAMT: 87'
+                        const text = 'ORADEA -> ZERIND: 71\nZERIND -> ARAD: 75\nARAD -> SIBIU: 140\nSIBIU -> FAGARAS: 99\nSIBIU -> RIMNICU: 80\nRIMNICU -> PITESTI: 97\nPITESTI -> BUCHAREST: 101\nBUCHAREST -> URZICENI: 85\nURZICENI -> VASLUI: 142\nVASLUI -> IASI: 92\nIASI -> NEAMT: 87'
                         setGraphEdgesText(text)
                         setEdgeRows([
                           { from: 'ORADEA', to: 'ZERIND', weight: '71' }, { from: 'ZERIND', to: 'ARAD', weight: '75' }, { from: 'ARAD', to: 'SIBIU', weight: '140' },
@@ -5697,31 +11539,53 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                           { from: 'VASLUI', to: 'IASI', weight: '92' }, { from: 'IASI', to: 'NEAMT', weight: '87' }
                         ])
                       }}
-                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                        graphCategory === 'map'
+                          ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
+                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                      }`}
                     >
-                      🗺️ Map / Romania Network
+                      🗺️ Map / Network
                     </button>
                     <button
                       onClick={() => {
+                        setGraphCategory('graph')
                         setGraphType('directed')
                         setCustomNodePositions({})
-                        setGraphEdgesText('A-B: 10\nB-C: 15\nC-D: 20\nD-A: 5')
+                        setGraphEdgesText('A -> B: 10\nB -> C: 15\nC -> D: 20\nD -> A: 5')
                         setEdgeRows([{ from: 'A', to: 'B', weight: '10' }, { from: 'B', to: 'C', weight: '15' }, { from: 'C', to: 'D', weight: '20' }, { from: 'D', to: 'A', weight: '5' }])
                       }}
-                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                        graphCategory === 'graph'
+                          ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
+                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                      }`}
                     >
-                      ⚖️ Node Weighted Graph
+                      ⚖️ Graph
                     </button>
                     <button
                       onClick={() => {
-                        setGraphType('undirected')
+                        setGraphCategory('automata')
+                        setGraphType('dfa')
+                        setStartState('q0')
+                        setAcceptStates(['q1'])
                         setCustomNodePositions({})
-                        setGraphEdgesText('1-2: 4\n1-3: 2\n2-3: 1\n2-4: 5\n3-4: 8')
-                        setEdgeRows([{ from: '1', to: '2', weight: '4' }, { from: '1', to: '3', weight: '2' }, { from: '2', to: '3', weight: '1' }, { from: '2', to: '4', weight: '5' }, { from: '3', to: '4', weight: '8' }])
+                        const text = 'q0 -> q0: a\nq0 -> q1: b\nq1 -> q1: b\nq1 -> q0: a'
+                        setGraphEdgesText(text)
+                        setEdgeRows([
+                          { from: 'q0', to: 'q0', weight: 'a' },
+                          { from: 'q0', to: 'q1', weight: 'b' },
+                          { from: 'q1', to: 'q1', weight: 'b' },
+                          { from: 'q1', to: 'q0', weight: 'a' }
+                        ])
                       }}
-                      className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold shadow-sm"
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                        graphCategory === 'automata'
+                          ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
+                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                      }`}
                     >
-                      🕸️ Undirected Network
+                      🔄 State Diagram
                     </button>
                   </div>
                 </div>
@@ -5749,7 +11613,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
 
                   <div>
-                    <label className="block font-bold text-gray-700 text-xs mb-1">Graph / Tree Structure Format</label>
+                    <label className="block font-bold text-gray-700 text-xs mb-1">
+                      {graphCategory === 'graph' ? 'Graph Structure Format' : (graphCategory === 'map' ? 'Map Structure Format' : (graphCategory === 'automata' ? 'State Diagram Format' : 'Tree Structure Format'))}
+                    </label>
                     <select
                       value={graphType}
                       onChange={(e) => {
@@ -5758,13 +11624,123 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       }}
                       className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
                     >
-                      <option value="directed">Directed Graph (with Arrows)</option>
-                      <option value="undirected">Undirected Graph (Lines without Arrows)</option>
-                      <option value="tree">Tree Layout (Hierarchical Top-Down)</option>
-                      <option value="map">Map / Network Layout</option>
+                      {graphCategory === 'graph' && (
+                        <>
+                          <option value="directed">Directed Graph (with Arrows)</option>
+                          <option value="undirected">Undirected Graph (Lines without Arrows)</option>
+                          <option value="horizontal">Horizontal Flow (Left to Right)</option>
+                        </>
+                      )}
+                      {graphCategory === 'tree' && (
+                        <>
+                          <option value="tree">Hierarchical Tree (Top-Down, Undirected)</option>
+                          <option value="tree_directed">Hierarchical Tree (Top-Down, Directed)</option>
+                          <option value="tree_lr">Horizontal Tree (Left-to-Right, Undirected)</option>
+                          <option value="tree_lr_directed">Horizontal Tree (Left-to-Right, Directed)</option>
+                          <option value="tree_rl">Horizontal Tree (Right-to-Left, Undirected)</option>
+                          <option value="tree_rl_directed">Horizontal Tree (Right-to-Left, Directed)</option>
+                        </>
+                      )}
+                      {graphCategory === 'map' && (
+                        <>
+                          <option value="map">Undirected Map / Network (without Arrows)</option>
+                          <option value="map_directed">Directed Map / Network (with Arrows)</option>
+                        </>
+                      )}
+                      {graphCategory === 'automata' && (
+                        <>
+                          <option value="dfa">DFA (Deterministic Finite Automata)</option>
+                          <option value="nfa">NFA (Non-Deterministic Finite Automata)</option>
+                          <option value="enfa">ε-NFA (with Epsilon Transitions)</option>
+                          <option value="moore">Moore Machine (State / Output q/x)</option>
+                          <option value="mealy">Mealy Machine (Input / Output a/0)</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 </div>
+
+                {/* Automata / State Diagram Specialized Controls */}
+                {graphCategory === 'automata' && (() => {
+                  const automataNodes = parseGraphLines(graphEdgesText).nodes
+                  return (
+                    <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-sm space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
+                        {/* Start State Indicator Selector */}
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-gray-700 text-xs flex items-center gap-1">
+                            <span className="text-emerald-700 font-extrabold text-sm">➔</span> Start State:
+                          </span>
+                          <select
+                            value={startState}
+                            onChange={(e) => setStartState(e.target.value)}
+                            className="border border-emerald-300 rounded-lg px-2.5 py-1 bg-emerald-50 font-bold text-emerald-900 text-xs focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="">(None)</option>
+                            {automataNodes.map(n => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                          <span className="text-[11px] text-gray-500 italic">(Arrow coming from nowhere)</span>
+                        </div>
+
+                        {/* Quick Insert Symbols */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-gray-500 font-semibold text-[11px]">Quick Insert:</span>
+                          {['ε', 'λ', 'a', 'b', '0', '1'].map(sym => (
+                            <button
+                              key={sym}
+                              type="button"
+                              onClick={() => {
+                                if (edgeRows.length > 0) {
+                                  const lastIdx = edgeRows.length - 1
+                                  const curr = edgeRows[lastIdx].weight
+                                  handleUpdateEdgeRow(lastIdx, 'weight', curr ? `${curr}, ${sym}` : sym)
+                                }
+                              }}
+                              className="px-1.5 py-0.5 bg-gray-100 hover:bg-emerald-100 hover:text-emerald-800 rounded border border-gray-200 text-[11px] font-mono font-bold transition-all"
+                              title={`Append "${sym}" to last transition`}
+                            >
+                              {sym}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Accepting / Final States Chips */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-gray-700 text-xs flex items-center gap-1">
+                          <span className="text-emerald-700 font-extrabold text-sm">⊚</span> Accepting / Final States:
+                        </span>
+                        {automataNodes.map(n => {
+                          const isAccepting = acceptStates.includes(n)
+                          return (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => {
+                                if (isAccepting) {
+                                  setAcceptStates(acceptStates.filter(s => s !== n))
+                                } else {
+                                  setAcceptStates([...acceptStates, n])
+                                }
+                              }}
+                              className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
+                                isAccepting
+                                  ? 'bg-emerald-700 text-white border-emerald-800 ring-2 ring-emerald-400/30'
+                                  : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                              }`}
+                            >
+                              <span className="text-xs">{isAccepting ? '⊚' : '○'}</span>
+                              <span>{n}</span>
+                              {isAccepting && <span className="text-[10px] bg-white/25 px-1 rounded font-normal">Double Circle</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Input Mode Selector */}
                 <div className="flex justify-between items-center">
@@ -5849,17 +11825,39 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   const activeGraphPositions = computeGraphLayout(activeGraphData.nodes, activeGraphData.edges, graphType, customNodePositions)
 
                   return (
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap justify-between items-center gap-2">
                         <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
                           Live Vector SVG Preview ({graphTheme === 'bw' ? 'Black & White' : 'System Theme'})
                         </span>
-                        <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                          🖱️ Click & drag any node with mouse to restructure
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleAutoAlignGraph()}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                            title="Automatically arrange nodes in a mathematically symmetrical balanced layout"
+                          >
+                            <Sparkles size={14} /> Auto-Align Symmetrically
+                          </button>
+                          {Object.keys(customNodePositions).length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => { setCustomNodePositions({}); setActiveGuideLines([]); }}
+                              className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                              title="Reset all manual node drag positions"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-hidden select-none">
+                      <div className="flex justify-between items-center text-[11px] text-gray-600 bg-emerald-50/80 px-3 py-1.5 rounded-lg border border-emerald-200/70">
+                        <span className="flex items-center gap-1">🖱️ Click & drag any node with mouse to reposition</span>
+                        <span className="text-emerald-800 font-semibold flex items-center gap-1">✨ Magnetic alignment guidelines will automatically snap & level nodes</span>
+                      </div>
+
+                      <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-hidden select-none relative">
                         <svg
                           ref={graphSvgRef}
                           viewBox="0 0 600 400"
@@ -5872,62 +11870,217 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                               <path d="M 0 0 L 10 5 L 0 10 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
                             </marker>
+                            <marker id="arrowhead-loop-interactive" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+                              <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
+                            </marker>
                           </defs>
 
-                          {/* Render Edges */}
-                          {activeGraphData.edges.map((edge, idx) => {
-                            const p1 = activeGraphPositions[edge.from]
-                            const p2 = activeGraphPositions[edge.to]
-                            if (!p1 || !p2) return null
-                            const isDirected = (graphType === 'directed' || graphType === 'directed_tree')
-                            const midX = (p1.x + p2.x) / 2
-                            const midY = (p1.y + p2.y) / 2
-                            const badgeW = Math.max(edge.weight.length * 8 + 10, 22)
-
+                          {/* Magnetic Alignment Guidelines (Figma / Illustrator style) */}
+                          {activeGuideLines.map((guide, gIdx) => {
+                            if (guide.type === 'v') {
+                              return (
+                                <g key={`g-v-${gIdx}`} className="pointer-events-none">
+                                  <line
+                                    x1={guide.pos}
+                                    y1="0"
+                                    x2={guide.pos}
+                                    y2="400"
+                                    stroke="#059669"
+                                    strokeWidth="1.5"
+                                    strokeDasharray="4,4"
+                                    opacity="0.85"
+                                  />
+                                  <rect
+                                    x={guide.pos - 40}
+                                    y="8"
+                                    width="80"
+                                    height="16"
+                                    rx="3"
+                                    fill="#047857"
+                                    opacity="0.95"
+                                  />
+                                  <text
+                                    x={guide.pos}
+                                    y="19"
+                                    fontSize="9"
+                                    fontWeight="bold"
+                                    fill="#ffffff"
+                                    textAnchor="middle"
+                                  >
+                                    {guide.label || 'Aligned'}
+                                  </text>
+                                </g>
+                              )
+                            }
                             return (
-                              <g key={idx}>
+                              <g key={`g-h-${gIdx}`} className="pointer-events-none">
                                 <line
-                                  x1={p1.x}
-                                  y1={p1.y}
-                                  x2={p2.x}
-                                  y2={p2.y}
-                                  stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
-                                  strokeWidth="2.5"
-                                  markerEnd={isDirected ? 'url(#arrowhead-interactive)' : undefined}
+                                  x1="0"
+                                  y1={guide.pos}
+                                  x2="600"
+                                  y2={guide.pos}
+                                  stroke="#059669"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="4,4"
+                                  opacity="0.85"
                                 />
-                                {edge.weight && (
-                                  <g>
-                                    <rect
-                                      x={midX - badgeW / 2}
-                                      y={midY - 10}
-                                      width={badgeW}
-                                      height={18}
-                                      rx="4"
-                                      fill="#ffffff"
-                                      stroke={graphTheme === 'bw' ? '#000000' : '#10b981'}
-                                      strokeWidth="1.5"
-                                    />
-                                    <text
-                                      x={midX}
-                                      y={midY + 3}
-                                      fontSize="11"
-                                      fontWeight="bold"
-                                      fill={graphTheme === 'bw' ? '#000000' : '#047857'}
-                                      textAnchor="middle"
-                                    >
-                                      {edge.weight}
-                                    </text>
-                                  </g>
-                                )}
+                                <rect
+                                  x="8"
+                                  y={guide.pos - 8}
+                                  width="80"
+                                  height="16"
+                                  rx="3"
+                                  fill="#047857"
+                                  opacity="0.95"
+                                />
+                                <text
+                                  x="48"
+                                  y={guide.pos + 3}
+                                  fontSize="9"
+                                  fontWeight="bold"
+                                  fill="#ffffff"
+                                  textAnchor="middle"
+                                >
+                                  {guide.label || 'Aligned'}
+                                </text>
                               </g>
                             )
                           })}
+
+                          {/* Render Edges (Multigraph / Multi-edge Symmetrical Curved Arcs) */}
+                          {(() => {
+                            const pairGroups = {}
+                            activeGraphData.edges.forEach((edge, idx) => {
+                              const u = edge.from < edge.to ? edge.from : edge.to
+                              const v = edge.from < edge.to ? edge.to : edge.from
+                              const key = `${u}~~~${v}`
+                              if (!pairGroups[key]) pairGroups[key] = []
+                              pairGroups[key].push(idx)
+                            })
+
+                            return activeGraphData.edges.map((edge, idx) => {
+                              const p1 = activeGraphPositions[edge.from]
+                              const p2 = activeGraphPositions[edge.to]
+                              if (!p1 || !p2) return null
+                              const isDirected = (graphType === 'directed' || graphType === 'horizontal' || graphType.endsWith('_directed') || ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType))
+                              const isSelfLoop = edge.from === edge.to
+
+                              const u = edge.from < edge.to ? edge.from : edge.to
+                              const v = edge.from < edge.to ? edge.to : edge.from
+                              const key = `${u}~~~${v}`
+                              const group = pairGroups[key] || [idx]
+                              const k = group.length
+                              const subIdx = group.indexOf(idx)
+
+                              const pu = activeGraphPositions[u]
+                              const pv = activeGraphPositions[v]
+
+                              let edgePath = null
+                              let midX = (p1.x + p2.x) / 2
+                              let midY = (p1.y + p2.y) / 2
+
+                              if (isSelfLoop) {
+                                const loopGeo = getSelfLoopGeometry(edge.from, activeGraphPositions, activeGraphData.edges, subIdx, {
+                                  isAutomata: ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType) || graphCategory === 'automata',
+                                  startState
+                                })
+                                if (loopGeo) {
+                                  edgePath = loopGeo.path
+                                  midX = loopGeo.midX
+                                  midY = loopGeo.midY
+                                }
+                              } else if (k > 1 && pu && pv) {
+                                const dx = pv.x - pu.x
+                                const dy = pv.y - pu.y
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1
+                                const nx = -dy / dist
+                                const ny = dx / dist
+
+                                const step = Math.min(46, Math.max(30, dist * 0.22))
+                                const offset = (subIdx - (k - 1) / 2) * step
+
+                                if (Math.abs(offset) > 1) {
+                                  const cx = (pu.x + pv.x) / 2 + nx * offset
+                                  const cy = (pu.y + pv.y) / 2 + ny * offset
+                                  midX = (pu.x + pv.x) / 2 + nx * (offset * 0.55)
+                                  midY = (pu.y + pv.y) / 2 + ny * (offset * 0.55)
+                                  edgePath = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`
+                                }
+                              }
+
+                              const badgeW = Math.max(edge.weight.length * 8 + 10, 22)
+
+                              return (
+                                <g key={idx}>
+                                  {edgePath ? (
+                                    <path
+                                      d={edgePath}
+                                      fill="none"
+                                      stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
+                                      strokeWidth="2.5"
+                                      markerEnd={isDirected ? (isSelfLoop ? 'url(#arrowhead-loop-interactive)' : 'url(#arrowhead-interactive)') : undefined}
+                                    />
+                                  ) : (
+                                    <line
+                                      x1={p1.x}
+                                      y1={p1.y}
+                                      x2={p2.x}
+                                      y2={p2.y}
+                                      stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
+                                      strokeWidth="2.5"
+                                      markerEnd={isDirected ? 'url(#arrowhead-interactive)' : undefined}
+                                    />
+                                  )}
+                                  {edge.weight && (
+                                    <g>
+                                      <rect
+                                        x={midX - badgeW / 2}
+                                        y={midY - 10}
+                                        width={badgeW}
+                                        height={18}
+                                        rx="4"
+                                        fill="#ffffff"
+                                        stroke={graphTheme === 'bw' ? '#000000' : '#10b981'}
+                                        strokeWidth="1.5"
+                                      />
+                                      <text
+                                        x={midX}
+                                        y={midY + 3}
+                                        fontSize="11"
+                                        fontWeight="bold"
+                                        fill={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                        textAnchor="middle"
+                                      >
+                                        {edge.weight}
+                                      </text>
+                                    </g>
+                                  )}
+                                </g>
+                              )
+                            })
+                          })()}
+
+                          {/* Automata Initial/Start State Arrow from nowhere */}
+                          {graphCategory === 'automata' && startState && activeGraphPositions[startState] && (
+                            <g className="start-state-indicator pointer-events-none">
+                              <line
+                                x1={activeGraphPositions[startState].x - 46}
+                                y1={activeGraphPositions[startState].y}
+                                x2={activeGraphPositions[startState].x - 23}
+                                y2={activeGraphPositions[startState].y}
+                                stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                strokeWidth="2.5"
+                                markerEnd="url(#arrowhead-interactive)"
+                              />
+                            </g>
+                          )}
 
                           {/* Render Nodes (Interactive Drag & Drop) */}
                           {activeGraphData.nodes.map(node => {
                             const p = activeGraphPositions[node]
                             if (!p) return null
                             const isDragged = draggingNode === node
+                            const isAccepting = graphCategory === 'automata' && acceptStates.includes(node)
                             const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
 
                             return (
@@ -5944,6 +12097,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
                                   strokeWidth={isDragged ? '3.5' : '2.5'}
                                 />
+                                {isAccepting && (
+                                  <circle
+                                    cx={p.x}
+                                    cy={p.y}
+                                    r={17.5}
+                                    fill="none"
+                                    stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                    strokeWidth="2"
+                                  />
+                                )}
                                 <text
                                   x={p.x}
                                   y={p.y + 4}
@@ -5970,7 +12133,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   Cancel
                 </button>
                 <button onClick={handleInsertGraph} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                  <Plus size={16} /> Insert Resizable Graph Diagram into Question Paper
+                  <Plus size={16} /> Insert Resizable CS Diagram into Question Paper
                 </button>
               </div>
             </div>
@@ -6314,25 +12477,17 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
                 </div>
 
-                {/* Editing Existing Table Banner */}
-                {isEditingExistingTable && (
-                  <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between gap-2 text-blue-900 text-xs font-bold shadow-xs">
-                    <span className="flex items-center gap-1.5">
-                      <Sparkles size={14} className="text-blue-600 shrink-0" />
-                      Editing existing exam paper structure — all typed question content is preserved!
-                    </span>
-                    <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-extrabold">
-                      Preserve Mode Active
-                    </span>
+                {/* Teacher Guide Tip */}
+                <div className="px-3.5 py-2.5 bg-amber-50/80 border border-amber-200 rounded-xl flex items-start gap-2.5 shadow-2xs">
+                  <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-[11.5px] text-amber-800 leading-snug space-y-1">
+                    <p>
+                      <strong>Teacher Guide:</strong> Customize sub-questions, marks, Bloom taxonomy codes, and &apos;OR&apos; choices freely — existing typed question content is always preserved automatically.
+                    </p>
+                    <p className="text-amber-700">
+                      After inserting into the editor, click anywhere on the table and select <strong>&quot;Clear Borders&quot;</strong> in the table toolbar to hide gridlines for the final print view.
+                    </p>
                   </div>
-                )}
-
-                {/* Tip about Clear Borders */}
-                <div className="px-3 py-2 bg-amber-50/80 border border-amber-200 rounded-lg flex items-start gap-2">
-                  <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-amber-800 leading-relaxed">
-                    <strong>Tip:</strong> After inserting and typing your questions, click on the table → use the <strong>"Clear Borders"</strong> button in the table toolbar to hide borders for a professional exam paper look.
-                  </p>
                 </div>
 
                 {/* Spacing Rows Formatting Control */}
@@ -6410,7 +12565,18 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         return (
                           <div key={qIdx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-bold text-gray-700">Question {displayQNum}</span>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-gray-700">Question {displayQNum}</span>
+                                <label className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 cursor-pointer select-none hover:bg-amber-100 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(q.hasQuestionOr)}
+                                    onChange={() => handlePaperStructureToggleQuestionOr(partIdx, qIdx)}
+                                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                                  />
+                                  <span>Question &apos;OR&apos; Alternative</span>
+                                </label>
+                              </div>
                               {part.questions.length > 1 && (
                                 <button
                                   onClick={() => handlePaperStructureRemoveQuestion(partIdx, qIdx)}
@@ -6493,6 +12659,61 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                         </select>
                                       </div>
 
+                                      {/* Sub-Q OR toggle */}
+                                      <label className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2 cursor-pointer select-none text-[11px] font-bold text-amber-800" title={`Add alternative choice OR row for ${q.subCount > 1 ? `sub-question ${subLetter}.` : 'this question'}`}>
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(q.subHasOr && q.subHasOr[sIdx])}
+                                          onChange={() => handlePaperStructureToggleSubOr(partIdx, qIdx, sIdx)}
+                                          className="rounded border-amber-400 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                                        />
+                                        <span>OR</span>
+                                      </label>
+
+                                      {/* Sub-Q Alt Bloom when OR is enabled */}
+                                      {q.subHasOr && q.subHasOr[sIdx] && (
+                                        <div className="flex items-center gap-1 ml-1 border-l border-amber-200 pl-2 bg-amber-50/70 rounded px-1 py-0.5">
+                                          <span className="text-[10px] text-amber-700 font-bold">Alt Bloom:</span>
+                                          <select
+                                            value={(q.subOrBlooms && q.subOrBlooms[sIdx]) ? q.subOrBlooms[sIdx] : currentBloom}
+                                            onChange={(e) => handlePaperStructureSetSubOrBloom(partIdx, qIdx, sIdx, e.target.value)}
+                                            className="border border-amber-300 rounded px-1 py-0.5 text-[11px] bg-white font-bold text-amber-800 focus:border-amber-500 outline-none cursor-pointer"
+                                          >
+                                            <option value="">—</option>
+                                            {BLOOM_OPTIONS.map(b => (
+                                              <option key={b} value={b}>{b}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      )}
+
+                                      {/* Sub-Q OR Spacing controls */}
+                                      {q.subHasOr && q.subHasOr[sIdx] && (
+                                        <div className="flex items-center gap-1 ml-1 border-l border-amber-200 pl-2 bg-amber-50/70 rounded px-1.5 py-0.5">
+                                          <span className="text-[10px] text-amber-800 font-bold" title="Spacing rows before / after OR">OR Space:</span>
+                                          <select
+                                            value={Array.isArray(q.subOrBeforeSpace) ? (q.subOrBeforeSpace[sIdx] ?? 1) : 1}
+                                            onChange={(e) => handlePaperStructureSetSubOrBeforeSpace(partIdx, qIdx, sIdx, e.target.value)}
+                                            className="border border-amber-300 rounded px-1 py-0.5 text-[10px] bg-white font-bold text-amber-900 outline-none cursor-pointer"
+                                            title="Blank rows before Sub-Q OR"
+                                          >
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                              <option key={n} value={n}>bef: {n}</option>
+                                            ))}
+                                          </select>
+                                          <select
+                                            value={Array.isArray(q.subOrAfterSpace) ? (q.subOrAfterSpace[sIdx] ?? 1) : 1}
+                                            onChange={(e) => handlePaperStructureSetSubOrAfterSpace(partIdx, qIdx, sIdx, e.target.value)}
+                                            className="border border-amber-300 rounded px-1 py-0.5 text-[10px] bg-white font-bold text-amber-900 outline-none cursor-pointer"
+                                            title="Blank rows after Sub-Q OR"
+                                          >
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                              <option key={n} value={n}>aft: {n}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      )}
+
                                       {/* Per Sub-Q Spacing option after this specific Sub-Q */}
                                       {q.subCount > 1 && sIdx < q.marks.length - 1 && (
                                         <div className="flex items-center gap-1 ml-1 border-l border-gray-200 pl-2">
@@ -6513,6 +12734,75 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   )
                                 })}
                               </div>
+
+                              {/* Question-level OR alternative section */}
+                              {q.hasQuestionOr && (
+                                <div className="w-full mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5 text-xs font-extrabold text-amber-900">
+                                      <span className="px-1.5 py-0.5 bg-amber-200/80 rounded text-[10px] uppercase tracking-wide">Question OR</span>
+                                      <span>Alternative Question Set ({q.subCount > 1 ? `${q.subCount} Sub-Questions` : 'Single Question'})</span>
+                                    </div>
+                                    <span className="text-[11px] text-amber-700 font-medium">Marks match primary ({q.marks.reduce((s, m) => s + (parseInt(m) || 0), 0)} pts)</span>
+                                  </div>
+
+                                  {/* OR Spacing Controls */}
+                                  <div className="flex items-center gap-4 flex-wrap bg-white/70 p-2 rounded-lg border border-amber-200">
+                                    <div className="flex items-center gap-1.5">
+                                      <label className="text-xs text-amber-900 font-bold whitespace-nowrap">Space Before OR:</label>
+                                      <select
+                                        value={q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 1}
+                                        onChange={(e) => handlePaperStructureSetQuestionOrBeforeSpace(partIdx, qIdx, e.target.value)}
+                                        className="border border-amber-300 rounded px-2 py-0.5 text-xs bg-white font-bold text-amber-900 outline-none cursor-pointer focus:border-amber-500"
+                                        title="Blank spacing rows between primary questions and the OR row"
+                                      >
+                                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                          <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 border-l border-amber-200 pl-3">
+                                      <label className="text-xs text-amber-900 font-bold whitespace-nowrap">Space After OR:</label>
+                                      <select
+                                        value={q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1}
+                                        onChange={(e) => handlePaperStructureSetQuestionOrAfterSpace(partIdx, qIdx, e.target.value)}
+                                        className="border border-amber-300 rounded px-2 py-0.5 text-xs bg-white font-bold text-amber-900 outline-none cursor-pointer focus:border-amber-500"
+                                        title="Blank spacing rows between the OR row and alternative questions"
+                                      >
+                                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                          <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <p className="text-[11px] text-amber-800 leading-snug">
+                                    A bold centered <strong>OR</strong> row will be placed after Question {displayQNum}, followed by an alternate set of questions matching the marks and letterings.
+                                  </p>
+                                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                                    {q.marks.map((m, sIdx) => {
+                                      const subLetter = String.fromCharCode(97 + sIdx)
+                                      const altBloom = (q.questionOrBlooms && q.questionOrBlooms[sIdx]) ? q.questionOrBlooms[sIdx] : (q.blooms && q.blooms[sIdx] ? q.blooms[sIdx] : '')
+                                      return (
+                                        <div key={sIdx} className="flex items-center gap-1 bg-white border border-amber-200 rounded px-2 py-0.5 text-xs">
+                                          {q.subCount > 1 && <span className="font-bold text-amber-900">{subLetter}.</span>}
+                                          <span className="text-[10px] text-gray-500">Alt Bloom:</span>
+                                          <select
+                                            value={altBloom}
+                                            onChange={(e) => handlePaperStructureSetQuestionOrBloom(partIdx, qIdx, sIdx, e.target.value)}
+                                            className="border border-gray-300 rounded px-1 py-0.5 text-[11px] bg-amber-50 font-bold text-amber-900 outline-none cursor-pointer"
+                                          >
+                                            <option value="">—</option>
+                                            {BLOOM_OPTIONS.map(b => (
+                                              <option key={b} value={b}>{b}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )
@@ -6540,7 +12830,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
                 {/* Total Marks Summary */}
                 <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl">
-                  <span className="text-xs font-bold text-emerald-800">Total Marks</span>
+                  <div>
+                    <span className="text-xs font-bold text-emerald-800">Total Marks</span>
+                    <span className="block text-[11px] text-emerald-600 font-medium">(Alternative &apos;OR&apos; choices are excluded from cumulative marks)</span>
+                  </div>
                   <span className="text-base font-extrabold text-emerald-700">
                     {paperStructureParts.reduce((sum, p) => sum + p.questions.reduce((qs, q) => qs + q.marks.reduce((ms, m) => ms + (parseInt(m) || 0), 0), 0), 0)}
                   </span>
@@ -6572,6 +12865,588 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 </button>
               </div>
             </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* 💻 Code Snippet Generator Modal (C++, Python, C, Pseudocode) */}
+      {showCodeSnippetModal && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-4xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '92vh' }}>
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
+                    <Terminal size={20} className="text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">
+                      {editingCodeElement ? 'Edit Question Code Snippet' : 'Programming Code Snippet Generator'}
+                    </h3>
+                    <p className="text-xs text-emerald-200">
+                      Formatted C++, C, Python & Pseudocode Blocks for University Exam Papers
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCodeSnippetModal(false)}
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors text-emerald-100 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
+                {/* Language Selection Tabs */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-emerald-200 shadow-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-gray-700 mr-2">Language:</span>
+                    {[
+                      { id: 'cpp', label: 'C++', icon: '⚡' },
+                      { id: 'c', label: 'C', icon: '🔹' },
+                      { id: 'python', label: 'Python', icon: '🐍' },
+                      { id: 'pseudocode', label: 'Pseudocode', icon: '📋' }
+                    ].map(lang => (
+                      <button
+                        key={lang.id}
+                        type="button"
+                        onClick={() => handleSelectCodeLanguage(lang.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          codeLanguage === lang.id
+                            ? 'bg-gradient-to-r from-emerald-700 to-teal-700 text-white shadow-sm ring-1 ring-emerald-800'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        <span>{lang.icon}</span>
+                        <span>{lang.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Preset / Template Selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-gray-500">Preset:</span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) handleSelectCodePreset(e.target.value)
+                      }}
+                      className="border border-gray-300 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-gray-800 focus:ring-2 focus:ring-emerald-500 max-w-[220px]"
+                    >
+                      <option value="">-- Choose Template --</option>
+                      {(CODE_SNIPPET_PRESETS[codeLanguage] || []).map((preset, idx) => (
+                        <option key={idx} value={preset.code}>
+                          {preset.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Styling & Alignment Controls (Core User Customization) */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white p-3.5 rounded-xl border border-gray-200 shadow-xs text-xs">
+                  {/* Alignment Control (Centered vs Left) */}
+                  <div className="space-y-1">
+                    <label className="block font-bold text-gray-700">Block Alignment</label>
+                    <div className="flex rounded-lg border border-gray-300 p-0.5 bg-gray-50">
+                      <button
+                        type="button"
+                        onClick={() => setCodeAlignment('center')}
+                        className={`flex-1 py-1 px-2 rounded-md font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                          codeAlignment === 'center'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="Center the code block on the question paper"
+                      >
+                        <AlignCenter size={13} />
+                        Center
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCodeAlignment('left')}
+                        className={`flex-1 py-1 px-2 rounded-md font-bold text-xs flex items-center justify-center gap-1 transition-all ${
+                          codeAlignment === 'left'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="Align code block to the left margin"
+                      >
+                        <AlignLeft size={13} />
+                        Left
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Exam Border Option (With Border vs No Border) */}
+                  <div className="space-y-1">
+                    <label className="block font-bold text-gray-700">Exam Border Option</label>
+                    <div className="flex rounded-lg border border-gray-300 p-0.5 bg-gray-50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeHasBorder(true)
+                          setCodeBoxStyle('exam')
+                        }}
+                        className={`flex-1 py-1 px-2 rounded-md font-bold text-xs flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          codeHasBorder
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="Include 1px solid black border around code box"
+                      >
+                        <Square size={13} />
+                        With Border
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeHasBorder(false)
+                          setCodeBoxStyle('borderless')
+                        }}
+                        className={`flex-1 py-1 px-2 rounded-md font-bold text-xs flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          !codeHasBorder
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="Borderless clean text"
+                      >
+                        <Minus size={13} />
+                        No Border
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Font Size */}
+                  <div className="space-y-1">
+                    <label className="block font-bold text-gray-700">Font Size</label>
+                    <select
+                      value={codeFontSize}
+                      onChange={(e) => setCodeFontSize(e.target.value)}
+                      className="w-full border border-gray-300 p-1.5 rounded-lg bg-white font-semibold text-xs"
+                    >
+                      <option value="10pt">10pt (Compact Exam Size)</option>
+                      <option value="11pt">11pt (Standard University Size)</option>
+                      <option value="12pt">12pt (Large & Readable)</option>
+                    </select>
+                  </div>
+
+                  {/* Line Numbers Toggle */}
+                  <div className="space-y-1">
+                    <label className="block font-bold text-gray-700">Line Numbers</label>
+                    <button
+                      type="button"
+                      onClick={() => setCodeShowLineNumbers(!codeShowLineNumbers)}
+                      className={`w-full py-1.5 px-2.5 rounded-lg font-bold text-xs border flex items-center justify-center gap-1.5 transition-all ${
+                        codeShowLineNumbers
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800'
+                          : 'bg-gray-50 border-gray-300 text-gray-600'
+                      }`}
+                    >
+                      <ListOrdered size={14} className={codeShowLineNumbers ? 'text-emerald-700' : 'text-gray-400'} />
+                      <span>{codeShowLineNumbers ? 'Line Numbers: ON' : 'Line Numbers: OFF'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Code Textarea with Smart Tab / Indent Keyboard Handling */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                        Code Editor ({codeLanguage.toUpperCase()})
+                      </span>
+                      <span className="text-[11px] text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md font-mono">
+                        {codeContent.split('\n').length} lines
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] text-emerald-700 font-medium hidden sm:inline mr-1">
+                        💡 <strong>Tab</strong> indents 4 spaces · <strong>Enter</strong> auto-indents
+                      </span>
+
+                      {/* Undo Button (Ctrl+Z) */}
+                      <button
+                        type="button"
+                        disabled={!canCodeUndo}
+                        onClick={handleCodeUndo}
+                        className="px-2.5 py-1 bg-white hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-white text-gray-700 border border-gray-300 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+                        title="Undo (Ctrl+Z)"
+                      >
+                        <Undo2 size={13} className={canCodeUndo ? "text-gray-700" : "text-gray-400"} />
+                        <span>Undo</span>
+                      </button>
+
+                      {/* Redo Button (Ctrl+Y / Ctrl+Shift+Z) */}
+                      <button
+                        type="button"
+                        disabled={!canCodeRedo}
+                        onClick={handleCodeRedo}
+                        className="px-2.5 py-1 bg-white hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-white text-gray-700 border border-gray-300 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+                        title="Redo (Ctrl+Y / Ctrl+Shift+Z)"
+                      >
+                        <Redo2 size={13} className={canCodeRedo ? "text-gray-700" : "text-gray-400"} />
+                        <span>Redo</span>
+                      </button>
+
+                      {/* Formal Smart Format Button */}
+                      <button
+                        type="button"
+                        onClick={handleSmartFormatCode}
+                        className="px-2.5 py-1 bg-white hover:bg-emerald-50 active:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                        title="Auto-format squished single-line code and align 4-space indentation (Ctrl+Shift+F)"
+                      >
+                        <AlignLeft size={13} className="text-emerald-700" />
+                        <span>Smart Format</span>
+                      </button>
+
+                      {/* Copy Button */}
+                      <button
+                        type="button"
+                        onClick={handleCopyCodeToClipboard}
+                        className="px-2.5 py-1 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg text-xs font-medium text-gray-700 flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                        title="Copy code to clipboard"
+                      >
+                        <Copy size={12} />
+                        {copiedCodeNotice ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {formatNotice && (
+                    <div className="text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 flex items-center gap-1.5 animate-in fade-in duration-150">
+                      <span>{formatNotice}</span>
+                    </div>
+                  )}
+
+                  <textarea
+                    ref={codeTextareaRef}
+                    rows={8}
+                    value={codeContent}
+                    onChange={handleCodeTextareaChange}
+                    onKeyDown={handleCodeTextareaKeyDown}
+                    onPaste={(e) => {
+                      const text = e.clipboardData?.getData('text')
+                      if (text && isCodeLikelySingleLine(text)) {
+                        e.preventDefault()
+                        pushCodeHistorySnapshot(codeContent)
+                        const formatted = smartFormatCode(text, codeLanguage)
+                        const textarea = e.target
+                        const start = textarea.selectionStart
+                        const end = textarea.selectionEnd
+                        const val = textarea.value
+                        const newVal = val.substring(0, start) + formatted + val.substring(end)
+                        textarea.value = newVal
+                        textarea.selectionStart = textarea.selectionEnd = start + formatted.length
+                        setCodeContent(newVal)
+                        setFormatNotice('Auto-oriented and indented single-line code with 4 spaces.')
+                        setTimeout(() => setFormatNotice(''), 2500)
+                      }
+                    }}
+                    placeholder={`Type or paste your ${codeLanguage} code here...`}
+                    spellCheck={false}
+                    className="w-full border border-gray-300 p-3 rounded-xl bg-[#fafafa] focus:bg-white text-gray-900 font-mono text-xs leading-relaxed focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-inner"
+                    style={{ tabSize: 4, whiteSpace: 'pre' }}
+                  />
+                </div>
+
+                {/* Live Exam Paper Layout Preview */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                      Live Question Paper Preview ({codeAlignment === 'center' ? 'Centered Layout' : 'Left Aligned'})
+                    </span>
+                    <button
+                      type="button"
+                      disabled={smartOutputLoading || !codeContent.trim()}
+                      onClick={() => handleRunSmartOutput()}
+                      className="px-3 py-1.5 bg-gray-900 hover:bg-black active:bg-gray-800 text-white border border-gray-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Simulate code execution and predict stdout or compilation errors"
+                    >
+                      {smartOutputLoading ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin text-gray-300" />
+                          <span>Simulating...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play size={12} className="fill-current text-emerald-400" />
+                          <span>Smart Output</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Smart Output Analysis Display Panel */}
+                  {smartOutputLoading && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-xs text-emerald-900 animate-in fade-in">
+                      <Loader2 size={16} className="animate-spin text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="font-bold">Simulating {codeLanguage.toUpperCase()} code execution...</span>
+                        <span className="text-gray-500 text-[11px] block">Evaluating compiler semantics, stdout, and error checks</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {smartOutputError && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-2 text-xs text-rose-800 animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                        <span>{smartOutputError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSmartOutputError('')}
+                        className="p-1 hover:bg-rose-100 rounded text-rose-600 cursor-pointer"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+
+                  {smartOutputResult && (
+                    <div className="p-3.5 bg-gray-900 rounded-xl text-white space-y-2.5 border border-emerald-500/40 shadow-md animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-gray-800">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Terminal size={14} className="text-emerald-400" />
+                          <span className="font-extrabold text-xs tracking-wide text-gray-100">
+                            Smart Output ({codeLanguage.toUpperCase()})
+                          </span>
+
+                          {smartOutputResult.status === 'SUCCESS' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              ✓ Normal Execution
+                            </span>
+                          )}
+                          {smartOutputResult.status === 'COMPILATION_ERROR' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                              ⚠ Compilation Error
+                            </span>
+                          )}
+                          {smartOutputResult.status === 'RUNTIME_ERROR' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              ⚠ Runtime Error
+                            </span>
+                          )}
+                          {smartOutputResult.status === 'PSEUDOCODE_RESULT' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                              📋 Algorithm Result
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {smartOutputResult.output && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(smartOutputResult.output)
+                                setCopiedOutputNotice(true)
+                                setTimeout(() => setCopiedOutputNotice(false), 2000)
+                              }}
+                              className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 hover:text-white rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer border border-gray-700"
+                              title="Copy predicted output to clipboard"
+                            >
+                              <Copy size={12} />
+                              {copiedOutputNotice ? 'Copied!' : 'Copy Output'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setSmartOutputResult(null)}
+                            className="p-1 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                            title="Close"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Console Output Block */}
+                      <div className="bg-black/60 rounded-lg p-2.5 font-mono text-xs leading-relaxed border border-gray-800 max-h-36 overflow-y-auto">
+                        {smartOutputResult.output ? (
+                          <div className="text-emerald-400 whitespace-pre-wrap">{smartOutputResult.output}</div>
+                        ) : (
+                          <div className="text-rose-400 italic">
+                            {smartOutputResult.errorType || 'Error'}: No console output produced (execution halted due to error).
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Academic Explanation / Teacher Note */}
+                      {smartOutputResult.explanation && (
+                        <div className="text-[11px] text-gray-300 leading-relaxed bg-gray-800/60 rounded-lg p-2 border border-gray-700/60">
+                          <strong className="text-emerald-300">Teacher's Note:</strong> {smartOutputResult.explanation}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="p-4 bg-white border border-emerald-200 rounded-xl shadow-inner overflow-x-auto min-h-[90px]">
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: generateCodeSnippetHtml({
+                          code: codeContent,
+                          language: codeLanguage,
+                          alignment: codeAlignment,
+                          hasBorder: codeHasBorder,
+                          boxStyle: codeHasBorder ? 'exam' : 'borderless',
+                          showLineNumbers: codeShowLineNumbers,
+                          fontSize: codeFontSize
+                        })
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex items-center justify-between flex-shrink-0">
+                <span className="text-xs text-gray-500 italic">
+                  Tip: In the question paper, double-click any code snippet anytime to re-edit it.
+                </span>
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowCodeSnippetModal(false)}
+                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleInsertCodeSnippet}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    {editingCodeElement ? 'Update Code Snippet in Paper' : 'Insert Code Snippet into Question Paper'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* 💻 Floating Quick Toolbar for Selected Code Block */}
+      {selectedCodeBlockInfo && (
+        <ModalPortal>
+          <div
+            className="fixed z-[999999] flex items-center gap-1.5 bg-gray-900/95 text-white px-3 py-1.5 rounded-full shadow-2xl border border-gray-700 text-xs font-semibold backdrop-blur-xs animate-in fade-in zoom-in duration-150"
+            style={{
+              top: Math.max(10, selectedCodeBlockInfo.rect.top - 42),
+              left: Math.max(10, Math.min(window.innerWidth - 320, selectedCodeBlockInfo.rect.left + (selectedCodeBlockInfo.rect.width / 2) - 150))
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const container = selectedCodeBlockInfo.element
+                const encoded = container.getAttribute('data-code') || ''
+                const lang = container.getAttribute('data-language') || 'cpp'
+                const align = container.getAttribute('data-align') || 'center'
+                const hasBrd = container.getAttribute('data-hasborder') !== 'false'
+                const lineNums = container.getAttribute('data-linenumbers') === 'true'
+                const fontSz = container.getAttribute('data-fontsize') || '11pt'
+                let rawCode = ''
+                if (encoded) {
+                  try { rawCode = decodeURIComponent(encoded) } catch (err) { rawCode = container.textContent || '' }
+                } else {
+                  rawCode = container.textContent || ''
+                }
+                setSelectedCodeBlockInfo(null)
+                handleOpenCodeSnippetModal({
+                  code: rawCode,
+                  language: lang,
+                  alignment: align,
+                  hasBorder: hasBrd,
+                  showLineNumbers: lineNums,
+                  fontSize: fontSz,
+                  element: container
+                })
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-800 text-gray-200 hover:text-white transition cursor-pointer"
+              title="Edit code snippet"
+            >
+              <Edit3 size={13} className="text-emerald-400" />
+              <span>Edit</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const container = selectedCodeBlockInfo.element
+                const encoded = container.getAttribute('data-code') || ''
+                const lang = container.getAttribute('data-language') || 'cpp'
+                const align = container.getAttribute('data-align') || 'center'
+                const hasBrd = container.getAttribute('data-hasborder') !== 'false'
+                const lineNums = container.getAttribute('data-linenumbers') === 'true'
+                const fontSz = container.getAttribute('data-fontsize') || '11pt'
+                let rawCode = ''
+                if (encoded) {
+                  try { rawCode = decodeURIComponent(encoded) } catch (err) { rawCode = container.textContent || '' }
+                } else {
+                  rawCode = container.textContent || ''
+                }
+                setSelectedCodeBlockInfo(null)
+                handleOpenCodeSnippetModal({
+                  code: rawCode,
+                  language: lang,
+                  alignment: align,
+                  hasBorder: hasBrd,
+                  showLineNumbers: lineNums,
+                  fontSize: fontSz,
+                  element: container
+                }, true)
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-800 text-gray-200 hover:text-white transition cursor-pointer"
+              title="Simulate execution & predict stdout or compilation errors with Smart Output"
+            >
+              <Play size={11} className="fill-current text-emerald-400" />
+              <span>Output</span>
+            </button>
+
+            <span className="text-gray-600">|</span>
+
+            <button
+              type="button"
+              onClick={handleToggleSelectedCodeBorder}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-800 text-gray-200 hover:text-white transition cursor-pointer"
+              title="Toggle 1px solid border"
+            >
+              <Square size={13} className={selectedCodeBlockInfo.hasBorder ? "text-emerald-400" : "text-gray-400"} />
+              <span>{selectedCodeBlockInfo.hasBorder ? 'Border: On' : 'Border: Off'}</span>
+            </button>
+
+            <span className="text-gray-600">|</span>
+
+            <button
+              type="button"
+              onClick={handleDeleteSelectedCodeBlock}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-red-900/80 text-red-300 hover:text-red-100 transition cursor-pointer"
+              title="Delete block (Or press Delete / Backspace key)"
+            >
+              <Trash2 size={13} className="text-red-400" />
+              <span>Delete</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const editArea = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+                if (editArea) {
+                  editArea.querySelectorAll('.obe-code-snippet-container').forEach(c => c.removeAttribute('data-selected'))
+                }
+                setSelectedCodeBlockInfo(null)
+              }}
+              className="ml-1 p-0.5 text-gray-400 hover:text-white rounded hover:bg-gray-800 cursor-pointer"
+              title="Deselect"
+            >
+              <X size={13} />
+            </button>
           </div>
         </ModalPortal>
       )}
@@ -7204,12 +14079,33 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             </div>
 
             {/* Footer Actions */}
-            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end items-center flex-shrink-0">
+            <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-between items-center flex-shrink-0">
+              {editingEquationElement ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    editingEquationElement.remove()
+                    setEditingEquationElement(null)
+                    setShowEquationModal(false)
+                    setShowAiEquationModal(false)
+                    const editor = rteRef.current
+                    if (editor?.formatter?.saveData) editor.formatter.saveData()
+                    if (editor?.contentModule?.getEditPanel) {
+                      const newHtml = editor.contentModule.getEditPanel().innerHTML
+                      setEditorValue(newHtml)
+                      if (typeof editor.value !== 'undefined') editor.value = newHtml
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Trash2 size={15} /> Delete Equation
+                </button>
+              ) : <div />}
               <div className="flex gap-2.5">
-                <button onClick={() => { setShowEquationModal(false); setShowAiEquationModal(false); }} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
+                <button onClick={() => { setShowEquationModal(false); setShowAiEquationModal(false); setEditingEquationElement(null); }} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs cursor-pointer">
                   Cancel
                 </button>
-                <button onClick={handleInsertAiEquation} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all">
+                <button onClick={handleInsertAiEquation} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer">
                   <Plus size={16} /> {editingEquationElement ? 'Update Equation' : 'Insert Equation into Question Paper'}
                 </button>
               </div>
@@ -7447,12 +14343,33 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           margin-bottom: 8px !important;
         }
 
+        /* Default Microsoft Word Typography: Times New Roman 12pt */
+        .e-richtexteditor .e-rte-content,
+        .e-richtexteditor .e-rte-content .e-content,
+        .question-paper-preview {
+          font-family: 'Times New Roman', Times, serif;
+          font-size: 12pt;
+          color: #000000;
+        }
+
         .e-richtexteditor .e-rte-content p,
         .e-richtexteditor .e-rte-content li,
         .question-paper-preview p,
         .question-paper-preview li {
-          line-height: 2.0 !important;
+          font-family: inherit;
+          font-size: 12pt;
+          line-height: 1.5;
           margin-bottom: 4px;
+        }
+
+        .e-richtexteditor .e-rte-content table,
+        .e-richtexteditor .e-rte-content table td,
+        .e-richtexteditor .e-rte-content table th,
+        .question-paper-preview table,
+        .question-paper-preview table td,
+        .question-paper-preview table th {
+          font-family: 'Times New Roman', Times, serif;
+          font-size: 12pt;
         }
 
         /* Mathematical Equation Styling — Editor Badge View */
@@ -7519,6 +14436,34 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           background: rgba(59, 130, 246, 0.14) !important;
         }
 
+        .math-eq-delete-btn {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          width: 16px !important;
+          height: 16px !important;
+          margin-left: 6px !important;
+          border-radius: 50% !important;
+          border: none !important;
+          background: #fee2e2 !important;
+          color: #ef4444 !important;
+          font-size: 13px !important;
+          font-weight: 700 !important;
+          line-height: 1 !important;
+          cursor: pointer !important;
+          padding: 0 !important;
+          opacity: 0.75 !important;
+          transition: all 0.15s ease !important;
+          vertical-align: middle !important;
+        }
+        .math-eq-badge:hover .math-eq-delete-btn,
+        .math-eq-delete-btn:hover {
+          opacity: 1 !important;
+          background: #ef4444 !important;
+          color: #ffffff !important;
+          transform: scale(1.15) !important;
+        }
+
         /* Hide print content in editor view */
         .math-eq-print-content {
           display: none !important;
@@ -7538,18 +14483,93 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           font-size: 1.1em !important;
           text-indent: 0 !important;
         }
+        .e-richtexteditor .e-rte-content table td,
+        .e-richtexteditor .e-rte-content table th {
+          text-indent: 0 !important;
+        }
         .e-richtexteditor .e-rte-content table td > p,
         .e-richtexteditor .e-rte-content table td > div,
         .e-richtexteditor .e-rte-content table th > p,
         .e-richtexteditor .e-rte-content table th > div {
           text-align: inherit;
-          margin: 0;
+          margin: 0 !important;
+          padding: 0 !important;
+          text-indent: 0 !important;
         }
         .e-richtexteditor .e-rte-content table td[style*="text-align"] > p,
         .e-richtexteditor .e-rte-content table td[style*="text-align"] > div,
         .e-richtexteditor .e-rte-content table th[style*="text-align"] > p,
         .e-richtexteditor .e-rte-content table th[style*="text-align"] > div {
           text-align: inherit !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table,
+        .e-richtexteditor .e-rte-content table[data-obe-paper-structure="true"],
+        .question-paper-preview table.obe-paper-structure-table,
+        .question-paper-preview table[data-obe-paper-structure="true"] {
+          width: 100% !important;
+          border-collapse: collapse !important;
+          table-layout: auto !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table col.col-qnum,
+        .question-paper-preview table.obe-paper-structure-table col.col-qnum {
+          width: 28px !important;
+          max-width: 32px !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table col.col-subq,
+        .question-paper-preview table.obe-paper-structure-table col.col-subq {
+          width: 24px !important;
+          max-width: 28px !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table col.col-content,
+        .question-paper-preview table.obe-paper-structure-table col.col-content {
+          width: auto !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table col.col-marks,
+        .question-paper-preview table.obe-paper-structure-table col.col-marks {
+          width: 50px !important;
+          max-width: 55px !important;
+        }
+
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td,
+        .e-richtexteditor .e-rte-content table[data-obe-paper-structure="true"] td,
+        .question-paper-preview table.obe-paper-structure-table td,
+        .question-paper-preview table[data-obe-paper-structure="true"] td {
+          vertical-align: top !important;
+          text-indent: 0 !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td.col-qnum-cell,
+        .question-paper-preview table.obe-paper-structure-table td.col-qnum-cell {
+          width: 28px !important;
+          max-width: 32px !important;
+          padding: 5px 2px 5px 0px !important;
+          text-align: left !important;
+          white-space: nowrap !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td.col-subq-cell,
+        .question-paper-preview table.obe-paper-structure-table td.col-subq-cell {
+          width: 24px !important;
+          max-width: 28px !important;
+          padding: 5px 4px 5px 0px !important;
+          text-align: left !important;
+          white-space: nowrap !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td.col-content-cell,
+        .question-paper-preview table.obe-paper-structure-table td.col-content-cell {
+          padding: 5px 8px 5px 2px !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td.col-marks-cell,
+        .question-paper-preview table.obe-paper-structure-table td.col-marks-cell {
+          width: 50px !important;
+          max-width: 55px !important;
+          padding: 5px 0px 5px 4px !important;
+          text-align: right !important;
+          white-space: nowrap !important;
+        }
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td p,
+        .e-richtexteditor .e-rte-content table.obe-paper-structure-table td div {
+          margin: 0 !important;
+          padding: 0 !important;
+          text-indent: 0 !important;
         }
         /* Syncfusion RTE Image Alignment & Block Isolation Fixes */
         .e-richtexteditor .e-rte-content p:has(> img.e-rte-image),
@@ -7587,7 +14607,473 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           margin-bottom: 6px !important;
           clear: both !important;
         }
+
+        /* Code Snippet Styles in RTE Editor */
+        .obe-code-snippet-container {
+          margin: 10px 0 !important;
+          clear: both !important;
+          position: relative !important;
+          page-break-inside: avoid !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        .obe-code-snippet-container[data-align="center"] {
+          text-align: center !important;
+        }
+        .obe-code-snippet-container[data-align="left"] {
+          text-align: left !important;
+        }
+        .obe-code-block {
+          display: inline-block !important;
+          font-family: Consolas, 'Courier New', Monaco, monospace !important;
+          line-height: 1.35 !important;
+          letter-spacing: 0 !important;
+          tab-size: 4 !important;
+          -moz-tab-size: 4 !important;
+          white-space: pre-wrap !important;
+          word-break: break-word !important;
+          margin: 0 !important;
+          text-align: left !important;
+          box-sizing: border-box !important;
+          transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
+          cursor: text !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        .obe-code-block:hover {
+          box-shadow: 0 0 0 2px #10b981 !important;
+        }
+        .obe-code-snippet-container[data-selected="true"] .obe-code-block,
+        .obe-code-snippet-container:focus .obe-code-block {
+          outline: 2px dashed #059669 !important;
+          outline-offset: 3px !important;
+          box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2) !important;
+        }
+        .obe-code-block,
+        .obe-code-block *,
+        .obe-code-block code,
+        .obe-code-block span,
+        .obe-code-table,
+        .obe-code-table * {
+          color: #000000 !important;
+          background-color: transparent !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        .obe-code-block strong {
+          font-weight: 700 !important;
+          color: #000000 !important;
+        }
+        .obe-code-table {
+          border-collapse: collapse !important;
+          border: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          width: auto !important;
+          background: transparent !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        .obe-code-table td {
+          border: none !important;
+          padding: 1px 0 !important;
+          line-height: 1.35 !important;
+          vertical-align: top !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        .obe-code-table .obe-code-ln {
+          color: #718096 !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          text-align: right !important;
+          padding-right: 12px !important;
+          border-right: 1px solid #cbd5e1 !important;
+          cursor: default !important;
+        }
+        .obe-code-table .obe-code-txt {
+          padding-left: 12px !important;
+          white-space: pre-wrap !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+          cursor: text !important;
+        }
+
+        /* =========================================================
+           MICROSOFT WORD STYLE RIBBON TOOLBAR & CONTROLS
+           ========================================================= */
+        .e-richtexteditor .e-rte-toolbar,
+        .e-richtexteditor.e-rte-tb-expand .e-rte-toolbar {
+          background-color: #f8fafc !important;
+          border: none !important;
+          border-bottom: 1px solid #cbd5e1 !important;
+          padding: 5px 8px !important;
+        }
+
+        .e-richtexteditor .e-toolbar {
+          background-color: #f8fafc !important;
+          border: none !important;
+        }
+
+        .e-richtexteditor .e-toolbar-items {
+          background: transparent !important;
+          gap: 2px !important;
+        }
+
+        /* Ribbon item buttons: Word style rounded hover box */
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-tbar-btn {
+          border-radius: 4px !important;
+          height: 28px !important;
+          min-width: 28px !important;
+          padding: 1px 4px !important;
+          border: 1px solid transparent !important;
+          background: transparent !important;
+          color: #334155 !important;
+          transition: all 0.12s ease !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-tbar-btn:hover {
+          background: #e2e8f0 !important;
+          border-color: #cbd5e1 !important;
+          color: #0f172a !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-tbar-btn.e-active,
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-tbar-btn:active {
+          background: #dbeafe !important;
+          border-color: #93c5fd !important;
+          color: #1d4ed8 !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-tbar-btn.e-active .e-icons {
+          color: #1d4ed8 !important;
+        }
+
+        /* Word-Style Font Name Dropdown: Crisp input box appearance */
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_FontName"],
+        .e-richtexteditor .e-toolbar .e-toolbar-item.e-font-name-tbar-btn,
+        .e-richtexteditor .e-toolbar .e-toolbar-item .e-rte-font-name-dropdown {
+          background: #ffffff !important;
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          min-width: 148px !important;
+          max-width: 180px !important;
+          padding: 1px 8px !important;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_FontName"]:hover {
+          border-color: #94a3b8 !important;
+          background: #fafafa !important;
+        }
+
+        /* Ensure font family and font size dropdown popups appear above all modals */
+        .e-dropdown-popup,
+        .e-popup.e-popup-open,
+        .e-rte-dropdown-popup,
+        .e-rte-font-name-dropdown + .e-dropdown-popup,
+        .e-toolbar .e-dropdown-popup {
+          z-index: 10000005 !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_FontName"] .e-rte-dropdown-btn-text,
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_FontName"] .e-tbar-btn-text {
+          font-family: inherit !important;
+          font-size: 12px !important;
+          font-weight: 500 !important;
+          color: #1e293b !important;
+          text-align: left !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+
+        /* Microsoft Word Style Font Size Combobox */
+        .word-fontsize-wrapper {
+          display: inline-flex !important;
+          align-items: center !important;
+          height: 28px !important;
+          background: #ffffff !important;
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 4px !important;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+          box-sizing: border-box !important;
+          overflow: hidden !important;
+          width: 58px !important;
+          position: relative !important;
+          margin: 0 2px !important;
+        }
+
+        .word-fontsize-wrapper:hover {
+          border-color: #94a3b8 !important;
+          background: #fafafa !important;
+        }
+
+        .word-fontsize-wrapper:focus-within {
+          border-color: #3b82f6 !important;
+          box-shadow: 0 0 0 1.5px rgba(59, 130, 246, 0.3) !important;
+        }
+
+        .word-fontsize-input {
+          width: 36px !important;
+          height: 26px !important;
+          border: none !important;
+          outline: none !important;
+          background: transparent !important;
+          text-align: center !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          color: #1e293b !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          cursor: text !important;
+        }
+
+        .word-fontsize-btn {
+          width: 22px !important;
+          height: 26px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          border: none !important;
+          background: transparent !important;
+          cursor: pointer !important;
+          padding: 0 !important;
+          color: #64748b !important;
+          transition: background-color 0.1s ease !important;
+          pointer-events: auto !important;
+          user-select: none !important;
+        }
+
+        .word-fontsize-btn:hover {
+          background-color: #e2e8f0 !important;
+          color: #0f172a !important;
+        }
+
+        .word-fontsize-btn svg,
+        .word-fontsize-btn path {
+          pointer-events: none !important;
+        }
+
+        .word-fontsize-menu {
+          position: fixed !important;
+          background: #ffffff !important;
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 4px !important;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+          max-height: 260px !important;
+          overflow-y: auto !important;
+          width: 62px !important;
+          z-index: 99999999 !important;
+          padding: 4px 0 !important;
+        }
+
+        .word-fontsize-menu-item {
+          padding: 4px 8px !important;
+          font-size: 12px !important;
+          font-weight: 500 !important;
+          color: #1e293b !important;
+          cursor: pointer !important;
+          text-align: center !important;
+          user-select: none !important;
+          transition: background-color 0.1s ease !important;
+        }
+
+        .word-fontsize-menu-item:hover {
+          background: #eff6ff !important;
+          color: #2563eb !important;
+          font-weight: 700 !important;
+        }
+
+        .word-fontsize-menu-item.active {
+          background: #dbeafe !important;
+          color: #1d4ed8 !important;
+          font-weight: 700 !important;
+        }
+
+        .e-dropdown-popup ul.e-dropdown-menu {
+          max-height: 380px !important;
+          overflow-y: auto !important;
+        }
+
+        /* Word-Style Paragraph/Formats Dropdown */
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_Formats"] {
+          background: #ffffff !important;
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          min-width: 95px !important;
+          padding: 1px 8px !important;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_Formats"]:hover {
+          border-color: #94a3b8 !important;
+          background: #fafafa !important;
+        }
+
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="_Formats"] .e-rte-dropdown-btn-text {
+          font-size: 12px !important;
+          font-weight: 500 !important;
+          color: #1e293b !important;
+        }
+
+        /* Subtle vertical group separators */
+        .e-richtexteditor .e-toolbar .e-toolbar-item.e-separator {
+          height: 20px !important;
+          margin: 0 4px !important;
+          border-left: 1px solid #cbd5e1 !important;
+          opacity: 0.85 !important;
+        }
+
+        /* Custom Word Action Buttons */
+        #paper-structure-btn {
+          background: #ecfdf5 !important;
+          border: 1px solid #a7f3d0 !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          padding: 0 8px !important;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+        }
+        #paper-structure-btn:hover {
+          background: #d1fae5 !important;
+          border-color: #6ee7b7 !important;
+        }
+
+        #code-snippet-btn {
+          background: #eff6ff !important;
+          border: 1px solid #bfdbfe !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          padding: 0 8px !important;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+        }
+        #code-snippet-btn:hover {
+          background: #dbeafe !important;
+          border-color: #93c5fd !important;
+        }
+
+        /* Word Contextual Ribbon Tab: Table Design only appears when inside a table */
+        .e-toolbar-item:has(#table-design-ribbon-btn) {
+          display: none;
+        }
+
+        #table-design-ribbon-btn {
+          background: #eff6ff !important;
+          border: 1.5px solid #60a5fa !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          padding: 0 8px !important;
+          box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12) !important;
+        }
+        #table-design-ribbon-btn:hover {
+          background: #dbeafe !important;
+          border-color: #2563eb !important;
+        }
+
+        #ai-commands-btn {
+          background: #f0fdf4 !important;
+          border: 1px solid #bbf7d0 !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          padding: 0 8px !important;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+        }
+        #ai-commands-btn:hover {
+          background: #dcfce7 !important;
+          border-color: #86efac !important;
+        }
+
+        #import-word-btn {
+          background: #ffffff !important;
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 4px !important;
+          height: 28px !important;
+          padding: 0 8px !important;
+        }
+        #import-word-btn:hover {
+          background: #f1f5f9 !important;
+          border-color: #94a3b8 !important;
+        }
+
+        /* =========================================================
+           MICROSOFT WORD PARAGRAPH MODULE & CONTROLS
+           ========================================================= */
+
+        /* Active formatting button appearance matching Word Ribbon */
+        .e-richtexteditor .e-toolbar .e-toolbar-item button.e-active,
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[aria-pressed="true"],
+        .e-richtexteditor .e-toolbar .e-toolbar-item button[id*="Justify"].e-active,
+        #show-hide-pilcrow-btn.e-active {
+          background: #e2e8f0 !important;
+          border: 1px solid #94a3b8 !important;
+          border-radius: 4px !important;
+          color: #0f172a !important;
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+        }
+
+        /* Show/Hide Paragraph Marks (Pilcrow ¶) */
+        .show-paragraph-marks .e-rte-content p::after,
+        .show-paragraph-marks .e-rte-content h1::after,
+        .show-paragraph-marks .e-rte-content h2::after,
+        .show-paragraph-marks .e-rte-content h3::after,
+        .show-paragraph-marks .e-rte-content h4::after,
+        .show-paragraph-marks .e-rte-content li::after {
+          content: ' ¶';
+          color: #94a3b8;
+          font-size: 11px;
+          font-weight: normal;
+          pointer-events: none;
+          user-select: none;
+        }
+        .show-paragraph-marks .e-rte-content p:empty::after,
+        .show-paragraph-marks .e-rte-content div:empty::after {
+          content: '¶';
+          color: #cbd5e1;
+          font-size: 11px;
+          pointer-events: none;
+        }
+        @media print {
+          .show-paragraph-marks .e-rte-content p::after,
+          .show-paragraph-marks .e-rte-content h1::after,
+          .show-paragraph-marks .e-rte-content h2::after,
+          .show-paragraph-marks .e-rte-content h3::after,
+          .show-paragraph-marks .e-rte-content h4::after,
+          .show-paragraph-marks .e-rte-content li::after {
+            display: none !important;
+          }
+        }
       `}</style>
+
+      {/* Teacher's Reference Notes Modal */}
+      <ReferenceNotesModal
+        isOpen={showNotesModal}
+        onClose={() => setShowNotesModal(false)}
+        courseId={notesCourseId}
+        courseTitle={offering?.course?.title || offering?.course?.courseTitle || offering?.course?.courseName || ''}
+        onNotesUpdated={refreshNotesStatus}
+        onInsertQuestion={(text) => handleInsertNoteSuggestion({ questionText: text })}
+      />
+
+      {/* Microsoft Word Table Design Modal */}
+      <TableDesignModal
+        isOpen={showTableDesignModal}
+        onClose={() => setShowTableDesignModal(false)}
+        editorRef={rteRef}
+        onTableUpdated={() => {
+          if (rteRef.current?.formatter?.saveData) {
+            rteRef.current.formatter.saveData()
+          }
+        }}
+      />
     </div>
   )
 }
+

@@ -22,4 +22,38 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Environment and secrets
 .env
+.env.local
+.env.*.local
+.env.production
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+ml-service/venv/
+ml-service/.venv/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+ml-service/__pycache__/
+ml-service/.cache/
+
+# Large Model Binaries & Caches (Fine-tuned weights hosted on HF Hub: obe-ai-system/sbert-obe-csematch)
+models/
+ml-service/models/
+ml-service/cache/
+*.bin
+*.safetensors
+*.pt
+*.onnx
+huggingface/
+
+

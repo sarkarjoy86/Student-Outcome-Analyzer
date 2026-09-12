@@ -625,3 +625,24 @@ input[type=number] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* Flexible Code Snippet Selection & Mouse Cursor */
+.obe-code-snippet-container,
+.obe-code-snippet-container * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+.obe-code-block,
+.obe-code-table,
+.obe-code-txt,
+.obe-code-txt * {
+  cursor: text !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+.obe-code-ln {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: default !important;
+}
+

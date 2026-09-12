@@ -11,6 +11,7 @@ import surveyRoutes from "./routes/surveyRoutes.js";
 import poRecommendationRoutes from "./routes/poRecommendationRoutes.js";
 import copoRequestRoutes from "./routes/copoRequestRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
+import notesRoutes from "./routes/notesRoutes.js";
 
 dotenv.config();
 
@@ -56,6 +57,7 @@ app.use("/api", surveyRoutes);
 app.use("/api", poRecommendationRoutes);
 app.use("/api", copoRequestRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/notes", notesRoutes);
 
 
 app.use((_req, res) => {

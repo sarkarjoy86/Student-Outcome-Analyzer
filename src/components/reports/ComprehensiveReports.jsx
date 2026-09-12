@@ -135,6 +135,15 @@ const ComprehensiveReports = ({
   const [teacherReflection, setTeacherReflection] = useState('')
   const [coDescriptions, setCoDescriptions] = useState({})
   const [poDescriptions, setPoDescriptions] = useState({})
+  const [chartAnimKey, setChartAnimKey] = useState(0)
+
+  // Re-trigger smooth chart entrance animations when Reports tab mounts or sub-tab switches
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setChartAnimKey(prev => prev + 1)
+    }, 70)
+    return () => clearTimeout(timer)
+  }, [viewMode])
 
   React.useEffect(() => {
     async function loadDescriptions() {
@@ -2069,6 +2078,7 @@ const ComprehensiveReports = ({
                 </div>
                 <ResponsiveContainer width="100%" height={450}>
                   <BarChart
+                    key={`co-attain-${chartAnimKey}`}
                     data={Array.from({ length: 12 }, (_, i) => {
                       const co = `CO${i + 1}`
                       return {
@@ -2093,8 +2103,8 @@ const ComprehensiveReports = ({
                     <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
                     <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
                     <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => [`${parseFloat(value).toFixed(1)}%`, '']} labelFormatter={(label) => `${label}`} />
-                    <Bar dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                    <Bar dataKey={`Above KPI (${kpiCO}%)`} fill="url(#colorKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiCO}%)`} fill="url(#colorKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
                     <Legend wrapperStyle={{ paddingTop: '16px' }} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -2116,6 +2126,7 @@ const ComprehensiveReports = ({
                 </div>
                 <ResponsiveContainer width="100%" height={450}>
                   <BarChart
+                    key={`co-dist-${chartAnimKey}`}
                     data={(() => {
                       return Array.from({ length: 12 }, (_, i) => {
                         const co = `CO${i + 1}`
@@ -2147,9 +2158,9 @@ const ComprehensiveReports = ({
                     <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: '% of Students', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
                     <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => `${Math.round(value)}%`} />
                     <Legend wrapperStyle={{ paddingTop: '12px' }} />
-                    <Bar dataKey="Below 40%" stackId="a" fill="#ef4444" />
-                    <Bar dataKey="40–79%" stackId="a" fill="#f59e0b" />
-                    <Bar dataKey="≥80%" stackId="a" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey="Below 40%" stackId="a" fill="#ef4444" />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey="40–79%" stackId="a" fill="#f59e0b" />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={300} dataKey="≥80%" stackId="a" fill="#22c55e" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -2172,6 +2183,7 @@ const ComprehensiveReports = ({
                 </div>
                 <ResponsiveContainer width="100%" height={450}>
                   <BarChart
+                    key={`po-attain-${chartAnimKey}`}
                     data={Array.from({ length: 12 }, (_, i) => {
                       const po = `PO${i + 1}`
                       return {
@@ -2196,8 +2208,8 @@ const ComprehensiveReports = ({
                     <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
                     <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
                     <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
-                    <Bar dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPOPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                    <Bar dataKey={`Above KPI (${kpiPO}%)`} fill="url(#colorPOKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPOPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiPO}%)`} fill="url(#colorPOKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
                     <Legend wrapperStyle={{ paddingTop: '16px' }} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -2219,6 +2231,7 @@ const ComprehensiveReports = ({
                 </div>
                 <ResponsiveContainer width="100%" height={400}>
                   <BarChart
+                    key={`po-contrib-${chartAnimKey}`}
                     layout="vertical"
                     barSize={20}
                     data={(() => {
@@ -2250,7 +2263,7 @@ const ComprehensiveReports = ({
                       const hasMapping = Array.from({ length: 12 }, (_, j) => coMapping?.[coKey]?.[`PO${j + 1}`] === 1).some(Boolean)
                       if (!hasMapping) return null
                       const baseColor = COLORS[i % COLORS.length]
-                      return <Bar key={`${coKey}-kpi`} dataKey={`${coKey} (KPI)`} fill={baseColor} radius={[0, 4, 4, 0]} />
+                      return <Bar key={`${coKey}-kpi`} isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={150} dataKey={`${coKey} (KPI)`} fill={baseColor} radius={[0, 4, 4, 0]} />
                     }).filter(Boolean)}
                   </BarChart>
                 </ResponsiveContainer>
@@ -2710,8 +2723,11 @@ const ComprehensiveReports = ({
 
                           <div className="relative flex justify-center items-center h-44">
                             <ResponsiveContainer width="100%" height="100%">
-                              <PieChart>
+                              <PieChart key={`ind-pie-${chartAnimKey}`}>
                                 <Pie
+                                  isAnimationActive={true}
+                                  animationDuration={1100}
+                                  animationEasing="ease-out"
                                   data={classDistribution}
                                   cx="50%"
                                   cy="50%"
@@ -2881,12 +2897,12 @@ const ComprehensiveReports = ({
                         </h3>
                         <div className="flex-1 flex items-center justify-center min-h-[250px]">
                           <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={coChartData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
+                            <BarChart key={`student-co-${chartAnimKey}`} data={coChartData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                               <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} />
                               <YAxis domain={[0, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} />
                               <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
-                              <Bar dataKey="Attainment" radius={[4, 4, 0, 0]}>
+                              <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="Attainment" radius={[4, 4, 0, 0]}>
                                 {coChartData.map((entry, index) => (
                                   <Cell key={`cell-${index}`} fill={entry.color} />
                                 ))}
@@ -2956,12 +2972,12 @@ const ComprehensiveReports = ({
                         </h3>
                         <div className="flex-1 flex items-center justify-center min-h-[250px]">
                           <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={poChartData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
+                            <BarChart key={`student-po-${chartAnimKey}`} data={poChartData} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                               <XAxis dataKey="name" tick={{ fill: '#2c5282', fontWeight: 'bold' }} />
                               <YAxis domain={[0, 100]} tick={{ fill: '#2c5282', fontWeight: 'bold' }} />
                               <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
-                              <Bar dataKey="Attainment" radius={[4, 4, 0, 0]}>
+                              <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="Attainment" radius={[4, 4, 0, 0]}>
                                 {poChartData.map((entry, index) => (
                                   <Cell key={`cell-${index}`} fill={entry.color} />
                                 ))}
@@ -3155,12 +3171,12 @@ const ComprehensiveReports = ({
                   5. Grade Distribution
                 </h3>
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={gradeDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                  <BarChart key={`comp-grade-${chartAnimKey}`} data={gradeDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                     <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                     <YAxis allowDecimals={false} tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                     <Tooltip formatter={(value) => [`${value} Students`, 'Count']} />
-                    <Bar dataKey="Count" fill="#1a5f3f" radius={[4, 4, 0, 0]} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="Count" fill="#1a5f3f" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -3171,12 +3187,12 @@ const ComprehensiveReports = ({
                   6. Performance Distribution
                 </h3>
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={performanceDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                  <BarChart key={`comp-perf-${chartAnimKey}`} data={performanceDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                     <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                     <YAxis allowDecimals={false} tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                     <Tooltip formatter={(value) => [`${value} Students`, 'Count']} />
-                    <Bar dataKey="No. of Students" fill="#319795" radius={[4, 4, 0, 0]} />
+                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="No. of Students" fill="#319795" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -3187,8 +3203,11 @@ const ComprehensiveReports = ({
                   7. Assessment Contribution
                 </h3>
                 <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
+                  <PieChart key={`comp-weight-${chartAnimKey}`}>
                     <Pie
+                      isAnimationActive={true}
+                      animationDuration={1100}
+                      animationEasing="ease-out"
                       data={assessmentContributionData}
                       dataKey="value"
                       nameKey="name"
@@ -3255,13 +3274,13 @@ const ComprehensiveReports = ({
                 </div>
                 <div id="batch-co-chart">
                   <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={activeCOs.map((co) => ({ name: co, Attainment: calculations.coAttainment[co]?.kpiPercentage || 0 }))} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                    <BarChart key={`comp-batch-co-${chartAnimKey}`} data={activeCOs.map((co) => ({ name: co, Attainment: calculations.coAttainment[co]?.kpiPercentage || 0 }))} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                       <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                       <YAxis domain={[0, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold', fontSize: 10 }} />
                       <Tooltip formatter={(v) => `${parseFloat(v).toFixed(1)}%`} />
                       <ReferenceLine y={kpiCO} stroke="#22c55e" strokeDasharray="5 5" label={{ value: `KPI ${kpiCO}%`, fill: '#22c55e', fontSize: 9, position: 'top' }} />
-                      <Bar dataKey="Attainment" fill="#319795" radius={[4, 4, 0, 0]} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="Attainment" fill="#319795" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -3306,13 +3325,13 @@ const ComprehensiveReports = ({
                 </div>
                 <div id="batch-po-chart">
                   <ResponsiveContainer width="100%" height={240}>
-                    <BarChart layout="vertical" data={activePOs.map((po) => ({ name: po, Attainment: calculations.poAttainment[po]?.kpiPercentage || 0 }))} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+                    <BarChart key={`comp-batch-po-${chartAnimKey}`} layout="vertical" data={activePOs.map((po) => ({ name: po, Attainment: calculations.poAttainment[po]?.kpiPercentage || 0 }))} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
                       <XAxis type="number" domain={[0, 100]} tick={{ fill: '#2c5282', fontSize: 10 }} />
                       <YAxis type="category" dataKey="name" tick={{ fill: '#2c5282', fontWeight: 'bold', fontSize: 10 }} width={40} />
                       <Tooltip formatter={(v) => `${parseFloat(v).toFixed(1)}%`} />
                       <ReferenceLine x={kpiPO} stroke="#3b82f6" strokeDasharray="5 5" label={{ value: `KPI ${kpiPO}%`, fill: '#3b82f6', fontSize: 9, position: 'insideTopLeft' }} />
-                      <Bar dataKey="Attainment" fill="#4f46e5" radius={[0, 4, 4, 0]} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" dataKey="Attainment" fill="#4f46e5" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
