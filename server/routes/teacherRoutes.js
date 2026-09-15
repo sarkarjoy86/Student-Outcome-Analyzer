@@ -82,7 +82,7 @@ export async function recalculateAttainments(offeringId) {
       const questions = metadataMap[aId]
       if (questions && questions.length > 0) {
         questions.forEach(q => {
-          const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
+          const coKey = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
           if (coKey && coKey !== 'NONE' && coKey !== '') {
             coMaxMarks[coKey] = (coMaxMarks[coKey] || 0) + (q.maxMarks || 0)
           }
@@ -113,10 +113,18 @@ export async function recalculateAttainments(offeringId) {
         const questions = metadataMap[aId]
         if (questions && questions.length > 0) {
           questions.forEach(q => {
-            const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
+            const coKey = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
             if (coKey && coKey !== 'NONE' && coKey !== '') {
-              const qMarkObj = sMarks.questionMarks?.find(qm => qm.questionNumber === q.questionNumber)
-              const obtainedMark = qMarkObj ? (qMarkObj.mark || 0) : 0
+              const qNum = String(q.questionNumber || '')
+              const plainNum = qNum.replace(/^Q/i, '')
+              const qMarkObj = sMarks.questionMarks?.find(qm => {
+                const qmNum = String(qm.questionNumber || '')
+                return qmNum === qNum || qmNum === plainNum || qmNum === `Q${plainNum}`
+              })
+              let obtainedMark = qMarkObj ? (qMarkObj.mark || 0) : 0
+              if (obtainedMark === 0 && questions.length === 1) {
+                obtainedMark = sMarks.totalMark || 0
+              }
               coObtainedMarks[coKey] += obtainedMark
             }
           })

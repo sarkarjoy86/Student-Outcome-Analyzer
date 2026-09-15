@@ -3808,6 +3808,8 @@ const ComprehensiveReports = ({
                       if (assessments.presentation) categories[4].items.push({ ...assessments.presentation, name: 'Presentation' })
                       if (assessments.attendance) categories[4].items.push({ ...assessments.attendance, name: 'Attendance' })
                       if (assessments.performance) categories[4].items.push({ ...assessments.performance, name: 'Performance' })
+                      if (assessments.participation) categories[4].items.push({ ...assessments.participation, name: 'Class Participation' })
+                      if (assessments.projectReport) categories[4].items.push({ ...assessments.projectReport, name: 'Project Report' })
 
                       return categories.map((cat) => {
                         if (cat.items.length === 0) return null

@@ -114,6 +114,8 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
     attendance: null, // Only set if found in Excel
     performance: null, // Only set if found in Excel
     presentation: null, // Only set if found in Excel
+    participation: null, // Only set if found in Excel
+    projectReport: null, // Only set if found in Excel
   }
 
   // Track column positions in the configuration section
@@ -141,7 +143,9 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
         cellStr.includes('ATTENDANCE') ||
         cellStr.includes('PERFORMANCE') ||
         cellStr.includes('PERF') ||
-        cellStr.includes('PRESENTATION')
+        cellStr.includes('PRESENTATION') ||
+        cellStr.includes('PARTICIPATION') ||
+        cellStr.includes('PROJECT')
     })
 
     if (hasAssessmentNames && nameRow === -1) {
@@ -269,6 +273,20 @@ const extractAssessmentConfig = (rows, startRow, studentDataStartRow) => {
           co: coValue,
         }
         assessmentOrder.push({ key: 'performance_Performance', type: 'performance', name: 'Performance', col })
+      } else if (nameUpper.includes('PARTICIPATION') || nameUpper.includes('CLASS PARTICIPATION')) {
+        config.participation = {
+          name: 'Class Participation',
+          maxMarks: maxMark,
+          co: coValue,
+        }
+        assessmentOrder.push({ key: 'participation_Participation', type: 'participation', name: 'Class Participation', col })
+      } else if (nameUpper.includes('PROJECT') || nameUpper.includes('PROJECT REPORT')) {
+        config.projectReport = {
+          name: 'Project Report',
+          maxMarks: maxMark,
+          co: coValue,
+        }
+        assessmentOrder.push({ key: 'projectReport_Project Report', type: 'projectReport', name: 'Project Report', col })
       } else if (nameUpper.match(/^Q\d+$/)) {
         // Use section context from description row to determine Mid Term vs Final
         if (section === 'final') {
@@ -395,6 +413,10 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
         searchPatterns.push('PERFORMANCE', 'PERF', 'PERFORM')
       } else if (item.type === 'presentation') {
         searchPatterns.push('PRESENTATION', 'PRESENT')
+      } else if (item.type === 'participation') {
+        searchPatterns.push('PARTICIPATION', 'CLASS PARTICIPATION', 'PART')
+      } else if (item.type === 'projectReport') {
+        searchPatterns.push('PROJECT REPORT', 'PROJECT', 'REPORT')
       } else if (item.type === 'midTerm') {
         searchPatterns.push(nameUpper, `MID TERM ${nameUpper}`, `MIDTERM ${nameUpper}`, `MID ${nameUpper}`)
       } else if (item.type === 'final') {
@@ -415,6 +437,8 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
     assessments.assignments.forEach(asg => expectedOrder.push({ key: `assignments_${asg.name}`, name: asg.name, type: 'assignments', searchPatterns: [asg.name.toUpperCase(), 'ASSIGNMENT'] }))
     if (assessments.attendance) expectedOrder.push({ key: 'attendance_Attendance', name: 'Attendance', type: 'attendance', searchPatterns: ['ATTENDANCE'] })
     if (assessments.performance) expectedOrder.push({ key: 'performance_Performance', name: 'Performance', type: 'performance', searchPatterns: ['PERFORMANCE', 'PERF', 'PERFORM'] })
+    if (assessments.participation) expectedOrder.push({ key: 'participation_Participation', name: 'Class Participation', type: 'participation', searchPatterns: ['PARTICIPATION', 'CLASS PARTICIPATION', 'PART'] })
+    if (assessments.projectReport) expectedOrder.push({ key: 'projectReport_Project Report', name: 'Project Report', type: 'projectReport', searchPatterns: ['PROJECT REPORT', 'PROJECT', 'REPORT'] })
     assessments.midTerm.forEach(mt => expectedOrder.push({ key: `midTerm_${mt.name}`, name: mt.name, type: 'midTerm', searchPatterns: [mt.name.toUpperCase()] }))
     assessments.final.forEach(fin => expectedOrder.push({ key: `final_${fin.name}`, name: fin.name, type: 'final', searchPatterns: [fin.name.toUpperCase()] }))
   }
@@ -437,8 +461,8 @@ const extractStudentData = (rows, startRow, assessments, assessmentColPositions 
       // Try all search patterns for this assessment
       let matched = false
       for (const pattern of expected.searchPatterns) {
-        // For Performance and Attendance, be more flexible with matching
-        if (expected.type === 'performance' || expected.type === 'attendance' || expected.type === 'presentation') {
+        // For continuous non-exam assessments, be more flexible with matching
+        if (expected.type === 'performance' || expected.type === 'attendance' || expected.type === 'presentation' || expected.type === 'participation' || expected.type === 'projectReport') {
           // Match if header contains the pattern (case-insensitive)
           if (headerUpper.includes(pattern) || pattern.includes(headerUpper)) {
             assessmentColMap[expected.key] = col

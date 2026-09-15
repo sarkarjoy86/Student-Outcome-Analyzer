@@ -4,50 +4,56 @@
 /**
  * Get all assessments with their types
  */
+/**
+ * Get all assessments with their types
+ */
 const getAllAssessments = (assessments) => {
+  if (!assessments) return []
+  if (Array.isArray(assessments)) return assessments
+
   const all = []
+  if (Array.isArray(assessments.cts)) {
+    assessments.cts.forEach(a => all.push({ ...a, type: 'cts' }))
+  }
+  if (Array.isArray(assessments.midTerm)) {
+    assessments.midTerm.forEach(a => all.push({ ...a, type: 'midTerm' }))
+  }
+  if (Array.isArray(assessments.final)) {
+    assessments.final.forEach(a => all.push({ ...a, type: 'final' }))
+  }
+  if (Array.isArray(assessments.assignments)) {
+    assessments.assignments.forEach(a => all.push({ ...a, type: 'assignments' }))
+  }
 
-  assessments.cts.forEach(a => all.push({ ...a, type: 'cts' }))
-  assessments.midTerm.forEach(a => all.push({ ...a, type: 'midTerm' }))
-  assessments.final.forEach(a => all.push({ ...a, type: 'final' }))
-  assessments.assignments.forEach(a => all.push({ ...a, type: 'assignments' }))
+  const otherKeys = ['attendance', 'performance', 'presentation', 'participation', 'projectReport']
+  otherKeys.forEach(key => {
+    if (assessments[key]) {
+      const item = assessments[key]
+      const defaultName = key === 'participation' ? 'Class Participation'
+        : key === 'projectReport' ? 'Project Report'
+        : key === 'presentation' ? 'Presentation'
+        : key === 'attendance' ? 'Attendance'
+        : key === 'performance' ? 'Performance'
+        : item.name || key
+      all.push({
+        ...item,
+        name: item.name || defaultName,
+        type: item.type || key,
+        co: item.co || ''
+      })
+    }
+  })
 
-  if (assessments.attendance) {
-    all.push({ ...assessments.attendance, name: 'Attendance', type: 'attendance' })
-  }
-  if (assessments.performance) {
-    // Keep Performance CO as is - don't default to CO2, show N/A if not assigned
-    all.push({
-      ...assessments.performance,
-      name: 'Performance',
-      type: 'performance',
-      co: assessments.performance.co || '' // Keep empty if no CO assigned
-    })
-  }
-  if (assessments.presentation) {
-    all.push({
-      ...assessments.presentation,
-      name: 'Presentation',
-      type: 'presentation',
-      co: assessments.presentation.co || '' // Keep empty if no CO assigned
-    })
-  }
-  if (assessments.participation) {
-    all.push({
-      ...assessments.participation,
-      name: 'Class Participation',
-      type: 'participation',
-      co: assessments.participation.co || ''
-    })
-  }
-  if (assessments.projectReport) {
-    all.push({
-      ...assessments.projectReport,
-      name: 'Project Report',
-      type: 'projectReport',
-      co: assessments.projectReport.co || ''
-    })
-  }
+  // Support any custom or dynamically named assessment keys
+  Object.keys(assessments).forEach(k => {
+    if (!['cts', 'midTerm', 'final', 'assignments', ...otherKeys].includes(k) && assessments[k]) {
+      if (Array.isArray(assessments[k])) {
+        assessments[k].forEach(a => all.push({ ...a, type: a.type || k }))
+      } else if (typeof assessments[k] === 'object') {
+        all.push({ ...assessments[k], type: assessments[k].type || k })
+      }
+    }
+  })
 
   return all
 }
@@ -68,8 +74,8 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
     const questions = metadataMap[aId]
     if (questions && questions.length > 0) {
       questions.forEach(q => {
-        const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
-        if (coKey === normCo) {
+        const qCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (qCo === normCo) {
           totalCOMaxMarks += parseFloat(q.maxMarks) || 0
         }
       })
@@ -98,7 +104,6 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
       // Fallback: maybe flat marks mapped by assessment type & name
       const key = `${a.type}_${a.name}`
       const studentMark = parseFloat(marks[studentId]?.[key] || 0) || 0
-      const assessmentMax = parseFloat(a.maxMarks) || 0
       const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
       if (coKey === normCo) {
         totalObtained += studentMark
@@ -109,9 +114,22 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
     const questions = metadataMap[aId]
     if (questions && questions.length > 0) {
       questions.forEach(q => {
-        const coKey = (q.co || '').replace(/\s+/g, '').toUpperCase()
-        if (coKey === normCo) {
-          const obtainedMark = parseFloat(sMarks.questionMarks?.[q.questionNumber] ?? 0) || 0
+        const qCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (qCo === normCo) {
+          let obtainedMark = 0
+          if (sMarks.questionMarks) {
+            const rawNum = q.questionNumber
+            const plainNum = String(rawNum || '').replace(/^Q/i, '')
+            obtainedMark = parseFloat(
+              sMarks.questionMarks[rawNum] ??
+              sMarks.questionMarks[plainNum] ??
+              sMarks.questionMarks[`Q${plainNum}`] ??
+              0
+            ) || 0
+          }
+          if (obtainedMark === 0 && questions.length === 1) {
+            obtainedMark = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+          }
           totalObtained += obtainedMark
         }
       })
@@ -345,7 +363,7 @@ export const getCOMarkAllocations = (assessments, metadataMap = {}) => {
       const questions = metadataMap[aId]
       if (questions && questions.length > 0) {
         questions.forEach(q => {
-          const normCo = (q.co || '').replace(/\s+/g, '').toUpperCase()
+          const normCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
           if (normCo === coKey) {
             totalCOMaxMarks += parseFloat(q.maxMarks) || 0
           }

@@ -1405,6 +1405,16 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   };
 
   const handleOpenQuestionPaper = (assessment, pushHistory = true) => {
+    if (!assessment) return;
+    const aType = (assessment.type || '').toLowerCase();
+    const aName = (assessment.name || '').toLowerCase();
+    const isDirect = ['attendance', 'performance', 'participation'].includes(assessment.type) ||
+      aType.includes('attendance') || aType.includes('performance') || aType.includes('participation') ||
+      aName.includes('attendance') || aName.includes('performance') || aName.includes('participation');
+    if (isDirect) {
+      alert('This assessment is for direct marks entry only and does not require a question paper. Please enter marks in the Marks Entry tab.');
+      return;
+    }
     setActiveAssessmentForPaper(assessment);
     if (pushHistory && offering?._id && assessment?._id) {
       const url = new URL(window.location.href);
@@ -1446,7 +1456,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         // Navigated forward to question paper editor
         const match = assessments.find(a => a._id === paperId);
         if (match) {
-          setActiveAssessmentForPaper(match);
+          const aType = (match.type || '').toLowerCase();
+          const aName = (match.name || '').toLowerCase();
+          const isDirect = ['attendance', 'performance', 'participation'].includes(match.type) ||
+            aType.includes('attendance') || aType.includes('performance') || aType.includes('participation') ||
+            aName.includes('attendance') || aName.includes('performance') || aName.includes('participation');
+          if (!isDirect) {
+            setActiveAssessmentForPaper(match);
+          }
         }
       } else {
         // Navigated back from question paper editor to dashboard
@@ -1604,9 +1621,10 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       } else {
         payload.examDuration = `${val} Minutes`
       }
-    } else if (type === 'assignments' || type === 'presentation') {
+    } else if (type === 'assignments' || type === 'presentation' || type === 'projectReport') {
       payload.deadline = deadline || null
-    } else if (type === 'attendance' || type === 'performance') {
+      payload.co = co || 'NONE'
+    } else if (type === 'attendance' || type === 'performance' || type === 'participation') {
       payload.co = co || 'NONE'
     }
 
@@ -1641,9 +1659,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       Object.assign(defaults, { maxMarks: Math.round(credits * 30), durationValue: 90, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
     } else if (type === 'final') {
       Object.assign(defaults, { maxMarks: Math.round(credits * 50), durationValue: 3, durationUnit: 'Hours', co: 'NONE', deadline: '' })
-    } else if (type === 'assignments' || type === 'presentation') {
+    } else if (type === 'assignments' || type === 'presentation' || type === 'projectReport') {
       Object.assign(defaults, { maxMarks: 10, durationValue: 0, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
-    } else if (type === 'attendance' || type === 'performance') {
+    } else if (type === 'attendance' || type === 'performance' || type === 'participation') {
       Object.assign(defaults, { maxMarks: type === 'attendance' ? 5 : 10, durationValue: 0, durationUnit: 'Minutes', co: 'NONE', deadline: '' })
     }
     setNewAssessment(defaults)
@@ -1675,7 +1693,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
 
     let typeToUse = newAssessment.type || 'cts'
-    if (['midTerm', 'final', 'attendance', 'performance', 'presentation'].includes(typeToUse) && existingTypes[typeToUse]) {
+    if (['midTerm', 'final', 'attendance', 'performance', 'presentation', 'participation', 'projectReport'].includes(typeToUse) && existingTypes[typeToUse]) {
       typeToUse = 'cts'
     }
     handleAssessmentTypeChange(typeToUse)
@@ -1827,7 +1845,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
             <button
               onClick={onBackToDashboard}
               className="p-2 hover:bg-green-50 rounded-lg text-green-700 transition-colors border border-green-100"
-              title="Back to Offerings"
+              title="Back to Courses"
             >
               <ArrowLeft size={16} />
             </button>
@@ -2418,18 +2436,13 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 const cts = assessments.filter(a => a.type === 'cts')
                 const midTerm = assessments.filter(a => a.type === 'midTerm')
                 const finals = assessments.filter(a => a.type === 'final')
-                const assigns = assessments.filter(a => a.type === 'assignments')
-                const attendance = assessments.find(a => a.type === 'attendance')
-                const performance = assessments.find(a => a.type === 'performance')
-                const presentation = assessments.find(a => a.type === 'presentation')
+                // All other continuous assessments (Assignments, Participation, Performance, Attendance, Presentation, Project Report, etc.)
+                const othersAsmts = assessments.filter(a => !['cts', 'midTerm', 'final'].includes(a.type))
 
                 // Flattened assessment list (matching ComprehensiveReports order)
                 const allAsmts = []
                 cts.forEach(a => allAsmts.push({ ...a, type: 'cts' }))
-                if (presentation) allAsmts.push({ ...presentation, name: 'Presentation', type: 'presentation' })
-                assigns.forEach(a => allAsmts.push({ ...a, type: 'assignments' }))
-                if (attendance) allAsmts.push({ ...attendance, name: 'Attendance', type: 'attendance' })
-                if (performance) allAsmts.push({ ...performance, name: 'Performance', type: 'performance' })
+                othersAsmts.forEach(a => allAsmts.push(a))
                 midTerm.forEach(a => allAsmts.push({ ...a, type: 'midTerm' }))
                 finals.forEach(a => allAsmts.push({ ...a, type: 'final' }))
 
@@ -2482,11 +2495,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   })
                 }
 
-                // Others
-                allAsmts.filter(a => ['assignments', 'presentation', 'attendance', 'performance'].includes(a.type)).forEach(a => {
+                // Others (All continuous assessments: Assignments, Attendance, Participation, Performance, Presentation, Project Report)
+                othersAsmts.forEach(a => {
                   const qMeta = meta[a._id?.toString()] || []
                   const mappedCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
-                  cols.push({ id: a._id?.toString() || `${a.type}_${a.name}`, name: a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name, parent: 'Others', assessment: a, isQuestion: false, co: mappedCO, maxMarks: parseFloat(a.maxMarks) || 0 })
+                  const displayName = a.name === 'Presentation' ? 'Present.' : a.name === 'Assignment' ? 'Assign.' : a.name === 'Class Participation' ? 'Class Participation' : a.name === 'Project Report' ? 'Project Report' : a.name
+                  cols.push({
+                    id: a._id?.toString() || `${a.type}_${a.name}`,
+                    name: displayName,
+                    parent: 'Others',
+                    assessment: a,
+                    isQuestion: false,
+                    co: mappedCO,
+                    maxMarks: parseFloat(a.maxMarks) || 0
+                  })
                 })
                 // Mid Term
                 allAsmts.filter(a => a.type === 'midTerm').forEach(a => {
@@ -2552,8 +2574,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     return 0
                   }
                   if (!sMarks) return 0
-                  if (col.isQuestion) return parseFloat(sMarks.questionMarks?.[col.questionNumber] ?? 0) || 0
-                  return parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+                  if (col.isQuestion) {
+                    const rawQ = col.questionNumber
+                    const plainQ = String(rawQ || '').replace(/^Q/i, '')
+                    const qmVal = sMarks.questionMarks?.[rawQ] ?? sMarks.questionMarks?.[plainQ] ?? sMarks.questionMarks?.[`Q${plainQ}`]
+                    return parseFloat(qmVal ?? 0) || 0
+                  }
+                  let totalVal = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+                  if (totalVal === 0 && sMarks.questionMarks && typeof sMarks.questionMarks === 'object') {
+                    const qVals = Object.values(sMarks.questionMarks)
+                    if (qVals.length > 0) {
+                      totalVal = qVals.reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
+                    }
+                  }
+                  return totalVal
                 }
 
                 // Helper to get a student's total assessment mark
@@ -2566,7 +2600,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   else if (mks[studentId]?.[aId]) sMarks = mks[studentId][aId]
                   else { const key = `${assessment.type}_${assessment.name}`; return mks[studentId]?.[key] ?? 0 }
                   if (!sMarks) return 0
-                  return sMarks.totalMark ?? sMarks.marks ?? 0
+                  let val = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+                  if (val === 0 && sMarks.questionMarks && typeof sMarks.questionMarks === 'object') {
+                    const qVals = Object.values(sMarks.questionMarks)
+                    if (qVals.length > 0) {
+                      val = qVals.reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
+                    }
+                  }
+                  return val
                 }
 
                 // Compute student totals taking Best CTs for paired CT slots
@@ -2846,8 +2887,12 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {assessments.map(a => {
                     const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
-                    const isSubmissionType = ['assignments', 'presentation'].includes(a.type)
-                    const isDirectMarksType = ['attendance', 'performance'].includes(a.type)
+                    const isSubmissionType = ['assignments', 'presentation', 'projectReport'].includes(a.type)
+                    const aTypeLower = (a.type || '').toLowerCase()
+                    const aNameLower = (a.name || '').toLowerCase()
+                    const isDirectMarksType = ['attendance', 'performance', 'participation'].includes(a.type) ||
+                      aTypeLower === 'attendance' || aTypeLower === 'performance' || aTypeLower === 'participation' ||
+                      aNameLower.includes('attendance') || aNameLower.includes('performance') || aNameLower.includes('participation')
                     const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
                     const targetParentName = a.parentCTName || (a.name?.match(/\(([^)]+)\)/)?.[1]?.replace(/^for\s+/i, '') || '')
                     const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
@@ -2940,14 +2985,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               {/* Create Assessment Dialog Modal */}
               {showCreateDialog && (() => {
                 const isExam = ['cts', 'midTerm', 'final'].includes(newAssessment.type)
-                const isSubmission = ['assignments', 'presentation'].includes(newAssessment.type)
-                const isDirectMarks = ['attendance', 'performance'].includes(newAssessment.type)
+                const isSubmission = ['assignments', 'presentation', 'projectReport'].includes(newAssessment.type)
+                const isDirectMarks = ['attendance', 'performance', 'participation'].includes(newAssessment.type)
                 // Get allocated COs for the course
                 const courseCOs = dbCourseOutcomes.length > 0
                   ? dbCourseOutcomes.map(o => o.code)
                   : Array.from({ length: offering.course?.numCOs || 4 }, (_, i) => `CO${i + 1}`)
 
-                const singleTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation']
+                const singleTypes = ['midTerm', 'final', 'attendance', 'performance', 'presentation', 'participation', 'projectReport']
                 const existingTypes = {}
                 assessments.forEach(a => { existingTypes[a.type] = true })
                 const isTypeDisabled = singleTypes.includes(newAssessment.type) && existingTypes[newAssessment.type]
@@ -3010,7 +3055,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           const isFinal = newAssessment.type === 'final'
 
                           const currentContinuous = assessments
-                            .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))) && ['cts', 'assignments', 'attendance', 'presentation', 'performance'].includes(a.type))
+                            .filter(a => !(a.type === 'cts' && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))) && ['cts', 'assignments', 'attendance', 'presentation', 'performance', 'participation', 'projectReport'].includes(a.type))
                             .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
 
                           const currentMid = assessments
@@ -3029,7 +3074,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                             const addedMarks = newAssessment.isExtraCT ? 0 : (parseFloat(newAssessment.maxMarks) || 0)
                             prospective = currentContinuous + addedMarks
                             limit = continuousLimit
-                            catName = 'Continuous Assessments (CTs, Assignments, Attendance, Presentation, Performance)'
+                            catName = 'Continuous Assessments (CTs, Assignments, Attendance, Presentation, Performance, Participation, Project Report)'
                           } else if (isMid) {
                             prospective = currentMid + (parseFloat(newAssessment.maxMarks) || 0)
                             limit = midLimit
@@ -4384,29 +4429,45 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
               })
             })
 
-            // Determine CO attainment data (live calculated if available, otherwise DB state)
-            const displayCoAttainments = (attainmentData.coAttainments && attainmentData.coAttainments.length > 0)
-              ? [...attainmentData.coAttainments]
-              : (liveAttainmentData?.coAttainment
-                  ? Object.keys(liveAttainmentData.coAttainment).map(coKey => ({
-                      co: coKey,
-                      passMarksPercentage: liveAttainmentData.coAttainment[coKey].passMarksPercentage,
-                      kpiPercentage: liveAttainmentData.coAttainment[coKey].kpiPercentage,
-                      attained: liveAttainmentData.coAttainment[coKey].kpiPercentage >= kpiInput.kpiCO
-                    }))
-                  : [])
+            // Determine CO attainment data (seamlessly combine live calculation with DB state)
+            const allCoKeys = Array.from(new Set([
+              ...(dbCourseOutcomes.map(c => c.code.replace(/\s+/g, '').toUpperCase())),
+              ...(liveAttainmentData?.coAttainment ? Object.keys(liveAttainmentData.coAttainment) : []),
+              ...(attainmentData.coAttainments?.map(c => (c.co || '').replace(/\s+/g, '').toUpperCase()) || [])
+            ])).filter(k => k.startsWith('CO'))
 
-            // Determine PO attainment data (live calculated if available, otherwise DB state)
-            const displayPoAttainments = (attainmentData.poAttainments && attainmentData.poAttainments.length > 0)
-              ? [...attainmentData.poAttainments]
-              : (liveAttainmentData?.poAttainment
-                  ? Object.keys(liveAttainmentData.poAttainment).map(poKey => ({
-                      po: poKey,
-                      passMarksPercentage: liveAttainmentData.poAttainment[poKey].passMarksPercentage,
-                      kpiPercentage: liveAttainmentData.poAttainment[poKey].kpiPercentage,
-                      attained: liveAttainmentData.poAttainment[poKey].kpiPercentage >= kpiInput.kpiPO
-                    }))
-                  : [])
+            const displayCoAttainments = allCoKeys.map(coKey => {
+              const live = liveAttainmentData?.coAttainment?.[coKey]
+              const db = attainmentData.coAttainments?.find(c => (c.co || '').replace(/\s+/g, '').toUpperCase() === coKey)
+              const passPct = live ? live.passMarksPercentage : (db?.passMarksPercentage || 0)
+              const kpiPct = live ? live.kpiPercentage : (db?.kpiPercentage || 0)
+              return {
+                co: coKey,
+                passMarksPercentage: passPct,
+                kpiPercentage: kpiPct,
+                attained: kpiPct >= kpiInput.kpiCO
+              }
+            })
+
+            // Determine PO attainment data (seamlessly combine live calculation with DB state)
+            const allPoKeys = Array.from(new Set([
+              ...(Array.from(mappedPoKeysForAttainment)),
+              ...(liveAttainmentData?.poAttainment ? Object.keys(liveAttainmentData.poAttainment) : []),
+              ...(attainmentData.poAttainments?.map(p => (p.po || '').replace(/\s+/g, '').toUpperCase()) || [])
+            ])).filter(k => k.startsWith('PO'))
+
+            const displayPoAttainments = allPoKeys.map(poKey => {
+              const live = liveAttainmentData?.poAttainment?.[poKey]
+              const db = attainmentData.poAttainments?.find(p => (p.po || '').replace(/\s+/g, '').toUpperCase() === poKey)
+              const passPct = live ? live.passMarksPercentage : (db?.passMarksPercentage || 0)
+              const kpiPct = live ? live.kpiPercentage : (db?.kpiPercentage || 0)
+              return {
+                po: poKey,
+                passMarksPercentage: passPct,
+                kpiPercentage: kpiPct,
+                attained: kpiPct >= kpiInput.kpiPO
+              }
+            })
 
             return (
               <div className="space-y-6">
@@ -4710,6 +4771,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                   const attendance = activeAssessmentsList.find(a => a.type === 'attendance')
                   const performance = activeAssessmentsList.find(a => a.type === 'performance')
                   const presentation = activeAssessmentsList.find(a => a.type === 'presentation')
+                  const participation = activeAssessmentsList.find(a => a.type === 'participation')
+                  const projectReport = activeAssessmentsList.find(a => a.type === 'projectReport')
 
                   const structuredAssessments = {
                     cts,
@@ -4718,7 +4781,9 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     assignments,
                     attendance,
                     performance,
-                    presentation
+                    presentation,
+                    participation,
+                    projectReport
                   }
 
                   if (!activeSpreadsheetData.marks) {

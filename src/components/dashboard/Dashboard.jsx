@@ -45,18 +45,19 @@ export default function Dashboard({ onSelectOffering }) {
     }
   }
 
-  // Extract offerings matching the primary filter state (Completed vs All)
-  const relevantOfferings = offerings.filter((o) => {
-    const isSemActive = o.semester?.status === 'active'
-    if (semesterFilter === 'completed') return !isSemActive
-    if (semesterFilter === 'current') return isSemActive
-    return true // 'all'
-  })
+  // Extract currently active semester info
+  const activeOfferings = offerings.filter((o) => o.semester?.status === 'active');
+  const activeTerm = activeOfferings[0]?.semester?.semesterName
+    ? activeOfferings[0].semester.semesterName.charAt(0).toUpperCase() + activeOfferings[0].semester.semesterName.slice(1).toLowerCase()
+    : 'Spring';
+  const activeYear = activeOfferings[0]?.academicYear || activeOfferings[0]?.semester?.academicYear || 2026;
+  const isCurrent = semesterFilter === 'current';
 
-  // Dynamically extract available years and terms strictly from relevant offerings!
+  // Dynamically extract available years and terms for Completed and All scopes
   const availableYears = Array.from(
     new Set(
-      relevantOfferings
+      offerings
+        .filter((o) => semesterFilter === 'all' || o.semester?.status !== 'active')
         .map((o) => o.academicYear || o.semester?.academicYear)
         .filter(Boolean)
     )
@@ -64,7 +65,8 @@ export default function Dashboard({ onSelectOffering }) {
 
   const availableTerms = Array.from(
     new Set(
-      relevantOfferings
+      offerings
+        .filter((o) => semesterFilter === 'all' || o.semester?.status !== 'active')
         .map((o) => {
           const raw = o.semester?.semesterName
           if (!raw) return null
@@ -74,22 +76,22 @@ export default function Dashboard({ onSelectOffering }) {
     )
   ).sort()
  
-  // Filtering logic
+  // Filtering logic: In Current Semesters, it strictly locks to active offerings. In Completed or All, allows custom Term/Year filtering.
   const filteredOfferings = offerings.filter((offering) => {
     const isSemActive = offering.semester?.status === 'active';
     
-    // Primary Filter (Current vs Completed vs All)
-    if (semesterFilter === 'current' && !isSemActive) return false
-    if (semesterFilter === 'completed' && isSemActive) return false
+    // Status Filter (Current vs Completed vs All)
+    if (isCurrent) return isSemActive;
+    if (semesterFilter === 'completed' && isSemActive) return false;
 
-    // Sub-Filter: Term (Spring, Fall, Summer, etc.)
-    if (semesterFilter !== 'current' && selectedTerm !== 'ALL') {
+    // Term Filter (Spring, Fall, Summer, etc.)
+    if (selectedTerm !== 'ALL') {
       const termName = (offering.semester?.semesterName || '').toLowerCase()
       if (termName !== selectedTerm.toLowerCase()) return false
     }
 
-    // Sub-Filter: Academic Year (2026, 2025, etc.)
-    if (semesterFilter !== 'current' && selectedYear !== 'ALL') {
+    // Academic Year Filter (2026, 2025, etc.)
+    if (selectedYear !== 'ALL') {
       const year = String(offering.academicYear || offering.semester?.academicYear || '')
       if (year !== String(selectedYear)) return false
     }
@@ -133,83 +135,134 @@ export default function Dashboard({ onSelectOffering }) {
       <div className="max-w-6xl mx-auto space-y-8">
         
         {/* Header */}
-        <div className="bg-gradient-to-br from-white via-white to-green-50/20 backdrop-blur-lg p-6 md:p-8 rounded-2xl shadow-xl border border-green-200/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-extrabold bg-gradient-to-r from-green-800 via-green-600 to-blue-700 bg-clip-text text-transparent">
-              My Course Offerings
-            </h1>
-            <p className="text-gray-600 mt-2 text-base md:text-lg font-medium">
-              Select one of your assigned course offerings to manage student assessments, marks entry, and CO-PO attainment.
-            </p>
-          </div>
-          
-          {/* Filters & Actions (Right Oriented) */}
-          <div className="flex flex-row flex-wrap items-center justify-start md:justify-end gap-3 w-full md:w-auto">
-            {/* Primary Filter Selector */}
-            <div className="flex items-center gap-2 bg-white px-3.5 py-2.5 rounded-xl shadow-sm border border-gray-200 text-gray-700 font-semibold focus-within:border-green-400 focus-within:ring-2 focus-within:ring-green-100 transition-all select-none">
-              <Filter className="text-green-700" size={16} />
-              <select
-                value={semesterFilter}
-                onChange={(e) => {
-                  setSemesterFilter(e.target.value)
-                  if (e.target.value === 'current') {
-                    setSelectedTerm('ALL')
-                    setSelectedYear('ALL')
-                  }
-                }}
-                className="bg-transparent text-sm focus:outline-none cursor-pointer pr-1 font-bold text-gray-800 select-none"
-              >
-                <option value="current">Current Semesters</option>
-                <option value="completed">Completed Semesters</option>
-                <option value="all">All Semesters</option>
-              </select>
+        {/* Header */}
+        <div className="bg-gradient-to-br from-white via-white to-green-50/20 backdrop-blur-lg p-6 md:p-7 rounded-2xl shadow-xl border border-green-200/50 space-y-5">
+          {/* Top Row: Title, Subtitle, and Compact Refresh Button */}
+          <div className="flex flex-row justify-between items-start gap-4">
+            <div className="space-y-1 flex-1 min-w-0">
+              <h1 className="text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-green-800 via-green-600 to-blue-700 bg-clip-text text-transparent">
+                My Courses
+              </h1>
+              <p className="text-gray-600 text-sm md:text-base font-medium">
+                Select one of your assigned courses to manage student assessments, marks entry, and CO-PO attainment.
+              </p>
             </div>
 
-            {/* Sub-Filters (Term & Year for Completed or All Semesters) */}
-            {semesterFilter !== 'current' && (
-              <div className="flex flex-wrap items-center gap-2 animate-fadeIn">
-                {/* Term Dropdown */}
-                <div className="flex items-center gap-1.5 bg-green-50/80 px-3 py-2.5 rounded-xl border border-green-200 text-green-900 text-xs font-bold shadow-xs">
-                  <span className="text-green-700 font-bold">Term:</span>
-                  <select
-                    value={selectedTerm}
-                    onChange={(e) => setSelectedTerm(e.target.value)}
-                    className="bg-transparent text-xs font-extrabold text-green-900 focus:outline-none cursor-pointer"
-                  >
-                    <option value="ALL">All Terms</option>
-                    {availableTerms.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
+            {/* Compact Refresh Button (Upper Row) */}
+            <div className="shrink-0 pt-0.5">
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing || loading}
+                title="Refresh Courses"
+                className="p-2 md:p-2.5 bg-white hover:bg-green-50 text-gray-600 hover:text-green-800 rounded-xl border border-gray-200 hover:border-green-300 shadow-xs hover:shadow-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center cursor-pointer group"
+                aria-label="Refresh"
+              >
+                <RefreshCw size={16} className={`text-green-600 group-hover:rotate-180 transition-transform duration-500 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
 
-                {/* Year Dropdown */}
-                <div className="flex items-center gap-1.5 bg-green-50/80 px-3 py-2.5 rounded-xl border border-green-200 text-green-900 text-xs font-bold shadow-xs">
-                  <span className="text-green-700 font-bold">Year:</span>
-                  <select
-                    value={selectedYear}
-                    onChange={(e) => setSelectedYear(e.target.value)}
-                    className="bg-transparent text-xs font-extrabold text-green-900 focus:outline-none cursor-pointer"
-                  >
-                    <option value="ALL">All Years</option>
-                    {availableYears.map((y) => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
-                </div>
+          {/* Bottom Row: All 3 Filters in a Single Compact Line */}
+          <div className="pt-3 border-t border-green-100/80 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Semester Scope Filter */}
+              <div className="flex items-center gap-1.5 bg-green-50/80 px-3 py-1.5 rounded-xl border border-green-200 text-green-900 text-xs font-bold shadow-xs">
+                <Filter size={13} className="text-green-700 shrink-0" />
+                <span className="text-green-700 font-bold">Semesters:</span>
+                <select
+                  value={semesterFilter}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setSemesterFilter(val)
+                    if (val === 'current') {
+                      setSelectedTerm('ALL')
+                      setSelectedYear('ALL')
+                    }
+                  }}
+                  className="bg-transparent text-xs font-extrabold text-green-900 focus:outline-none cursor-pointer pr-1"
+                >
+                  <option value="current">Current Semesters</option>
+                  <option value="completed">Completed Semesters</option>
+                  <option value="all">All Semesters</option>
+                </select>
               </div>
-            )}
 
-            {/* Minimal & Professional Refresh Button (Right Oriented) */}
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing || loading}
-              title="Refresh Course Offerings"
-              className="p-2.5 bg-white hover:bg-green-50 text-gray-600 hover:text-green-800 rounded-xl border border-gray-200 hover:border-green-300 shadow-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer font-bold text-xs"
-            >
-              <RefreshCw size={15} className={`text-green-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span className="font-bold">Refresh</span>
-            </button>
+              {/* Term Filter (Locked to active semester in Current Semesters, interactive otherwise) */}
+              <div
+                className={`flex items-center gap-1.5 bg-green-50/80 px-3 py-1.5 rounded-xl border border-green-200 text-green-900 text-xs font-bold shadow-xs transition-all ${
+                  isCurrent ? 'cursor-default select-none' : 'focus-within:ring-2 focus-within:ring-green-400/40'
+                }`}
+              >
+                <span className="text-green-700 font-bold">Term:</span>
+                <select
+                  value={isCurrent ? activeTerm : selectedTerm}
+                  disabled={isCurrent}
+                  onChange={(e) => setSelectedTerm(e.target.value)}
+                  className={`bg-transparent text-xs font-extrabold text-green-900 focus:outline-none pr-1 ${
+                    isCurrent ? 'cursor-default' : 'cursor-pointer'
+                  }`}
+                >
+                  {isCurrent ? (
+                    <option value={activeTerm}>{activeTerm}</option>
+                  ) : (
+                    <>
+                      <option value="ALL">All Terms</option>
+                      {availableTerms.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              </div>
+
+              {/* Year Filter (Locked to active semester in Current Semesters, interactive otherwise) */}
+              <div
+                className={`flex items-center gap-1.5 bg-green-50/80 px-3 py-1.5 rounded-xl border border-green-200 text-green-900 text-xs font-bold shadow-xs transition-all ${
+                  isCurrent ? 'cursor-default select-none' : 'focus-within:ring-2 focus-within:ring-green-400/40'
+                }`}
+              >
+                <span className="text-green-700 font-bold">Year:</span>
+                <select
+                  value={isCurrent ? String(activeYear) : selectedYear}
+                  disabled={isCurrent}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className={`bg-transparent text-xs font-extrabold text-green-900 focus:outline-none pr-1 ${
+                    isCurrent ? 'cursor-default' : 'cursor-pointer'
+                  }`}
+                >
+                  {isCurrent ? (
+                    <option value={String(activeYear)}>{activeYear}</option>
+                  ) : (
+                    <>
+                      <option value="ALL">All Years</option>
+                      {availableYears.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              </div>
+
+              {/* Reset filter shortcut if active in Completed or All Semesters */}
+              {!isCurrent && (selectedTerm !== 'ALL' || selectedYear !== 'ALL') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTerm('ALL')
+                    setSelectedYear('ALL')
+                  }}
+                  className="text-[11px] font-bold text-gray-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                  title="Reset Term and Year filters to All"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Courses Count Badge */}
+            <div className="text-xs font-bold text-gray-500">
+              Showing <span className="text-green-800 font-extrabold">{filteredOfferings.length}</span> of {offerings.length} Courses
+            </div>
           </div>
         </div>
 
@@ -218,7 +271,7 @@ export default function Dashboard({ onSelectOffering }) {
           <div className="flex items-center justify-center animate-fadeIn py-1">
             <div className="inline-flex items-center gap-2.5 bg-white/90 backdrop-blur-md px-4 py-2 rounded-full border border-green-200 shadow-sm text-green-900 text-xs font-bold transition-all">
               <Loader2 size={14} className="animate-spin text-green-600" />
-              <span>Refreshing course offerings...</span>
+              <span>Refreshing courses...</span>
               <span className="flex h-2 w-2 relative">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
@@ -234,27 +287,38 @@ export default function Dashboard({ onSelectOffering }) {
           </div>
         )}
  
-        {/* Offerings List grouped by Session */}
+        {/* Courses List grouped by Session */}
         <div className="space-y-12">
           {offerings.length === 0 ? (
             <div className="bg-white p-12 rounded-2xl border-2 border-dashed border-gray-300 text-center space-y-4 max-w-2xl mx-auto">
               <Users size={48} className="mx-auto text-gray-400" />
               <p className="text-gray-500 font-medium text-lg">
-                No course offerings have been assigned to you.
+                No courses have been assigned to you.
               </p>
               <p className="text-sm text-gray-400">
-                Please contact the Administrator to assign your Course Offerings.
+                Please contact the Administrator to assign your courses.
               </p>
             </div>
           ) : filteredOfferings.length === 0 ? (
             <div className="bg-white p-12 rounded-2xl border border-gray-200 text-center space-y-4 max-w-2xl mx-auto shadow-md">
               <Users size={48} className="mx-auto text-gray-400" />
               <p className="text-gray-600 font-bold text-lg">
-                No course offerings match the selected filter.
+                No courses match the selected filter.
               </p>
               <p className="text-sm text-gray-400 font-medium">
                 Try switching Term / Year or choosing <strong className="text-green-700">"Current Semesters"</strong>.
               </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSemesterFilter('current')
+                  setSelectedTerm('ALL')
+                  setSelectedYear('ALL')
+                }}
+                className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
+              >
+                Reset Filters
+              </button>
             </div>
           ) : (
             sessionOrder.map((sessionName) => (
@@ -263,7 +327,7 @@ export default function Dashboard({ onSelectOffering }) {
                   <BookOpen size={24} className="text-green-700 font-semibold" />
                   {sessionName}
                   <span className="text-xs bg-green-100 text-green-800 px-3 py-1 rounded-full font-bold">
-                    {groupedOfferings[sessionName].length} {groupedOfferings[sessionName].length === 1 ? 'Offering' : 'Offerings'}
+                    {groupedOfferings[sessionName].length} {groupedOfferings[sessionName].length === 1 ? 'Course' : 'Courses'}
                   </span>
                 </h2>
                 

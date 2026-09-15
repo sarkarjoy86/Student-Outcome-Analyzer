@@ -239,6 +239,8 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
                     {extractedData.assessments.attendance && <p>• Attendance marks found</p>}
                     {extractedData.assessments.performance && <p>• Performance marks found</p>}
                     {extractedData.assessments.presentation && <p>• Presentation marks found</p>}
+                    {extractedData.assessments.participation && <p>• Class Participation marks found</p>}
+                    {extractedData.assessments.projectReport && <p>• Project Report marks found</p>}
                     <p>• Marks data extracted for all assessments</p>
                   </div>
                 </div>

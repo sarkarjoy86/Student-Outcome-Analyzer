@@ -99,18 +99,18 @@ function formatAiTextToHtml(text = '') {
     const isNumbered = lines.length > 0 && lines.every(l => /^\d+[\.\)]\s+/.test(l))
     if (isNumbered) {
       const items = lines.map(l => `<li style="margin-bottom: 4px;">${l.replace(/^\d+[\.\)]\s+/, '')}</li>`).join('')
-      return `<ol style="margin-top: 6px; margin-bottom: 14px; padding-left: 24px; list-style-type: decimal;">${items}</ol>`
+      return `<ol style="margin-top: 6px; margin-bottom: 14px; padding-left: 36px; list-style-type: decimal;">${items}</ol>`
     }
 
     // Bullet list items (e.g. "- Item" or "* Item")
     const isBullet = lines.length > 0 && lines.every(l => /^[\-\*•]\s+/.test(l))
     if (isBullet) {
       const items = lines.map(l => `<li style="margin-bottom: 4px;">${l.replace(/^[\-\*•]\s+/, '')}</li>`).join('')
-      return `<ul style="margin-top: 6px; margin-bottom: 14px; padding-left: 24px; list-style-type: disc;">${items}</ul>`
+      return `<ul style="margin-top: 6px; margin-bottom: 14px; padding-left: 36px; list-style-type: disc;">${items}</ul>`
     }
 
-    // Standard paragraph with line breaks
-    return `<p style="margin-bottom: 12px; line-height: 1.6;">${lines.join('<br/>')}</p>`
+    // Standard paragraphs (each non-empty line as its own paragraph to avoid br wrapping issues with rich text list commands)
+    return lines.map(line => `<p style="margin-bottom: 6px; line-height: 1.5;">${line}</p>`).join('')
   })
 
   return htmlBlocks.join('')
@@ -224,20 +224,44 @@ function parseGraphLines(edgeText = '') {
   const edges = []
 
   lines.forEach(line => {
-    // Extract optional weight: e.g. ": 10" or "= 10"
+    // Extract optional weight: e.g. ": 10", ": a", or "= 10"
     let weight = ''
     let edgePart = line.trim()
-    const weightMatch = edgePart.match(/^(.+?)(?:\s*[:=]\s*(.+))$/)
-    if (weightMatch) {
-      edgePart = weightMatch[1].trim()
-      weight = weightMatch[2].trim()
+    // Prioritize colon delimiter first (standard for automata and CS graphs)
+    const colonMatch = edgePart.match(/^(.+?)\s*:\s*(.+)$/)
+    if (colonMatch) {
+      edgePart = colonMatch[1].trim()
+      weight = colonMatch[2].trim()
+    } else {
+      // Equals sign only when not part of => or <=>
+      const eqMatch = edgePart.match(/^([^<>=]+(?:->|--|-|<->|<=>)?(?:[^<>=]+)?)\s*=\s*([^>].*)$/)
+      if (eqMatch) {
+        edgePart = eqMatch[1].trim()
+        weight = eqMatch[2].trim()
+      }
     }
 
     let from = ''
     let to = ''
+    let isBidirectional = false
 
-    // Delimiter priority: -> , => , -- , " - " (space-padded dash), or single "-"
-    if (edgePart.includes('->')) {
+    // Delimiter priority: bidirectional first (<-> , <=> , <>) then directed (-> , =>) then undirected (-- , " - " , -)
+    if (edgePart.includes('<->')) {
+      const parts = edgePart.split('<->')
+      from = parts[0].trim()
+      to = parts.slice(1).join('<->').trim()
+      isBidirectional = true
+    } else if (edgePart.includes('<=>')) {
+      const parts = edgePart.split('<=>')
+      from = parts[0].trim()
+      to = parts.slice(1).join('<=>').trim()
+      isBidirectional = true
+    } else if (edgePart.includes('<>')) {
+      const parts = edgePart.split('<>')
+      from = parts[0].trim()
+      to = parts.slice(1).join('<>').trim()
+      isBidirectional = true
+    } else if (edgePart.includes('->')) {
       const parts = edgePart.split('->')
       from = parts[0].trim()
       to = parts.slice(1).join('->').trim()
@@ -271,6 +295,9 @@ function parseGraphLines(edgeText = '') {
       nodesSet.add(from)
       nodesSet.add(to)
       edges.push({ from, to, weight })
+      if (isBidirectional) {
+        edges.push({ from: to, to: from, weight })
+      }
     }
   })
 
@@ -616,13 +643,13 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
     const unpositioned = nodesList.filter(n => !positions[n])
     const count = unpositioned.length
     if (count > 0) {
-      const startX = 130 // Room for initial arrow from nowhere on the left
-      const availableW = width - startX - 80
-      const stepX = count > 1 ? Math.min(180, Math.max(120, Math.floor(availableW / (count - 1)))) : 0
+      const startX = count >= 5 ? 100 : 130 // Room for initial arrow from nowhere on the left
+      const availableW = width - startX - (count >= 5 ? 60 : 80)
+      const stepX = count > 1 ? Math.min(180, Math.max(105, Math.floor(availableW / (count - 1)))) : 0
       unpositioned.forEach((node, idx) => {
         positions[node] = {
           x: count === 1 ? 300 : Math.round(startX + idx * stepX),
-          y: 200
+          y: 195
         }
       })
     }
@@ -756,6 +783,162 @@ function getSelfLoopGeometry(u, positions, edges, subIdx = 0, options = {}) {
   }
 }
 
+// Helper: Universal Edge Geometry & Routing Calculator
+// Specializes in Automata State Diagrams (clean straight forward spine, graceful underneath return curves, tiered non-overlapping multi-hop skip transitions)
+// and Symmetrical Multigraph offsets for general graphs
+function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAutomata = false, pairGroups = {}) {
+  const p1 = positions[edge.from]
+  const p2 = positions[edge.to]
+  if (!p1 || !p2) return null
+
+  const isSelfLoop = edge.from === edge.to
+  if (isSelfLoop) return { isSelfLoop: true }
+
+  if (isAutomata) {
+    const idx1 = nodeList.indexOf(edge.from)
+    const idx2 = nodeList.indexOf(edge.to)
+    const hasLinearIndices = idx1 !== -1 && idx2 !== -1
+    const hop = hasLinearIndices ? (idx2 - idx1) : (p2.x > p1.x ? 1 : -1)
+    const absHop = Math.abs(hop)
+
+    const isForward = p2.x > p1.x || (p2.x === p1.x && p2.y > p1.y)
+    const isBackward = p2.x < p1.x || (p2.x === p1.x && p2.y < p1.y)
+
+    const sameDirEdges = allEdges.filter(e => e.from === edge.from && e.to === edge.to)
+    const sameSubIdx = Math.max(0, sameDirEdges.indexOf(edge))
+    const sameCount = sameDirEdges.length
+
+    // 1. Multi-hop Transitions (Skipping 1 or more intermediate states, e.g. q2 -> q0 or q0 -> q2)
+    const isMultiHop = hasLinearIndices && absHop >= 2
+
+    if (isMultiHop) {
+      if (isBackward) {
+        // Sweeps UNDERNEATH intermediate states with generous tiered clearance so it never intersects intervening nodes!
+        // hop=2 (e.g. q2 -> q0): 42 + 32 = 74px clearance below states
+        // hop=3 (e.g. q3 -> q0): 42 + 64 = 106px clearance below states
+        const arcDepth = 42 + (absHop - 1) * 32 + sameSubIdx * 24
+        const midX = (p1.x + p2.x) / 2
+        const peakY = Math.max(p1.y, p2.y) + arcDepth
+        const cx = midX
+        const cy = Math.max(p1.y, p2.y) + arcDepth * 1.55
+        return {
+          path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+          midX,
+          midY: peakY + 8,
+          cx,
+          cy,
+          isStraight: false
+        }
+      } else {
+        // Sweeps ABOVE intermediate states with clearance above
+        const arcHeight = 44 + (absHop - 1) * 30 + sameSubIdx * 24
+        const midX = (p1.x + p2.x) / 2
+        const peakY = Math.min(p1.y, p2.y) - arcHeight
+        const cx = midX
+        const cy = Math.min(p1.y, p2.y) - arcHeight * 1.55
+        return {
+          path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+          midX,
+          midY: peakY - 8,
+          cx,
+          cy,
+          isStraight: false
+        }
+      }
+    }
+
+    // 2. Adjacent Transitions (Between neighboring states, e.g. q0 <-> q1 or q1 <-> q2)
+    if (isBackward) {
+      // Return transition: Curves gracefully UNDERNEATH!
+      // Generous clearance (46px+) so badge and arc never collide with forward path
+      const arcDepth = 46 + sameSubIdx * 24
+      const midX = (p1.x + p2.x) / 2
+      const peakY = (p1.y + p2.y) / 2 + arcDepth
+      const cx = midX
+      const cy = (p1.y + p2.y) / 2 + arcDepth * 1.55
+      return {
+        path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+        midX,
+        midY: peakY + 8,
+        cx,
+        cy,
+        isStraight: false
+      }
+    } else {
+      // Forward transition (left to right)
+      if (sameCount === 1) {
+        // Single forward transition: Clean straight horizontal line along center axis!
+        // Badge sits comfortably above line
+        return {
+          path: null,
+          midX: (p1.x + p2.x) / 2,
+          midY: (p1.y + p2.y) / 2 - 14,
+          isStraight: true
+        }
+      } else {
+        // Multiple forward transitions in same direction: Fan out above
+        const arcHeight = 36 + sameSubIdx * 24
+        const midX = (p1.x + p2.x) / 2
+        const peakY = (p1.y + p2.y) / 2 - arcHeight
+        const cx = midX
+        const cy = (p1.y + p2.y) / 2 - arcHeight * 1.55
+        return {
+          path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+          midX,
+          midY: peakY - 8,
+          cx,
+          cy,
+          isStraight: false
+        }
+      }
+    }
+  }
+
+  // 3. General Non-Automata Multigraph Layout (Trees, Directed Graphs, Maps)
+  const u = edge.from < edge.to ? edge.from : edge.to
+  const v = edge.from < edge.to ? edge.to : edge.from
+  const key = `${u}~~~${v}`
+  const group = pairGroups[key] || [idx]
+  const k = group.length
+  const subIdx = group.indexOf(idx)
+
+  const pu = positions[u]
+  const pv = positions[v]
+
+  if (k > 1 && pu && pv) {
+    const dx = pv.x - pu.x
+    const dy = pv.y - pu.y
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1
+    const nx = -dy / dist
+    const ny = dx / dist
+
+    const step = Math.min(54, Math.max(36, dist * 0.26))
+    const offset = (subIdx - (k - 1) / 2) * step
+
+    if (Math.abs(offset) > 1) {
+      const cx = (pu.x + pv.x) / 2 + nx * offset
+      const cy = (pu.y + pv.y) / 2 + ny * offset
+      const midX = (pu.x + pv.x) / 2 + nx * (offset * 0.55)
+      const midY = (pu.y + pv.y) / 2 + ny * (offset * 0.55)
+      return {
+        path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+        midX,
+        midY,
+        cx,
+        cy,
+        isStraight: false
+      }
+    }
+  }
+
+  return {
+    path: null,
+    midX: (p1.x + p2.x) / 2,
+    midY: (p1.y + p2.y) / 2,
+    isStraight: true
+  }
+}
+
 // Helper: SVG Graph Diagram Generator (Supports Dynamic Auto-Crop ViewBox, B&W Print Theme, Emerald System Theme)
 function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', customPositions = {}, automataOptions = {}) {
   const { nodes: nodeList, edges } = parseGraphLines(edgeText)
@@ -805,48 +988,32 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
     const p2 = positions[edge.to]
     if (!p1 || !p2) return
 
-    const u = edge.from < edge.to ? edge.from : edge.to
-    const v = edge.from < edge.to ? edge.to : edge.from
-    const key = `${u}~~~${v}`
-    const group = pairGroups[key] || [idx]
-    const k = group.length
-    const subIdx = group.indexOf(idx)
+    const isSelfLoop = edge.from === edge.to
 
-    const pu = positions[u]
-    const pv = positions[v]
-
-    if (edge.from === edge.to) {
-      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, subIdx, { isAutomata, startState: automataOptions.startState })
+    if (isSelfLoop) {
+      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, 0, { isAutomata, startState: automataOptions.startState })
       if (loopGeo) {
         minX = Math.min(minX, loopGeo.minX)
         maxX = Math.max(maxX, loopGeo.maxX)
         minY = Math.min(minY, loopGeo.minY)
         maxY = Math.max(maxY, loopGeo.maxY)
       }
-    } else if (k > 1 && pu && pv) {
-      const dx = pv.x - pu.x
-      const dy = pv.y - pu.y
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1
-      const nx = -dy / dist
-      const ny = dx / dist
-      const step = Math.min(46, Math.max(30, dist * 0.22))
-      const offset = (subIdx - (k - 1) / 2) * step
-
-      if (Math.abs(offset) > 1) {
-        const cx = (pu.x + pv.x) / 2 + nx * offset
-        const cy = (pu.y + pv.y) / 2 + ny * offset
-        minX = Math.min(minX, cx)
-        maxX = Math.max(maxX, cx)
-        minY = Math.min(minY, cy)
-        maxY = Math.max(maxY, cy)
+    } else {
+      const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
+      if (geo) {
+        if (geo.cx !== undefined) {
+          minX = Math.min(minX, geo.cx - 20)
+          maxX = Math.max(maxX, geo.cx + 20)
+        }
+        if (geo.cy !== undefined) {
+          minY = Math.min(minY, geo.cy - 16)
+          maxY = Math.max(maxY, geo.cy + 16)
+        }
+        minX = Math.min(minX, geo.midX - 20)
+        maxX = Math.max(maxX, geo.midX + 20)
+        minY = Math.min(minY, geo.midY - 14)
+        maxY = Math.max(maxY, geo.midY + 14)
       }
-    } else if (edge.weight) {
-      const midX = (p1.x + p2.x) / 2
-      const midY = (p1.y + p2.y) / 2
-      minX = Math.min(minX, midX)
-      maxX = Math.max(maxX, midX)
-      minY = Math.min(minY, midY)
-      maxY = Math.max(maxY, midY)
     }
   })
 
@@ -861,14 +1028,15 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
   const cropW = Math.ceil((maxX + pad) - cropX)
   const cropH = Math.ceil((maxY + pad) - cropY)
 
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cropX} ${cropY} ${cropW} ${cropH}" style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
+  const payloadAttr = automataOptions.payloadAttr || ''
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cropX} ${cropY} ${cropW} ${cropH}" ${payloadAttr ? `data-diagram-payload="${payloadAttr}"` : ''} style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
 
   svg += `<defs>
-    <marker id="arrowhead-${theme}" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="${strokeColor}" />
+    <marker id="arrowhead-${theme}" viewBox="0 0 10 10" refX="27" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="${strokeColor}" />
     </marker>
-    <marker id="arrowhead-loop-${theme}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
-      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="${strokeColor}" />
+    <marker id="arrowhead-loop-${theme}" viewBox="0 0 10 10" refX="7.5" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto">
+      <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="${strokeColor}" />
     </marker>
   </defs>`
 
@@ -879,43 +1047,24 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
 
     const isSelfLoop = edge.from === edge.to
     const markerAttr = isDirected ? `marker-end="url(#${isSelfLoop ? `arrowhead-loop-${theme}` : `arrowhead-${theme}`})"` : ''
-    const u = edge.from < edge.to ? edge.from : edge.to
-    const v = edge.from < edge.to ? edge.to : edge.from
-    const key = `${u}~~~${v}`
-    const group = pairGroups[key] || [idx]
-    const k = group.length
-    const subIdx = group.indexOf(idx)
-
-    const pu = positions[u]
-    const pv = positions[v]
 
     let edgePath = null
     let midX = (p1.x + p2.x) / 2
     let midY = (p1.y + p2.y) / 2
 
     if (isSelfLoop) {
-      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, subIdx, { isAutomata, startState: automataOptions.startState })
+      const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, 0, { isAutomata, startState: automataOptions.startState })
       if (loopGeo) {
         edgePath = loopGeo.path
         midX = loopGeo.midX
         midY = loopGeo.midY
       }
-    } else if (k > 1 && pu && pv) {
-      const dx = pv.x - pu.x
-      const dy = pv.y - pu.y
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1
-      const nx = -dy / dist
-      const ny = dx / dist
-
-      const step = Math.min(46, Math.max(30, dist * 0.22))
-      const offset = (subIdx - (k - 1) / 2) * step
-
-      if (Math.abs(offset) > 1) {
-        const cx = (pu.x + pv.x) / 2 + nx * offset
-        const cy = (pu.y + pv.y) / 2 + ny * offset
-        midX = (pu.x + pv.x) / 2 + nx * (offset * 0.55)
-        midY = (pu.y + pv.y) / 2 + ny * (offset * 0.55)
-        edgePath = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`
+    } else {
+      const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
+      if (geo) {
+        edgePath = geo.path
+        midX = geo.midX
+        midY = geo.midY
       }
     }
 
@@ -935,7 +1084,7 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
   // Automata Initial/Start State Arrow from nowhere
   if (automataOptions.startState && positions[automataOptions.startState]) {
     const sp = positions[automataOptions.startState]
-    svg += `<line x1="${sp.x - 46}" y1="${sp.y}" x2="${sp.x - 23}" y2="${sp.y}" stroke="${lineStroke}" stroke-width="2.5" marker-end="url(#arrowhead-${theme})" />`
+    svg += `<line x1="${sp.x - 48}" y1="${sp.y}" x2="${sp.x}" y2="${sp.y}" stroke="${lineStroke}" stroke-width="2.5" marker-end="url(#arrowhead-${theme})" />`
   }
 
   const acceptSet = new Set(automataOptions.acceptStates || [])
@@ -1059,20 +1208,21 @@ function markdownTableToHtml(parsedTable) {
 function parseExamPaperStructureFromDom(tableEl) {
   if (!tableEl) return null
 
-  // IMPORTANT: Only get DIRECT child rows of the table's tbody/thead — NOT rows inside
-  // nested tables that users may have typed inside content cells (e.g. decision tree tables).
-  const tbody = tableEl.querySelector(':scope > tbody') || tableEl
-  const rows = Array.from(tbody.querySelectorAll(':scope > tr'))
+  // IMPORTANT: Only get DIRECT rows of tableEl, completely ignoring any nested tables
+  // that users may have inserted inside question cells.
+  const allRows = Array.from(tableEl.querySelectorAll('tr'))
+  const rows = allRows.filter(tr => tr.closest('table') === tableEl)
   if (rows.length === 0) return null
 
   const parts = []
   let currentPart = null
   let currentQ = null
-  let pendingOrContext = null // Tracks when an OR divider is passed
+  let pendingOrContext = null // Tracks when an OR divider is passed ('after-or')
+  let blankSpaceCount = 0 // Tracks blank spacing rows between questions/sub-questions
 
   rows.forEach(tr => {
     // Only get DIRECT child cells of this row — not cells from nested tables inside content
-    const tds = Array.from(tr.querySelectorAll(':scope > td, :scope > th'))
+    const tds = Array.from(tr.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH')
     if (tds.length === 0) return
 
     const rowType = tr.getAttribute('data-obe-row')
@@ -1082,6 +1232,11 @@ function parseExamPaperStructureFromDom(tableEl) {
 
     // 1. Part Header Row (colspan="4" or single-cell row with text containing "PART")
     if (tds.length === 1 && !isOrRow && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
+      if (currentQ && blankSpaceCount > 0) {
+        currentQ.qSpaceRows = blankSpaceCount
+      }
+      blankSpaceCount = 0
+
       const partName = tds[0].textContent.trim()
       currentPart = { name: partName, questions: [] }
       parts.push(currentPart)
@@ -1092,6 +1247,10 @@ function parseExamPaperStructureFromDom(tableEl) {
 
     // 2. OR Separator Row
     if (isOrRow) {
+      if (currentQ && blankSpaceCount > 0) {
+        currentQ.qOrBeforeSpace = blankSpaceCount
+      }
+      blankSpaceCount = 0
       pendingOrContext = 'after-or'
       return
     }
@@ -1104,8 +1263,8 @@ function parseExamPaperStructureFromDom(tableEl) {
       const col2Html = is3Col ? tds[1].innerHTML.trim() : tds[2].innerHTML.trim()
       const col3Text = is3Col ? tds[2].textContent.trim() : tds[3].textContent.trim()
 
-      const clean0 = col0Text.replace(/[\s\xa0]/g, '')
-      const clean1 = col1Text.replace(/[\s\xa0]/g, '')
+      const clean0 = col0Text.replace(/[\s\xa0]/g, '').replace(/&nbsp;/gi, '')
+      const clean1 = col1Text.replace(/[\s\xa0]/g, '').replace(/&nbsp;/gi, '')
 
       const isSubQLabel = !is3Col && /^[a-z]\.?$/i.test(clean1)
       const isQNumber = /^\d+\.?$/.test(clean0)
@@ -1113,6 +1272,7 @@ function parseExamPaperStructureFromDom(tableEl) {
       // Spacing row check: all cells are empty / blank
       const isBlankRow = !isQNumber && !isSubQLabel && !col2Html.replace(/<[^>]*>/g, '').replace(/(?:&nbsp;|\u00a0)/gi, '').trim()
       if (isBlankRow && rowType !== 'sub-q-or' && rowType !== 'question-or') {
+        blankSpaceCount++
         return
       }
 
@@ -1120,12 +1280,15 @@ function parseExamPaperStructureFromDom(tableEl) {
       const markVal = markMatch ? parseInt(markMatch[0]) : 10
 
       // Extract existing Bloom's level if tag present in col2Html e.g. [CO3->C4] or [C4]
-      const bloomMatch = col2Html.match(/\[(?:CO\d+)?(?:->|→)?(C[1-6])\]/i) || col2Html.match(/\[(C[1-6])\]/i)
+      const bloomMatch = col2Html.match(/\[(?:CO\d+)?(?:\s*(?:->|→|&rarr;|&#8594;|&#x2192;|-&gt;|-&#62;)\s*)?(C[1-6])\]/i) || col2Html.match(/\[(C[1-6])\]/i)
       const bloomVal = bloomMatch ? bloomMatch[1].toUpperCase() : ''
 
       // A. Explicit Sub-Q OR alternative row
       if (rowType === 'sub-q-or' || (pendingOrContext === 'after-or' && !isQNumber && !isSubQLabel)) {
         if (currentQ) {
+          if (blankSpaceCount > 0) {
+            currentQ.qOrAfterSpace = blankSpaceCount
+          }
           const sIdx = tr.hasAttribute('data-sub-idx')
             ? parseInt(tr.getAttribute('data-sub-idx'))
             : Math.max(0, (currentQ.marks?.length || 1) - 1)
@@ -1141,12 +1304,16 @@ function parseExamPaperStructureFromDom(tableEl) {
           currentQ.subOrMarks[sIdx] = markVal
         }
         pendingOrContext = null
+        blankSpaceCount = 0
         return
       }
 
       // B. Explicit Question-level OR alternative row
       if (rowType === 'question-or' || (pendingOrContext === 'after-or' && !isQNumber && isSubQLabel)) {
         if (currentQ) {
+          if (!currentQ.hasQuestionOr && blankSpaceCount > 0) {
+            currentQ.qOrAfterSpace = blankSpaceCount
+          }
           currentQ.hasQuestionOr = true
           if (!currentQ.questionOrMarks) currentQ.questionOrMarks = []
           if (!currentQ.questionOrBlooms) currentQ.questionOrBlooms = []
@@ -1156,11 +1323,16 @@ function parseExamPaperStructureFromDom(tableEl) {
           currentQ.questionOrBlooms.push(bloomVal)
           currentQ.questionOrContents.push(col2Html || '')
         }
+        blankSpaceCount = 0
         return
       }
 
       // C. Standard Question row (e.g. "1.")
       if (isQNumber) {
+        if (currentQ && blankSpaceCount > 0) {
+          currentQ.qSpaceRows = blankSpaceCount
+        }
+        blankSpaceCount = 0
         pendingOrContext = null
         if (!currentPart) {
           currentPart = { name: '', questions: [] }
@@ -1182,10 +1354,18 @@ function parseExamPaperStructureFromDom(tableEl) {
           questionOrBlooms: [],
           questionOrContents: [],
           qOrBeforeSpace: 1,
-          qOrAfterSpace: 1
+          qOrAfterSpace: 1,
+          spaceRows: 1,
+          subSpaceRows: [0],
+          qSpaceRows: 1
         }
         currentPart.questions.push(currentQ)
       } else if (currentQ && isSubQLabel) {
+        if (blankSpaceCount > 0 && Array.isArray(currentQ.subSpaceRows)) {
+          const prevSubIdx = (currentQ.subCount || 1) - 1
+          currentQ.subSpaceRows[prevSubIdx] = blankSpaceCount
+        }
+        blankSpaceCount = 0
         pendingOrContext = null
         currentQ.subCount = (currentQ.subCount || 0) + 1
         currentQ.marks.push(markVal)
@@ -1203,9 +1383,16 @@ function parseExamPaperStructureFromDom(tableEl) {
         currentQ.subOrBeforeSpace.push(1)
         if (!currentQ.subOrAfterSpace) currentQ.subOrAfterSpace = []
         currentQ.subOrAfterSpace.push(1)
+        if (!currentQ.subSpaceRows) currentQ.subSpaceRows = []
+        currentQ.subSpaceRows.push(0)
       }
     }
   })
+
+  // Final check for trailing spacing on last question
+  if (currentQ && blankSpaceCount > 0) {
+    currentQ.qSpaceRows = blankSpaceCount
+  }
 
   return parts.length > 0 ? parts : null
 }
@@ -1213,10 +1400,10 @@ function parseExamPaperStructureFromDom(tableEl) {
 // Helper: Exam Paper Structure Builder — generates professional exam question paper table layout
 // Produces a 4-column table: Q# | Sub-Q | Content Area | Marks [X]
 // Matches BAIUST university exam paper format with proper spacing rows, OR choice rows & [CO->Bloom] tags
-function generateExamPaperStructureHtml(parts = [], questionsList = []) {
+function generateExamPaperStructureHtml(parts = [], questionsList = [], isBordersCleared = false) {
   if (!parts || parts.length === 0) return ''
 
-  const bd = 'border:1px solid #000;'
+  const bd = isBordersCleared ? 'border:none;' : 'border:1px solid #000;'
   const qW = 'width:28px;max-width:32px;'
   const sW = 'width:24px;max-width:28px;'
   const mW = 'width:50px;max-width:55px;'
@@ -1226,7 +1413,10 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
   const mPad = 'padding:5px 0px 5px 4px;text-align:right;'
   const vt = 'vertical-align:top;'
 
-  let html = `<table class="e-rte-table obe-paper-structure-table" data-obe-paper-structure="true" style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
+  const clearedClass = isBordersCleared ? ' borders-cleared' : ''
+  const clearedAttr = isBordersCleared ? ' data-obe-borders-cleared="true"' : ''
+
+  let html = `<table class="e-rte-table obe-paper-structure-table${clearedClass}" data-obe-paper-structure="true"${clearedAttr} style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
   html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-subq" style="width:24px;max-width:28px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
 
   let globalQNum = 1
@@ -1276,10 +1466,34 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
           tagStr = `[${bloomCode}]`
         }
 
-        let cleaned = (rawContent || '')
-          .replace(/\s*<span class="co-bloom-tag"[^>]*>.*?<\/span>/gi, '')
-          .replace(/\s*\[CO\d+(?:\s*(?:->|→)\s*)?[C1-6]?\]/gi, '')
-          .replace(/\s*\[C[1-6]\]/gi, '')
+        const ARROW_PATTERN = '(?:->|→|&rarr;|&#8594;|&#x2192;|-&gt;|-&#62;)'
+
+        // 1. Process <span class="co-bloom-tag">...</span> safely:
+        // If it only contains a tag like [CO1->C2] or [C2] or whitespace, remove the whole span.
+        // If it contains actual question content, unwrap the span (keep the inner content).
+        let cleaned = (rawContent || '').replace(/<span\s+class="co-bloom-tag"[^>]*>([\s\S]*?)<\/span>/gi, (match, inner) => {
+          const textOnly = inner.replace(/<[^>]*>/g, '').replace(/(?:&nbsp;|\u00a0)/gi, ' ').trim()
+          const tagRegex = new RegExp(`^\\[(?:CO\\d+)?\\s*${ARROW_PATTERN}?\\s*(?:C[1-6])?\\]$`, 'i')
+          const isOnlyTag = tagRegex.test(textOnly) ||
+                            /^\[CO\d+\]$/i.test(textOnly) ||
+                            /^\[C[1-6]\]$/i.test(textOnly) ||
+                            textOnly.length === 0
+          if (isOnlyTag) {
+            return '' // Safe to remove pure tag span
+          }
+          return inner // Preserves question text that was typed inside the span!
+        })
+
+        // 2. Strip any remaining standalone CO/Bloom tags
+        const standaloneTagRegex = new RegExp(`\\s*\\[CO\\d+\\s*${ARROW_PATTERN}\\s*C[1-6]\\]`, 'gi')
+        const standaloneCoRegex = /\s*\[CO\d+\]/gi
+        const standaloneBloomRegex = /\s*\[C[1-6]\]/gi
+
+        cleaned = cleaned
+          .replace(standaloneTagRegex, '')
+          .replace(standaloneCoRegex, '')
+          .replace(standaloneBloomRegex, '')
+          .replace(/<(?:strong|b|span|em|i)\b[^>]*>\s*(?:&nbsp;|\u00a0|\s)*<\/(?:strong|b|span|em|i)>/gi, '')
           .replace(/<p>\s*(?:&nbsp;|\u00a0|<br\s*\/?>|\s)*<\/p>/gi, '')
           .replace(/<div>\s*(?:&nbsp;|\u00a0|<br\s*\/?>|\s)*<\/div>/gi, '')
           .replace(/^(?:\s|&nbsp;|\u00a0|<br\s*\/?>)+/gi, '')
@@ -1288,8 +1502,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
 
         const hasActualContent = cleaned && (
           cleaned.replace(/<[^>]*>/g, '').replace(/(?:&nbsp;|\u00a0)/gi, '').trim().length > 0 ||
-          /<(?:img|table|svg|math|canvas)\b/i.test(cleaned) ||
-          /math-equation-wrapper/i.test(cleaned)
+          /<(?:img|table|svg|math|canvas|pre)\b/i.test(cleaned) ||
+          /math-equation-wrapper|obe-code-snippet/i.test(cleaned)
         )
 
         if (hasActualContent) {
@@ -1374,18 +1588,19 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
         }
 
         const isLastSubQ = s === effectiveSubCount - 1
-        const defaultSpace = q.spaceRows !== undefined ? parseInt(q.spaceRows) : 1
-        let subSpace = defaultSpace
+        let subSpace = 0
         if (Array.isArray(q.subSpaceRows)) {
-          subSpace = q.subSpaceRows[s] !== undefined ? parseInt(q.subSpaceRows[s]) : defaultSpace
+          subSpace = q.subSpaceRows[s] !== undefined ? parseInt(q.subSpaceRows[s]) : 0
         } else if (q.subSpaceRows !== undefined) {
           subSpace = parseInt(q.subSpaceRows)
+        } else if (q.spaceRows !== undefined) {
+          subSpace = parseInt(q.spaceRows)
         }
 
         if (!isLastSubQ) {
           html += renderSpacingRows(subSpace)
         } else if (!q.hasQuestionOr) {
-          const qSpace = q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : defaultSpace
+          const qSpace = q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : 1
           html += renderSpacingRows(qSpace)
         }
       }
@@ -1428,7 +1643,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = []) {
 
           const isLastOrSubQ = s === effectiveSubCount - 1
           const qSpace = q.qSpaceRows !== undefined ? parseInt(q.qSpaceRows) : 1
-          const sSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[s] ?? 1) : 1
+          const sSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[s] ?? 0) : (q.subSpaceRows !== undefined ? parseInt(q.subSpaceRows) : 0)
           const spaceCount = isLastOrSubQ ? qSpace : sSpace
 
           html += renderSpacingRows(spaceCount)
@@ -1710,7 +1925,10 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const isAssignment = aType === 'assignment' || aType === 'assignments' || (aName && aName.toLowerCase().includes('assignment'))
   const isPresentation = aType === 'presentation' || (aName && aName.toLowerCase().includes('presentation'))
   const isProjectReport = aType === 'projectReport' || aType === 'project' || (aName && aName.toLowerCase().includes('project'))
-  const isAssignmentOrReport = isAssignment || isPresentation || isProjectReport
+  const isParticipation = aType === 'participation' || (aName && aName.toLowerCase().includes('participation'))
+  const isAttendance = aType === 'attendance' || (aName && aName.toLowerCase().includes('attendance'))
+  const isPerformance = aType === 'performance' || (aName && aName.toLowerCase().includes('performance'))
+  const isAssignmentOrReport = isAssignment || isPresentation || isProjectReport || isParticipation || isAttendance || isPerformance
   const isNoParts = isMidTerm || isCT || isAssignmentOrReport || !isTermFinal
 
   const [editorValue, setEditorValue] = useState('')
@@ -2159,6 +2377,80 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [draggingNode, setDraggingNode] = useState(null)
   const [activeGuideLines, setActiveGuideLines] = useState([]) // Smart alignment guidelines { type: 'h'|'v', pos, label }
   const graphSvgRef = useRef(null)
+  const [editingDiagramElement, setEditingDiagramElement] = useState(null)
+  const [editingDiagramId, setEditingDiagramId] = useState(null)
+
+  const handleOpenNewDiagramModal = () => {
+    setEditingDiagramElement(null)
+    setEditingDiagramId(null)
+    setShowGraphGenModal(true)
+  }
+
+  const handleCloseDiagramModal = () => {
+    setEditingDiagramElement(null)
+    setEditingDiagramId(null)
+    setShowGraphGenModal(false)
+  }
+
+  const handleOpenDiagramEditModal = (targetImg) => {
+    if (!targetImg) return
+
+    let diagId = targetImg.getAttribute('data-diagram-id')
+    if (!diagId) {
+      diagId = `cs-diag-${Date.now()}`
+      targetImg.setAttribute('data-diagram-id', diagId)
+    }
+
+    setEditingDiagramElement(targetImg)
+    setEditingDiagramId(diagId)
+
+    let payload = null
+    const payloadAttr = targetImg.getAttribute('data-diagram-payload')
+    if (payloadAttr) {
+      try {
+        payload = JSON.parse(decodeURIComponent(payloadAttr))
+      } catch (err) {
+        console.warn('Failed to parse data-diagram-payload attribute:', err)
+      }
+    }
+
+    // Fallback: decode SVG data URI from src if payloadAttr wasn't directly on img attribute
+    if (!payload && targetImg.src && targetImg.src.startsWith('data:image/svg+xml;base64,')) {
+      try {
+        const base64 = targetImg.src.replace('data:image/svg+xml;base64,', '')
+        const decodedSvg = decodeURIComponent(escape(atob(base64)))
+        const match = decodedSvg.match(/data-diagram-payload="([^"]+)"/)
+        if (match && match[1]) {
+          payload = JSON.parse(decodeURIComponent(match[1]))
+        }
+      } catch (e) {
+        console.warn('Failed to decode data-diagram-payload from SVG src:', e)
+      }
+    }
+
+    if (payload) {
+      if (payload.category) setGraphCategory(payload.category)
+      if (payload.type) setGraphType(payload.type)
+      if (payload.theme) setGraphTheme(payload.theme)
+      if (payload.edgesText !== undefined) setGraphEdgesText(payload.edgesText)
+      if (Array.isArray(payload.edgeRows) && payload.edgeRows.length > 0) {
+        setEdgeRows(payload.edgeRows)
+      } else if (payload.edgesText) {
+        const parsed = parseGraphLines(payload.edgesText)
+        setEdgeRows(parsed.edges.map(e => ({ from: e.from, to: e.to, weight: e.weight || '' })))
+      }
+      if (payload.customPositions && typeof payload.customPositions === 'object') {
+        setCustomNodePositions(payload.customPositions)
+      } else {
+        setCustomNodePositions({})
+      }
+      if (payload.startState !== undefined) setStartState(payload.startState || '')
+      if (Array.isArray(payload.acceptStates)) setAcceptStates(payload.acceptStates)
+      if (payload.inputMode) setGraphInputMode(payload.inputMode)
+    }
+
+    setShowGraphGenModal(true)
+  }
 
   const parseGraphData = (text) => {
     return parseGraphLines(text)
@@ -2270,16 +2562,16 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     {
       name: 'PART A',
       questions: [
-        { subCount: 3, marks: [10, 10, 10] },
-        { subCount: 3, marks: [10, 10, 10] },
-        { subCount: 3, marks: [10, 10, 10] }
+        { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+        { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+        { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
       ]
     },
     {
       name: 'PART B',
       questions: [
-        { subCount: 3, marks: [10, 10, 10] },
-        { subCount: 3, marks: [10, 10, 10] }
+        { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+        { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
       ]
     }
   ])
@@ -2894,6 +3186,310 @@ Equation description: "${aiEquationPrompt}"`
     return true
   }
 
+  const lastListActionRef = useRef({ time: 0, key: '' })
+
+  // Smart List Helper: Handles bullet/numbering list creation, switching, and unlisting (None)
+  // Supports all dropdown variants (Disc, Circle, Square, Decimal, Lower-Alpha, Upper-Alpha, Lower-Roman, Upper-Roman, Lower-Greek, None)
+  // Ensures lists are never applied to outer table cells, supports caret list creation on empty lines (Word-identical),
+  // and cleanly converts between lists and paragraphs
+  const handleSmartListAction = (args, editor) => {
+    if (!editor) return false
+    const editPanel = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    if (!editPanel) return false
+
+    const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+    const sel = doc ? doc.getSelection() : window.getSelection()
+    if (!sel || !sel.rangeCount) return false
+
+    const range = sel.getRangeAt(0)
+    let startNode = range.startContainer
+    if (startNode.nodeType === 3) startNode = startNode.parentElement
+    if (!startNode || !editPanel.contains(startNode)) return false
+
+    const req = (args.requestType || args.item?.command || '').toLowerCase()
+    const sub = (args.subCommand || args.item?.subCommand || '').toLowerCase()
+
+    let rawVal = ''
+    if (typeof args.value === 'string') {
+      rawVal = args.value
+    } else if (args.value?.listStyle && typeof args.value.listStyle === 'string') {
+      rawVal = args.value.listStyle
+    } else if (args.value?.selectedValue && typeof args.value.selectedValue === 'string') {
+      rawVal = args.value.selectedValue
+    } else if (args.itemCollection?.listStyle && typeof args.itemCollection.listStyle === 'string') {
+      rawVal = args.itemCollection.listStyle
+    } else if (args.item?.value && typeof args.item.value === 'string') {
+      rawVal = args.item.value
+    } else if (args.item?.text && typeof args.item.text === 'string') {
+      rawVal = args.item.text
+    } else if (sub !== 'bulletformatlist' && sub !== 'numberformatlist' && sub !== 'ul' && sub !== 'ol') {
+      rawVal = sub
+    }
+
+    const norm = (rawVal || '').toLowerCase().replace(/[\s_-]+/g, '')
+
+    // Debounce rapid duplicate calls (e.g. within 60ms)
+    const actionKey = `${req}_${sub}_${norm}`
+    const now = Date.now()
+    if (lastListActionRef.current && (now - lastListActionRef.current.time < 60) && lastListActionRef.current.key === actionKey) {
+      return true
+    }
+    lastListActionRef.current = { time: now, key: actionKey }
+
+    const isNoneAction = norm === 'none' || norm === 'clear' || sub === 'none' || req === 'none'
+
+    // Identify containment
+    const containingCell = startNode.closest('td, th')
+    const existingLi = startNode.closest('li')
+    const existingList = existingLi ? existingLi.closest('ol, ul') : startNode.closest('ol, ul')
+
+    // Helper to safely apply Microsoft Word 36px tab indentation and CSS classes to list elements
+    const styleListElem = (listEl, styleType) => {
+      listEl.style.listStyleType = styleType
+      listEl.className = `e-list-${styleType}`
+      listEl.style.paddingLeft = '36px'
+      listEl.style.marginTop = '6px'
+      listEl.style.marginBottom = '6px'
+      listEl.style.listStylePosition = 'outside'
+    }
+
+    const styleLiElem = (liEl, styleType) => {
+      liEl.style.listStyleType = styleType
+      liEl.className = `e-list-${styleType}`
+      liEl.style.marginTop = '4px'
+      liEl.style.marginBottom = '4px'
+    }
+
+    const saveAndSyncEditor = () => {
+      if (editor.formatter?.saveData) editor.formatter.saveData()
+      if (editor.contentModule?.getEditPanel) {
+        const newHtml = editor.contentModule.getEditPanel().innerHTML
+        setEditorValue(newHtml)
+        if (typeof editor.value !== 'undefined') editor.value = newHtml
+      }
+    }
+
+    // CASE 1: Cursor or selection is inside an existing list
+    if (existingList && editPanel.contains(existingList) && (!containingCell || containingCell.contains(existingList))) {
+      if (isNoneAction) {
+        // Unlist: convert list items to paragraphs
+        const listItems = Array.from(existingList.children).filter(c => c.tagName === 'LI')
+        const frag = doc.createDocumentFragment()
+        const createdPs = []
+        listItems.forEach(li => {
+          const p = doc.createElement('p')
+          p.innerHTML = li.innerHTML || '<br>'
+          p.style.marginBottom = '4px'
+          p.style.lineHeight = '1.5'
+          frag.appendChild(p)
+          createdPs.push(p)
+        })
+        const parent = existingList.parentNode
+        if (parent) {
+          parent.replaceChild(frag, existingList)
+          saveAndSyncEditor()
+          if (createdPs.length > 0) {
+            try {
+              const newRange = doc.createRange()
+              newRange.selectNodeContents(createdPs[0])
+              newRange.collapse(true)
+              sel.removeAllRanges()
+              sel.addRange(newRange)
+            } catch (e) {}
+          }
+        }
+        return true
+      }
+
+      // Determine target list style
+      let isNumbered = req.includes('number') || sub.includes('number') || sub === 'ol' || req === 'ol' ||
+        norm.includes('decimal') || norm.includes('alpha') || norm.includes('roman') || norm.includes('greek') || norm === 'number'
+
+      if (req.includes('bullet') || sub.includes('bullet') || sub === 'ul' || req === 'ul' ||
+          norm.includes('disc') || norm.includes('circle') || norm.includes('square')) {
+        isNumbered = false
+      }
+
+      let targetTag = isNumbered ? 'ol' : 'ul'
+      let targetStyle = isNumbered ? 'decimal' : 'disc'
+
+      if (isNumbered) {
+        if (norm.includes('greek')) targetStyle = 'lower-greek'
+        else if (norm.includes('lowerroman') || (norm.includes('lower') && norm.includes('roman'))) targetStyle = 'lower-roman'
+        else if (norm.includes('upperroman') || (norm.includes('upper') && norm.includes('roman'))) targetStyle = 'upper-roman'
+        else if (norm.includes('loweralpha') || (norm.includes('lower') && norm.includes('alpha'))) targetStyle = 'lower-alpha'
+        else if (norm.includes('upperalpha') || (norm.includes('upper') && norm.includes('alpha'))) targetStyle = 'upper-alpha'
+        else targetStyle = 'decimal'
+      } else {
+        if (norm.includes('circle')) targetStyle = 'circle'
+        else if (norm.includes('square')) targetStyle = 'square'
+        else targetStyle = 'disc'
+      }
+
+      // Switching list tag (ul <-> ol):
+      if (existingList.tagName.toLowerCase() !== targetTag) {
+        const newList = doc.createElement(targetTag)
+        styleListElem(newList, targetStyle)
+        while (existingList.firstChild) {
+          const child = existingList.firstChild
+          if (child.nodeType === 1 && child.tagName === 'LI') {
+            styleLiElem(child, targetStyle)
+          }
+          newList.appendChild(child)
+        }
+        const parent = existingList.parentNode
+        if (parent) {
+          parent.replaceChild(newList, existingList)
+          saveAndSyncEditor()
+        }
+        return true
+      } else {
+        // Same tag: update list-style-type and class
+        styleListElem(existingList, targetStyle)
+        Array.from(existingList.children).forEach(li => {
+          if (li.tagName === 'LI') {
+            styleLiElem(li, targetStyle)
+          }
+        })
+        saveAndSyncEditor()
+        return true
+      }
+    }
+
+    // CASE 2: Outside a list and user selected "None"
+    if (isNoneAction) {
+      return true
+    }
+
+    // Determine target list style for creating a new list
+    let isNumbered = req.includes('number') || sub.includes('number') || sub === 'ol' || req === 'ol' ||
+      norm.includes('decimal') || norm.includes('alpha') || norm.includes('roman') || norm.includes('greek') || norm === 'number'
+
+    if (req.includes('bullet') || sub.includes('bullet') || sub === 'ul' || req === 'ul' ||
+        norm.includes('disc') || norm.includes('circle') || norm.includes('square')) {
+      isNumbered = false
+    }
+
+    let targetTag = isNumbered ? 'ol' : 'ul'
+    let targetStyle = isNumbered ? 'decimal' : 'disc'
+
+    if (isNumbered) {
+      if (norm.includes('greek')) targetStyle = 'lower-greek'
+      else if (norm.includes('lowerroman') || (norm.includes('lower') && norm.includes('roman'))) targetStyle = 'lower-roman'
+      else if (norm.includes('upperroman') || (norm.includes('upper') && norm.includes('roman'))) targetStyle = 'upper-roman'
+      else if (norm.includes('loweralpha') || (norm.includes('lower') && norm.includes('alpha'))) targetStyle = 'lower-alpha'
+      else if (norm.includes('upperalpha') || (norm.includes('upper') && norm.includes('alpha'))) targetStyle = 'upper-alpha'
+      else targetStyle = 'decimal'
+    } else {
+      if (norm.includes('circle')) targetStyle = 'circle'
+      else if (norm.includes('square')) targetStyle = 'square'
+      else targetStyle = 'disc'
+    }
+
+    // CASE 3: Selection is collapsed (empty line or caret point - Word-style instant list item)
+    if (sel.isCollapsed) {
+      // Find enclosing <p> STRICTLY bounded by containingCell or editPanel
+      const enclosingP = startNode.closest('p')
+      const isValidP = enclosingP && 
+        (containingCell ? containingCell.contains(enclosingP) : editPanel.contains(enclosingP)) &&
+        !enclosingP.querySelector('table') &&
+        enclosingP.nodeName === 'P'
+
+      const listElem = doc.createElement(targetTag)
+      styleListElem(listElem, targetStyle)
+
+      const li = doc.createElement('li')
+      styleLiElem(li, targetStyle)
+
+      const isEmptyP = isValidP && (enclosingP.textContent.trim() === '' || enclosingP.innerHTML.trim() === '<br>' || enclosingP.innerHTML.trim() === '')
+
+      if (isEmptyP && enclosingP.parentNode) {
+        li.innerHTML = '<br>'
+        listElem.appendChild(li)
+        enclosingP.parentNode.replaceChild(listElem, enclosingP)
+      } else if (isValidP && !enclosingP.innerHTML.match(/<br\s*\/?>/i) && enclosingP.parentNode) {
+        li.innerHTML = enclosingP.innerHTML || '<br>'
+        listElem.appendChild(li)
+        enclosingP.parentNode.replaceChild(listElem, enclosingP)
+      } else {
+        // Direct insertion at caret: NEVER replace any table cell, div, or parent container!
+        li.innerHTML = '<br>'
+        listElem.appendChild(li)
+        range.deleteContents()
+        range.insertNode(listElem)
+      }
+
+      try {
+        const newRange = doc.createRange()
+        newRange.setStart(li, 0)
+        newRange.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(newRange)
+      } catch (e) {}
+
+      saveAndSyncEditor()
+      return true
+    }
+
+    // CASE 4: Text is selected across words/lines
+    const selectedText = sel.toString().trim()
+    if (!selectedText) return false
+
+    const commonAncestor = range.commonAncestorContainer
+    const commonElem = commonAncestor.nodeType === 3 ? commonAncestor.parentElement : commonAncestor
+    if (!commonElem || !editPanel.contains(commonElem)) return false
+    if (containingCell && !containingCell.contains(commonElem)) {
+      // Cross-cell selection: do not touch table layout
+      return false
+    }
+
+    const listElem = doc.createElement(targetTag)
+    styleListElem(listElem, targetStyle)
+
+    // Extract selected contents safely from the DOM Range
+    const frag = range.extractContents()
+    const temp = doc.createElement('div')
+    temp.appendChild(frag)
+
+    let lines = []
+    const childBlocks = temp.querySelectorAll('p, div, li')
+    if (childBlocks.length > 0) {
+      childBlocks.forEach(b => {
+        const t = b.innerHTML.trim()
+        if (t) lines.push(t)
+      })
+    } else {
+      lines = temp.innerHTML.split(/<br\s*\/?>/i).map(s => s.trim()).filter(Boolean)
+    }
+
+    if (lines.length === 0 && temp.textContent.trim()) {
+      lines = [temp.textContent.trim()]
+    }
+
+    if (lines.length === 0) {
+      lines = ['<br>']
+    }
+
+    lines.forEach(lineHtml => {
+      const li = doc.createElement('li')
+      li.innerHTML = lineHtml
+      styleLiElem(li, targetStyle)
+      listElem.appendChild(li)
+    })
+
+    range.insertNode(listElem)
+
+    try {
+      const newRange = doc.createRange()
+      newRange.selectNodeContents(listElem)
+      sel.removeAllRanges()
+      sel.addRange(newRange)
+    } catch (e) {}
+
+    saveAndSyncEditor()
+    return true
+  }
+
   // Helper to detect if a specific alignment (center, right, justify, or left) is active
   const isBlockAligned = useCallback((editor, alignmentType) => {
     // 1. Check toolbar button active state first (Syncfusion tracks selection accurately)
@@ -3369,6 +3965,18 @@ Equation description: "${aiEquationPrompt}"`
     } else if (args.requestType === 'LineHeights' || args.subCommand === 'LineHeights' || args.requestType === 'LineHeight' || args.subCommand === 'LineHeight') {
       const selectedVal = args.value?.selectedValue ?? args.value?.value ?? args.value
       applySelectedLineHeight(selectedVal)
+    } else if (
+      args.requestType === 'Lists' ||
+      args.requestType === 'BulletFormatList' ||
+      args.requestType === 'NumberFormatList' ||
+      args.subCommand === 'UL' ||
+      args.subCommand === 'OL' ||
+      args.subCommand === 'BulletFormatList' ||
+      args.subCommand === 'NumberFormatList'
+    ) {
+      if (handleSmartListAction(args, rteRef.current)) {
+        args.cancel = true
+      }
     }
   }
 
@@ -3524,6 +4132,33 @@ Equation description: "${aiEquationPrompt}"`
             editArea.querySelectorAll('.obe-code-snippet-container').forEach(c => c.removeAttribute('data-selected'))
           }
           setSelectedCodeBlockInfo(null)
+        }
+      }
+
+      // 3. CS Diagram Studio diagram edit on double-click (Tree, Map, Graph, State Diagram / Automata)
+      if (e.type === 'dblclick') {
+        let diagramImg = null
+        if (e.target?.tagName === 'IMG' && (
+          e.target.classList?.contains('obe-graph-diagram') ||
+          e.target.getAttribute?.('data-obe-diagram') === 'true' ||
+          e.target.getAttribute?.('alt') === 'Graph Diagram' ||
+          e.target.hasAttribute?.('data-diagram-payload')
+        )) {
+          diagramImg = e.target
+        } else {
+          const container = e.target?.closest?.('.e-img-wrap, .e-rte-img-resize, .e-img-resize, .obe-graph-diagram, p, div, span')
+          if (container) {
+            diagramImg = container.matches?.('img.obe-graph-diagram, img[data-obe-diagram="true"], img[data-diagram-payload], img[alt="Graph Diagram"]')
+              ? container
+              : container.querySelector?.('img.obe-graph-diagram, img[data-obe-diagram="true"], img[data-diagram-payload], img[alt="Graph Diagram"]')
+          }
+        }
+
+        if (diagramImg) {
+          e.preventDefault()
+          e.stopPropagation()
+          handleOpenDiagramEditModal(diagramImg)
+          return
         }
       }
     }
@@ -5802,6 +6437,9 @@ Equation description: "${aiEquationPrompt}"`
     const isAssignment = aType === 'assignment' || aType === 'assignments' || (aName && aName.toLowerCase().includes('assignment'))
     const isPresentation = aType === 'presentation' || (aName && aName.toLowerCase().includes('presentation'))
     const isProjectReport = aType === 'projectReport' || (aName && aName.toLowerCase().includes('project'))
+    const isParticipation = aType === 'participation' || (aName && aName.toLowerCase().includes('participation'))
+    const isAttendance = aType === 'attendance' || (aName && aName.toLowerCase().includes('attendance'))
+    const isPerformance = aType === 'performance' || (aName && aName.toLowerCase().includes('performance'))
 
     const rawDeadline = headerCustom.deadline || deadline || (assessment.deadline ? (
       !isNaN(new Date(assessment.deadline).getTime())
@@ -5810,8 +6448,8 @@ Equation description: "${aiEquationPrompt}"`
     ) : '')
     const deadlineVal = rawDeadline || 'Not Set'
 
-    const timeOrDeadlineLabel = (isAssignment || isPresentation || isProjectReport) ? 'Deadline' : 'Exam Duration'
-    const timeOrDeadlineValue = (isAssignment || isPresentation || isProjectReport) ? deadlineVal : duration
+    const timeOrDeadlineLabel = (isAssignment || isPresentation || isProjectReport) ? 'Deadline' : (isParticipation || isAttendance || isPerformance ? (duration ? 'Duration' : 'Type') : 'Exam Duration')
+    const timeOrDeadlineValue = (isAssignment || isPresentation || isProjectReport) ? deadlineVal : (isParticipation || isAttendance || isPerformance ? (duration || 'Continuous') : duration)
 
     // Build Level/Term format (e.g. Level-4 Term-II)
     const levelStr = level ? `Level-${level}` : 'Level-4'
@@ -5927,14 +6565,14 @@ Equation description: "${aiEquationPrompt}"`
           <!-- University Logo & Name Table (2-Column Perfectly Centered, Zero Overlap) -->
           <table style="margin: 0 auto 6px auto !important; border: none !important; border-collapse: collapse !important;">
             <tr>
-              <td style="vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 14px 0 0 !important; width: 62px !important;">
-                <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 58px !important; width: auto !important; display: block !important;" />
+              <td style="vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 8px 0 0 !important; width: 48px !important;">
+                <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 50px !important; width: auto !important; display: block !important;" />
               </td>
               <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 !important; white-space: nowrap !important;">
-                <div style="font-size: 15.8px !important; font-weight: bold !important; color: #000 !important; line-height: 1.25 !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important;">
+                <div style="font-size: 14.5px !important; font-weight: bold !important; color: #000 !important; line-height: 1.25 !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important; letter-spacing: 0.1px !important;">
                   ${bengaliName}
                 </div>
-                <div style="font-size: 11.8px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.15px !important; margin-top: 3px !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important;">
+                <div style="font-size: 10.6px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.05px !important; margin-top: 2px !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important;">
                   ${englishName}
                 </div>
               </td>
@@ -5995,8 +6633,8 @@ Equation description: "${aiEquationPrompt}"`
             <td style="width: 55px !important; vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 !important;">
               <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 46px !important; width: auto !important; display: block !important;" />
             </td>
-            <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 5px !important;">
-              <div style="font-size: 11.5px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.2px !important; font-family: 'Times New Roman', Times, serif !important;">
+            <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 4px !important;">
+              <div style="font-size: 10.6px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.05px !important; font-family: 'Times New Roman', Times, serif !important;">
                 ${englishName}
               </div>
             </td>
@@ -6029,45 +6667,10 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   // Inject [CO→Bloom] tags and marks into each question's HTML for print/export
+  // OBE question papers already have marks cells and CO badges in the paper structure.
+  // We must NEVER append marks or CO annotations to user-created <li> lists.
   const injectQuestionAnnotations = (htmlContent) => {
-    if (questions.length === 0) return htmlContent
-
-    // Use a temporary DOM element to parse and modify the HTML
-    const tempDiv = document.createElement('div')
-    tempDiv.innerHTML = htmlContent
-
-    // Find ONLY top-level list items (main questions Q1, Q2, Q3...), ignoring nested sub-questions
-    const allListItems = Array.from(tempDiv.querySelectorAll('li'))
-    const mainListItems = allListItems.filter(
-      li => !li.parentElement || li.parentElement.closest('li') === null
-    )
-
-    mainListItems.forEach((li, idx) => {
-      if (idx < questions.length) {
-        const q = questions[idx]
-        const co = q.co && q.co !== 'NONE' ? q.co : ''
-        const bloom = q.bloom || ''
-        const marks = q.maxMarks || 0
-
-        // Build the annotation string
-        let annotation = ''
-
-        // Add [CO→Bloom] tag if both are set
-        if (co && bloom) {
-          annotation += ` <strong>[${co}\u2192${bloom}]</strong>`
-        } else if (co) {
-          annotation += ` <strong>[${co}]</strong>`
-        }
-
-        // Create marks span (right-aligned)
-        const marksSpan = `<span style="float: right; font-weight: bold; font-size: 14px; margin-left: 15px;">${marks}</span>`
-
-        // Prepend marks float to the beginning of li content, append annotation to the end
-        li.innerHTML = marksSpan + li.innerHTML + annotation
-      }
-    })
-
-    return tempDiv.innerHTML
+    return htmlContent
   }
 
   // Print & Export styles for Multi-level Lists & Equations
@@ -6105,65 +6708,109 @@ Equation description: "${aiEquationPrompt}"`
         suffix: ") ";
       }
 
-      /* Base Ordered List Defaults */
+      /* Base List Defaults (36px Tab Indent to keep bullets inside table cells) */
       ol {
         margin-top: 6px !important;
         margin-bottom: 6px !important;
-        padding-left: 28px !important;
-        list-style-type: decimal;
+        padding-left: 36px !important;
+        list-style-type: decimal !important;
+        list-style-position: outside !important;
       }
       ol > li {
-        list-style-type: decimal;
+        list-style-type: inherit !important;
       }
 
       ol ol {
-        list-style-type: lower-alpha;
+        list-style-type: lower-alpha !important;
         margin-top: 4px !important;
         margin-bottom: 4px !important;
         padding-left: 28px !important;
       }
       ol ol > li {
-        list-style-type: lower-alpha;
+        list-style-type: inherit !important;
       }
 
       ol ol ol {
-        list-style-type: lower-roman;
+        list-style-type: lower-roman !important;
         margin-top: 4px !important;
         margin-bottom: 4px !important;
         padding-left: 28px !important;
       }
       ol ol ol > li {
-        list-style-type: lower-roman;
+        list-style-type: inherit !important;
       }
 
       ol ol ol ol {
-        list-style-type: upper-alpha;
+        list-style-type: upper-alpha !important;
         margin-top: 4px !important;
         margin-bottom: 4px !important;
         padding-left: 28px !important;
       }
       ol ol ol ol > li {
-        list-style-type: upper-alpha;
+        list-style-type: inherit !important;
       }
 
       /* Explicit Numbered List Format Overrides */
-      ol[style*="lower-alpha"], ol.e-list-lower-alpha, ol[style*="lower-alpha"] li, ol.e-list-lower-alpha li {
+      ol[style*="lower-alpha"], ol.e-list-lower-alpha, ol[style*="lower-alpha"] li, ol.e-list-lower-alpha li, li[style*="lower-alpha"] {
         list-style-type: lower-alpha !important;
       }
-      ol[style*="upper-alpha"], ol.e-list-upper-alpha, ol[style*="upper-alpha"] li, ol.e-list-upper-alpha li {
+      ol[style*="upper-alpha"], ol.e-list-upper-alpha, ol[style*="upper-alpha"] li, ol.e-list-upper-alpha li, li[style*="upper-alpha"] {
         list-style-type: upper-alpha !important;
       }
-      ol[style*="lower-roman"], ol.e-list-lower-roman, ol[style*="lower-roman"] li, ol.e-list-lower-roman li {
+      ol[style*="lower-roman"], ol.e-list-lower-roman, ol[style*="lower-roman"] li, ol.e-list-lower-roman li, li[style*="lower-roman"] {
         list-style-type: lower-roman !important;
       }
-      ol[style*="upper-roman"], ol.e-list-upper-roman, ol[style*="upper-roman"] li, ol.e-list-upper-roman li {
+      ol[style*="upper-roman"], ol.e-list-upper-roman, ol[style*="upper-roman"] li, ol.e-list-upper-roman li, li[style*="upper-roman"] {
         list-style-type: upper-roman !important;
       }
-      ol[style*="lower-greek"], ol.e-list-lower-greek, ol[style*="lower-greek"] li, ol.e-list-lower-greek li {
+      ol[style*="lower-greek"], ol.e-list-lower-greek, ol[style*="lower-greek"] li, ol.e-list-lower-greek li, li[style*="lower-greek"] {
         list-style-type: lower-greek !important;
       }
-      ol[style*="decimal"], ol.e-list-decimal, ol[style*="decimal"] li, ol.e-list-decimal li {
+      ol[style*="decimal"], ol.e-list-decimal, ol[style*="decimal"] li, ol.e-list-decimal li, li[style*="decimal"] {
         list-style-type: decimal !important;
+      }
+
+      /* Base Unordered List Defaults & Overrides */
+      ul {
+        margin-top: 6px !important;
+        margin-bottom: 6px !important;
+        padding-left: 36px !important;
+        list-style-type: disc !important;
+        list-style-position: outside !important;
+      }
+      ul > li {
+        list-style-type: inherit !important;
+      }
+      ul ul {
+        list-style-type: circle !important;
+        margin-top: 4px !important;
+        margin-bottom: 4px !important;
+        padding-left: 28px !important;
+      }
+      ul ul > li {
+        list-style-type: inherit !important;
+      }
+      ul ul ul {
+        list-style-type: square !important;
+        margin-top: 4px !important;
+        margin-bottom: 4px !important;
+        padding-left: 28px !important;
+      }
+      ul ul ul > li {
+        list-style-type: inherit !important;
+      }
+
+      ul[style*="disc"], ul.e-list-disc, ul[style*="disc"] li, ul.e-list-disc li, li[style*="disc"] {
+        list-style-type: disc !important;
+      }
+      ul[style*="circle"], ul.e-list-circle, ul[style*="circle"] li, ul.e-list-circle li, li[style*="circle"] {
+        list-style-type: circle !important;
+      }
+      ul[style*="square"], ul.e-list-square, ul[style*="square"] li, ul.e-list-square li, li[style*="square"] {
+        list-style-type: square !important;
+      }
+      ul[style*="none"], ul.e-list-none, ul[style*="none"] li, ul.e-list-none li, ol[style*="none"], ol.e-list-none, ol[style*="none"] li, ol.e-list-none li, li[style*="none"] {
+        list-style-type: none !important;
       }
 
       p, li {
@@ -6289,19 +6936,20 @@ Equation description: "${aiEquationPrompt}"`
       table[data-obe-paper-structure="true"] {
         width: 100% !important;
         border-collapse: collapse !important;
-        table-layout: auto !important;
+        table-layout: fixed !important;
         margin-top: 6px !important;
         margin-bottom: 6px !important;
+        box-sizing: border-box !important;
       }
       table.obe-paper-structure-table col.col-qnum,
       table[data-obe-paper-structure="true"] col.col-qnum {
         width: 28px !important;
-        max-width: 32px !important;
+        max-width: 28px !important;
       }
       table.obe-paper-structure-table col.col-subq,
       table[data-obe-paper-structure="true"] col.col-subq {
         width: 24px !important;
-        max-width: 28px !important;
+        max-width: 24px !important;
       }
       table.obe-paper-structure-table col.col-content,
       table[data-obe-paper-structure="true"] col.col-content {
@@ -6310,54 +6958,72 @@ Equation description: "${aiEquationPrompt}"`
       table.obe-paper-structure-table col.col-marks,
       table[data-obe-paper-structure="true"] col.col-marks {
         width: 50px !important;
-        max-width: 55px !important;
+        max-width: 50px !important;
       }
 
-      /* Specific column padding overrides to prevent huge print gaps */
-      table.obe-paper-structure-table td,
-      table[data-obe-paper-structure="true"] td {
+      /* Specific column padding overrides to prevent huge print gaps — DIRECT CHILDREN ONLY */
+      table.obe-paper-structure-table > tbody > tr > td,
+      table.obe-paper-structure-table > tr > td,
+      table[data-obe-paper-structure="true"] > tbody > tr > td,
+      table[data-obe-paper-structure="true"] > tr > td {
         vertical-align: top !important;
         font-family: 'Times New Roman', Times, serif !important;
         font-size: 12pt !important;
         line-height: 1.4 !important;
       }
-      table.obe-paper-structure-table td.col-qnum-cell,
-      table[data-obe-paper-structure="true"] td.col-qnum-cell,
-      table[data-obe-paper-structure="true"] td:first-child:not([colspan]) {
+      table.obe-paper-structure-table > tbody > tr > td.col-qnum-cell,
+      table.obe-paper-structure-table > tr > td.col-qnum-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td.col-qnum-cell,
+      table[data-obe-paper-structure="true"] > tr > td.col-qnum-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td:first-child:not([colspan]),
+      table[data-obe-paper-structure="true"] > tr > td:first-child:not([colspan]) {
         width: 28px !important;
-        max-width: 32px !important;
+        max-width: 28px !important;
         padding: 4px 2px 4px 0px !important;
         text-align: left !important;
         white-space: nowrap !important;
       }
-      table.obe-paper-structure-table td.col-subq-cell,
-      table[data-obe-paper-structure="true"] td.col-subq-cell,
-      table[data-obe-paper-structure="true"] tr:not([data-obe-row="or-separator"]) td:nth-child(2):not([colspan]) {
+      table.obe-paper-structure-table > tbody > tr > td.col-subq-cell,
+      table.obe-paper-structure-table > tr > td.col-subq-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td.col-subq-cell,
+      table[data-obe-paper-structure="true"] > tr > td.col-subq-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr:not([data-obe-row="or-separator"]) > td:nth-child(2):not([colspan]),
+      table[data-obe-paper-structure="true"] > tr:not([data-obe-row="or-separator"]) > td:nth-child(2):not([colspan]) {
         width: 24px !important;
-        max-width: 28px !important;
+        max-width: 24px !important;
         padding: 4px 4px 4px 0px !important;
         text-align: left !important;
         white-space: nowrap !important;
       }
-      table.obe-paper-structure-table td.col-content-cell,
-      table[data-obe-paper-structure="true"] td.col-content-cell,
-      table[data-obe-paper-structure="true"] tr:not([data-obe-row="or-separator"]) td:nth-child(3):not([colspan]) {
+      table.obe-paper-structure-table > tbody > tr > td.col-content-cell,
+      table.obe-paper-structure-table > tr > td.col-content-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td.col-content-cell,
+      table[data-obe-paper-structure="true"] > tr > td.col-content-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr:not([data-obe-row="or-separator"]) > td:nth-child(3):not([colspan]),
+      table[data-obe-paper-structure="true"] > tr:not([data-obe-row="or-separator"]) > td:nth-child(3):not([colspan]) {
         padding: 4px 8px 4px 2px !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+        overflow: visible !important;
       }
-      table.obe-paper-structure-table td.col-marks-cell,
-      table[data-obe-paper-structure="true"] td.col-marks-cell,
-      table[data-obe-paper-structure="true"] td:last-child:not([colspan]) {
+      table.obe-paper-structure-table > tbody > tr > td.col-marks-cell,
+      table.obe-paper-structure-table > tr > td.col-marks-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td.col-marks-cell,
+      table[data-obe-paper-structure="true"] > tr > td.col-marks-cell,
+      table[data-obe-paper-structure="true"] > tbody > tr > td:last-child:not([colspan]),
+      table[data-obe-paper-structure="true"] > tr > td:last-child:not([colspan]) {
         width: 50px !important;
-        max-width: 55px !important;
+        max-width: 50px !important;
         padding: 4px 0px 4px 4px !important;
         text-align: right !important;
         white-space: nowrap !important;
       }
 
-      /* Force zero margin for all content paragraphs inside table cells so they stay aligned with Q# and Sub-Q */
-      table.obe-paper-structure-table td p,
-      table[data-obe-paper-structure="true"] td p,
-      table td p {
+      /* Force zero margin for direct content paragraphs inside table cells so they stay aligned with Q# and Sub-Q */
+      table.obe-paper-structure-table > tbody > tr > td > p,
+      table.obe-paper-structure-table > tr > td > p,
+      table[data-obe-paper-structure="true"] > tbody > tr > td > p,
+      table[data-obe-paper-structure="true"] > tr > td > p {
         margin: 0 !important;
         margin-top: 0 !important;
         margin-bottom: 0 !important;
@@ -6366,20 +7032,123 @@ Equation description: "${aiEquationPrompt}"`
         display: inline !important;
       }
 
-      /* When borders are cleared, force borders to none in print */
-      table.obe-paper-structure-table.borders-cleared,
-      table.obe-paper-structure-table[data-obe-borders-cleared="true"],
-      table.obe-paper-structure-table[style*="border: none"],
-      table.obe-paper-structure-table[style*="border:none"] {
+      /* When borders are cleared on structure table, force borders to none ONLY on direct cells */
+      table.obe-paper-structure-table.borders-cleared > tbody > tr > td,
+      table.obe-paper-structure-table.borders-cleared > tbody > tr > th,
+      table.obe-paper-structure-table.borders-cleared > tr > td,
+      table.obe-paper-structure-table.borders-cleared > tr > th,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tbody > tr > td,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tbody > tr > th,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tr > td,
+      table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tr > th,
+      table.obe-paper-structure-table[style*="border: none"] > tbody > tr > td,
+      table.obe-paper-structure-table[style*="border: none"] > tr > td,
+      table.obe-paper-structure-table[style*="border:none"] > tbody > tr > td,
+      table.obe-paper-structure-table[style*="border:none"] > tr > td {
         border: none !important;
       }
-      table.obe-paper-structure-table.borders-cleared td,
-      table.obe-paper-structure-table.borders-cleared th,
-      table.obe-paper-structure-table[data-obe-borders-cleared="true"] td,
-      table.obe-paper-structure-table[data-obe-borders-cleared="true"] th,
-      table.obe-paper-structure-table[style*="border: none"] td,
-      table.obe-paper-structure-table[style*="border:none"] td {
-        border: none !important;
+
+      /* =========================================================================
+         Nested User Content Tables (Inside Question Content Cells)
+         ========================================================================= */
+      td.col-content-cell table,
+      td[colspan="2"].col-content-cell table,
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table,
+      table.obe-paper-structure-table > tbody > tr > td table,
+      table[data-obe-paper-structure="true"] > tbody > tr > td table,
+      table.e-rte-table:not(.obe-paper-structure-table),
+      .obe-content-table {
+        display: table !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 6px 0 !important;
+        border-collapse: collapse !important;
+        table-layout: auto !important;
+        font-family: 'Times New Roman', Times, serif !important;
+        font-size: 10pt !important;
+        line-height: 1.25 !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        box-sizing: border-box !important;
+        clear: both !important;
+        overflow: visible !important;
+      }
+
+      /* Auto-scale: Tables with many columns get tighter formatting to fit A4 width */
+      td.col-content-cell table.obe-print-compact,
+      td[colspan="2"].col-content-cell table.obe-print-compact {
+        font-size: 8.5pt !important;
+        line-height: 1.15 !important;
+      }
+      td.col-content-cell table.obe-print-compact th,
+      td.col-content-cell table.obe-print-compact td,
+      td[colspan="2"].col-content-cell table.obe-print-compact th,
+      td[colspan="2"].col-content-cell table.obe-print-compact td {
+        padding: 2px 3px !important;
+        font-size: 8.5pt !important;
+        line-height: 1.15 !important;
+      }
+
+      td.col-content-cell table th,
+      td[colspan="2"].col-content-cell table th,
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table th,
+      table.obe-paper-structure-table > tbody > tr > td table th,
+      table[data-obe-paper-structure="true"] > tbody > tr > td table th,
+      table.e-rte-table:not(.obe-paper-structure-table) th,
+      .obe-content-table th {
+        border: 1px solid #000 !important;
+        padding: 3px 5px !important;
+        text-align: left !important;
+        font-weight: bold !important;
+        font-size: 10pt !important;
+        background-color: transparent !important;
+        vertical-align: middle !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+        box-sizing: border-box !important;
+      }
+
+      td.col-content-cell table td,
+      td[colspan="2"].col-content-cell table td,
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table td,
+      table.obe-paper-structure-table > tbody > tr > td table td,
+      table[data-obe-paper-structure="true"] > tbody > tr > td table td,
+      table.e-rte-table:not(.obe-paper-structure-table) td,
+      .obe-content-table td {
+        border: 1px solid #000 !important;
+        padding: 3px 5px !important;
+        text-align: left !important;
+        vertical-align: middle !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+        font-size: 10pt !important;
+        line-height: 1.25 !important;
+        box-sizing: border-box !important;
+      }
+
+      td.col-content-cell table td p,
+      td.col-content-cell table td div,
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table td p,
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table td div,
+      table.obe-paper-structure-table > tbody > tr > td table td p,
+      table[data-obe-paper-structure="true"] > tbody > tr > td table td p,
+      .obe-content-table td p {
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: inherit !important;
+      }
+
+      /* Prevent nested table colgroup/col from inheriting structure table column constraints */
+      td.col-content-cell table col,
+      td.col-content-cell table colgroup,
+      table.obe-paper-structure-table > tbody > tr > td table col,
+      table.obe-paper-structure-table > tbody > tr > td table colgroup {
+        width: auto !important;
+        max-width: none !important;
+        min-width: 0 !important;
       }
     `
   }
@@ -6429,111 +7198,121 @@ Equation description: "${aiEquationPrompt}"`
     return tempDiv.innerHTML
   }
 
-  // Helper to paginate exam paper content into discrete, collision-free A4 pages
-  const buildExamPages = (headerHtml, coDescriptions, annotatedContent) => {
-    try {
-      const container = document.createElement('div')
-      container.style.position = 'absolute'
-      container.style.visibility = 'hidden'
-      container.style.left = '-9999px'
-      container.style.width = '178mm' // 210mm - 32mm margins
-      container.style.fontFamily = "'Times New Roman', Times, serif"
-      container.style.fontSize = '12pt'
-      container.style.lineHeight = '1.4'
-      document.body.appendChild(container)
+  // ---------------------------------------------------------------------------
+  // Pre-Print DOM Sanitizer: Cleans nested tables for faithful A4 printing
+  // ---------------------------------------------------------------------------
+  // This function ONLY does two safe things:
+  // 1. Strips destructive inline pixel widths from nested user tables and their
+  //    cells/colgroups so they flow naturally within the content column
+  // 2. Auto-detects multi-column tables (5+ columns) and applies compact
+  //    formatting (smaller font, tighter padding) so all columns fit on A4
+  //
+  // It does NOT attempt to move, reparent, or recover DOM rows — that approach
+  // caused ghost/duplicate table rows in earlier versions.
+  // ---------------------------------------------------------------------------
+  const sanitizeNestedTablesForPrint = (htmlContent) => {
+    if (!htmlContent) return htmlContent
 
-      const tempWrap = document.createElement('div')
-      tempWrap.innerHTML = annotatedContent
-      const table = tempWrap.querySelector('table.obe-paper-structure-table, table[data-obe-paper-structure="true"]')
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = htmlContent
 
-      if (!table) {
-        document.body.removeChild(container)
-        return null
+    // Step 0: Aggressively purge any redundant in-DOM footer or confidential elements
+    const redundantFooters = tempDiv.querySelectorAll(
+      '.exam-footer, .footer-confidential, .exam-running-footer-cell, .running-footer-bottom, [data-exam-footer="true"], .static-top-confidential, .running-footer-container, #page-counter-slot, .page-number-indicator, .running-header-top'
+    )
+    redundantFooters.forEach(el => el.remove())
+
+    // Remove any trailing or empty paragraphs that might push extra blank lines
+    const trailingEmptyParagraphs = tempDiv.querySelectorAll('p:empty, p > br:only-child')
+    trailingEmptyParagraphs.forEach(el => {
+      if (!el.textContent.trim() && !el.querySelector('img, svg, canvas, table')) {
+        el.remove()
+      }
+    })
+
+    // Find ALL tables in the content (both structure table and nested user tables)
+    const allTables = tempDiv.querySelectorAll('table')
+
+    for (const table of allTables) {
+      // Skip the outer structure table itself — only process nested user tables
+      if (table.classList.contains('obe-paper-structure-table') || table.getAttribute('data-obe-paper-structure') === 'true') continue
+
+      // --- Width Stripping ---
+      // Remove hardcoded pixel widths from the table element
+      const tableWidth = table.style.width || table.getAttribute('width') || ''
+      if (tableWidth && (tableWidth.includes('px') || /^\d+$/.test(tableWidth))) {
+        table.style.removeProperty('width')
+        table.removeAttribute('width')
+      }
+      table.style.width = '100%'
+      table.style.maxWidth = '100%'
+      table.style.tableLayout = 'auto'
+      table.style.borderCollapse = 'collapse'
+      table.style.boxSizing = 'border-box'
+
+      // Strip fixed widths from colgroup/col elements
+      const cols = table.querySelectorAll(':scope > colgroup > col, :scope > colgroup, :scope > col')
+      for (const col of cols) {
+        col.style.removeProperty('width')
+        col.style.removeProperty('max-width')
+        col.style.removeProperty('min-width')
+        col.removeAttribute('width')
       }
 
-      const colgroupHtml = table.querySelector('colgroup') ? table.querySelector('colgroup').outerHTML : ''
-      const tableClass = table.className
-      const tableStyle = table.getAttribute('style') || ''
-      const rows = Array.from(table.querySelectorAll('tbody > tr, tr'))
-
-      if (rows.length === 0) {
-        document.body.removeChild(container)
-        return null
+      // Count actual columns by checking first row
+      const firstRow = table.querySelector('tr')
+      let colCount = 0
+      if (firstRow) {
+        const cells = firstRow.querySelectorAll(':scope > td, :scope > th')
+        cells.forEach(cell => {
+          colCount += parseInt(cell.getAttribute('colspan') || '1', 10)
+        })
       }
 
-      // Measure header on Page 1
-      container.innerHTML = `<div style="font-family: 'Times New Roman', Times, serif;">${headerHtml}${coDescriptions}</div>`
-      const page1HeaderHeight = container.scrollHeight
+      // Auto-scale: Apply compact class for tables with 5+ columns
+      if (colCount >= 5) {
+        table.classList.add('obe-print-compact')
+      }
 
-      // A4 printable height at 96 DPI: 297mm ≈ 1122px
-      // With 12mm top and 12mm bottom padding: 273mm ≈ 1030px
-      // Top header block: ~26px, Bottom footer block: ~48px
-      // Usable height for page body: ~930px
-      const maxPageBodyHeight = 930
-      const page1UsableHeight = Math.max(250, maxPageBodyHeight - page1HeaderHeight)
-
-      const pagesRows = []
-      let currentPageRows = []
-      let currentHeight = 0
-      let isFirstPage = true
-
-      rows.forEach((row) => {
-        container.innerHTML = `<table class="${tableClass}" style="${tableStyle}">${colgroupHtml}<tbody>${row.outerHTML}</tbody></table>`
-        const rowHeight = container.scrollHeight || 35
-
-        const currentLimit = isFirstPage ? page1UsableHeight : maxPageBodyHeight
-
-        if (currentHeight + rowHeight > currentLimit && currentPageRows.length > 0) {
-          pagesRows.push(currentPageRows)
-          currentPageRows = [row]
-          currentHeight = rowHeight
-          isFirstPage = false
-        } else {
-          currentPageRows.push(row)
-          currentHeight += rowHeight
+      // Strip fixed pixel widths from all cells and ensure borders
+      const allCells = table.querySelectorAll('td, th')
+      for (const cell of allCells) {
+        const cellWidth = cell.style.width || cell.getAttribute('width') || ''
+        if (cellWidth && (cellWidth.includes('px') || /^\d+$/.test(cellWidth))) {
+          cell.style.removeProperty('width')
+          cell.style.removeProperty('max-width')
+          cell.style.removeProperty('min-width')
+          cell.removeAttribute('width')
         }
-      })
-
-      if (currentPageRows.length > 0) {
-        pagesRows.push(currentPageRows)
+        // Ensure borders are visible
+        if (!cell.style.border || cell.style.border === 'none' || cell.style.border === '0') {
+          cell.style.border = '1px solid #000'
+        }
+        cell.style.wordBreak = 'break-word'
+        cell.style.overflowWrap = 'break-word'
+        cell.style.boxSizing = 'border-box'
       }
-
-      document.body.removeChild(container)
-
-      const totalPages = Math.max(1, pagesRows.length)
-
-      return pagesRows.map((pageRowList, pageIdx) => {
-        const isP1 = pageIdx === 0
-        const pageRowsHtml = pageRowList.map(r => r.outerHTML).join('')
-        const pageTableHtml = `<table class="${tableClass}" style="${tableStyle}">${colgroupHtml}<tbody>${pageRowsHtml}</tbody></table>`
-
-        return `
-          <div class="exam-page" style="width: 210mm; min-height: 296mm; height: 296mm; max-height: 296mm; box-sizing: border-box; padding: 12mm 15mm 12mm 15mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: ${pageIdx === totalPages - 1 ? 'auto' : 'always'}; break-after: ${pageIdx === totalPages - 1 ? 'auto' : 'page'}; position: relative; overflow: hidden; background: #fff;">
-            <!-- Top Header Block: Fixed on every page -->
-            <div class="exam-top-block" style="text-align: center; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; font-family: 'Times New Roman', Times, serif; color: #000; margin-bottom: 6px; flex-shrink: 0;">
-              EXAMINATION CONFIDENTIAL
-            </div>
-
-            <!-- Page Body Content Area -->
-            <div class="exam-page-body" style="flex: 1; display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;">
-              ${isP1 ? `<div style="flex-shrink: 0;">${headerHtml}${coDescriptions}</div>` : ''}
-              <div style="flex: 1;">
-                ${pageTableHtml}
-              </div>
-            </div>
-
-            <!-- Bottom Footer Block: Fixed on every page -->
-            <div class="exam-bottom-block" style="text-align: center; font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.35; margin-top: 6px; flex-shrink: 0;">
-              <div style="font-size: 11pt; font-weight: normal; margin-bottom: 2px;">${pageIdx + 1} of ${totalPages}</div>
-              <div style="font-size: 10.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">EXAMINATION CONFIDENTIAL</div>
-            </div>
-          </div>
-        `
-      }).join('')
-    } catch (err) {
-      console.error('buildExamPages error:', err)
-      return null
     }
+
+    // Step 3: Trim trailing empty elements that cause phantom blank pages
+    // Syncfusion RTE often appends trailing <p><br></p>, <p>&nbsp;</p>, empty <div>, etc.
+    let lastChild = tempDiv.lastElementChild
+    while (lastChild) {
+      const tag = lastChild.tagName?.toLowerCase()
+      if (tag === 'p' || tag === 'div' || tag === 'br') {
+        const text = lastChild.textContent?.replace(/[\s\u00a0]/g, '').trim() || ''
+        const hasBlock = lastChild.querySelector('table, img, svg, canvas, .math-equation-wrapper, .katex')
+        if (!text && !hasBlock) {
+          const prev = lastChild.previousElementSibling
+          lastChild.remove()
+          lastChild = prev
+          continue
+        }
+      }
+      break
+    }
+
+    return tempDiv.innerHTML
   }
 
   // Word export
@@ -6541,7 +7320,8 @@ Equation description: "${aiEquationPrompt}"`
     const currentContent = rteRef.current ? rteRef.current.value : editorValue
     const headerHtml = getHeaderHtml()
     const coDescriptions = getCoDescriptionsHtml()
-    const annotatedContent = injectQuestionAnnotations(currentContent)
+    const rawAnnotatedContent = injectQuestionAnnotations(currentContent)
+    const annotatedContent = sanitizeNestedTablesForPrint(rawAnnotatedContent)
     const fullHtml = headerHtml + coDescriptions + annotatedContent
 
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' " +
@@ -6572,16 +7352,40 @@ Equation description: "${aiEquationPrompt}"`
     URL.revokeObjectURL(url)
   }
 
-  // Print/PDF export
+  // ===========================================================================
+  // AUTHENTIC BAIUST EXAM PAPER PRINT ENGINE — PIXEL-PERFECT
+  // ===========================================================================
+  // Architecture: Isolated IFrame with position:fixed running header/footer.
+  //
+  // Key design decisions:
+  // 1. @page { margin: 18mm } — symmetric balanced margins on all sides,
+  //    also suppresses browser Date/URL chrome in Chromium
+  // 2. position:fixed header/footer — pinned inside @page margin area,
+  //    appears on EVERY page including partially filled last page
+  // 3. JS-based page count — measures scrollHeight and injects "X of Y"
+  //    (CSS counter(pages) doesn't work in Chromium DOM elements)
+  // 4. Compact academic spacing — tight layout matching physical exam papers
+  // 5. Selective break-inside:avoid — only on atomic elements
+  // 6. Centered diagrams — graphs, automata, images: margin:auto
+  // 7. Hidden iframe — editor DOM stays 100% intact
+  // ===========================================================================
   const handlePrint = async () => {
     const currentContent = rteRef.current ? rteRef.current.value : editorValue
     const headerHtml = getHeaderHtml()
     const coDescriptions = getCoDescriptionsHtml()
     const rawAnnotatedContent = injectQuestionAnnotations(currentContent)
 
-    // Render equations into native vector KaTeX HTML for 100% crisp, unclipped PDF/Print reliability
-    const annotatedContent = renderEquationsForPrint(rawAnnotatedContent)
+    // Render equations into native vector KaTeX HTML
+    const equationRenderedContent = renderEquationsForPrint(rawAnnotatedContent)
 
+    // Sanitize nested tables + trim trailing empty nodes + purge redundant footers
+    const annotatedContent = sanitizeNestedTablesForPrint(equationRenderedContent)
+
+    // Clean university header by removing any embedded static confidential markings
+    let cleanHeaderHtml = headerHtml || ''
+    cleanHeaderHtml = cleanHeaderHtml.replace(/<div class="static-top-confidential"[\s\S]*?<\/div>/gi, '')
+
+    // Collect KaTeX CSS rules for injection
     let katexCssInline = ''
     try {
       for (const sheet of document.styleSheets) {
@@ -6594,77 +7398,1050 @@ Equation description: "${aiEquationPrompt}"`
               }
             }
           }
-        } catch (e) {}
+        } catch (e) { /* cross-origin */ }
       }
-    } catch (e) {}
+    } catch (e) { /* no stylesheets */ }
 
-    // Build discrete paged layout with dedicated Header, Content, and Footer blocks
-    const paginatedHtml = buildExamPages(headerHtml, coDescriptions, annotatedContent)
-    const finalPrintBody = paginatedHtml || `
-      <div class="exam-page" style="width: 210mm; min-height: 296mm; height: 296mm; box-sizing: border-box; padding: 12mm 15mm 12mm 15mm; display: flex; flex-direction: column; justify-content: space-between; background: #fff;">
-        <div style="text-align: center; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; font-family: 'Times New Roman', Times, serif; margin-bottom: 6px;">
-          EXAMINATION CONFIDENTIAL
-        </div>
-        <div style="flex: 1;">
-          ${headerHtml}
-          ${coDescriptions}
-          <div>${annotatedContent}</div>
-        </div>
-        <div style="text-align: center; font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.35; margin-top: 6px;">
-          <div style="font-size: 11pt; font-weight: normal; margin-bottom: 2px;">1 of 1</div>
-          <div style="font-size: 10.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">EXAMINATION CONFIDENTIAL</div>
-        </div>
-      </div>
+    // -------------------------------------------------------------------------
+    // Deterministic Sheet Pagination & Measurement Sandbox Routine
+    // -------------------------------------------------------------------------
+    // 1. Parse content to cleanly separate structure table rows from any surrounding elements
+    const parser = new DOMParser()
+    const contentDoc = parser.parseFromString(annotatedContent, 'text/html')
+    const structureTable = contentDoc.querySelector('table.obe-paper-structure-table, table[data-obe-paper-structure="true"]')
+
+    let preTableHtml = ''
+    let postTableHtml = ''
+    if (structureTable) {
+      let foundTable = false
+      Array.from(contentDoc.body.children).forEach(child => {
+        if (child === structureTable) {
+          foundTable = true
+        } else if (!foundTable) {
+          preTableHtml += child.outerHTML
+        } else {
+          postTableHtml += child.outerHTML
+        }
+      })
+    }
+
+    // 2. Accurate A4 Pixel Budget Calculation (210mm x 297mm at 96 DPI)
+    // Physical A4: 297mm = ~1123px.
+    // Protected Top: 10mm padding (~38px) + confidential header (~25px) = ~63px.
+    // Protected Bottom: Compact footer (3.5mm bottom + 9.5mm height = 13mm) leaving >266mm for content.
+    // Slicing budget: 975px (~258mm) maximizes usable space down to the footer boundary.
+    const USABLE_SHEET_HEIGHT = 975
+
+    const getAvailableHeight = (isFirst, hH = 0) => {
+      if (isFirst) {
+        return Math.max(150, USABLE_SHEET_HEIGHT - hH)
+      }
+      return USABLE_SHEET_HEIGHT
+    }
+
+    // Hidden measurement sandbox matching exact printable width (174mm = 210mm - 18mm*2)
+    const sandbox = document.createElement('div')
+    sandbox.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:174mm;visibility:hidden;font-family:"Times New Roman",Times,serif;font-size:10pt;line-height:1.3;box-sizing:border-box;'
+
+    // Inject exact print simulation styles into measurement sandbox so offsets match print layout
+    const sandboxStyle = document.createElement('style')
+    sandboxStyle.textContent = `
+      .print-exam-header { margin: 0 0 3mm 0; padding: 0; }
+      table.obe-paper-structure-table { width: 174mm; border-collapse: collapse; table-layout: fixed; margin: 2px 0; }
+      table.obe-paper-structure-table > tbody > tr > td { vertical-align: top; font-family: "Times New Roman", Times, serif; font-size: 10pt; line-height: 1.3; }
+      .col-qnum-cell { width: 24px; min-width: 24px; max-width: 28px; padding: 3px 2px 3px 0; font-weight: bold; }
+      .col-subq-cell { width: 20px; min-width: 20px; max-width: 24px; padding: 3px 3px 3px 0; font-weight: bold; }
+      .col-content-cell { padding: 3px 8px; word-break: break-word; overflow-wrap: break-word; }
+      .col-marks-cell { width: 42px; min-width: 42px; max-width: 46px; padding: 3px 0 3px 3px; text-align: right; font-weight: bold; }
+      .col-content-cell p { margin: 2px 0 3px 0; padding: 0; line-height: 1.25; }
+      .col-content-cell .scenario-box, .col-content-cell blockquote { margin: 4px 0; padding: 4px 8px; }
+      .katex-display { margin: 4px 0; }
+      .obe-code-table { font-size: 8.5pt; line-height: 1.15; margin: 4px 0; }
+      .obe-code-table td { padding: 3px 5px; }
+      pre.obe-code-block { font-family: Consolas, monospace; font-size: 9pt; line-height: 1.35; margin: 0; }
+    `
+    sandbox.appendChild(sandboxStyle)
+    document.body.appendChild(sandbox)
+
+    // Measure actual rendered height of university metadata header for Sheet 1
+    const headerSandbox = document.createElement('div')
+    headerSandbox.className = 'print-exam-header'
+    headerSandbox.style.width = '174mm'
+    headerSandbox.innerHTML = cleanHeaderHtml + coDescriptions + (preTableHtml || '')
+    sandbox.appendChild(headerSandbox)
+    const headerHeightPx = (headerSandbox.offsetHeight || 220) + 15
+    sandbox.removeChild(headerSandbox)
+
+    // Measurement table inside sandbox matching exact print styles
+    const measureTable = document.createElement('table')
+    measureTable.className = 'obe-paper-structure-table'
+    measureTable.style.cssText = 'width:174mm;border-collapse:collapse;table-layout:fixed;'
+    measureTable.innerHTML = `
+      <colgroup>
+        <col style="width:24px;" />
+        <col style="width:20px;" />
+        <col style="width:auto;" />
+        <col style="width:42px;" />
+      </colgroup>
+      <tbody></tbody>
+    `
+    sandbox.appendChild(measureTable)
+    const measureTbody = measureTable.querySelector('tbody')
+
+    const measureRowHtml = (html) => {
+      measureTbody.innerHTML = html
+      return measureTbody.firstElementChild ? measureTbody.firstElementChild.offsetHeight : 35
+    }
+
+    const renderRowHtml = (rowInfo, blocks, isCont, showMarks) => {
+      const qNum = isCont ? '' : (rowInfo.qNum || '')
+      const subQ = isCont ? '' : (rowInfo.subQ || '')
+      const marks = showMarks ? (rowInfo.marks || '') : ''
+      const contentHtml = blocks.map(b => b.outerHTML).join('')
+
+      return `
+        <tr>
+          <td class="col-qnum-cell">${qNum}</td>
+          <td class="col-subq-cell">${subQ}</td>
+          <td class="col-content-cell">${contentHtml}</td>
+          <td class="col-marks-cell">${marks}</td>
+        </tr>
+      `
+    }
+
+    const measureRowWithChildren = (rowInfo, blocks, isCont, showMarks) => {
+      const html = renderRowHtml(rowInfo, blocks, isCont, showMarks)
+      measureTbody.innerHTML = html
+      return measureTbody.firstElementChild ? measureTbody.firstElementChild.offsetHeight : 35
+    }
+
+    const isSliceableContainer = (el) => {
+      if (!el || !el.tagName) return false
+      const tag = el.tagName.toLowerCase()
+      if (el.classList.contains('obe-code-snippet-container') || el.classList.contains('obe-code-block') || tag === 'pre') return true
+      if (tag === 'table' && !el.classList.contains('obe-paper-structure-table') && el.getAttribute('data-obe-paper-structure') !== 'true') return true
+      if (tag === 'div' && el.querySelector('pre.obe-code-block, table.obe-code-table, table:not(.obe-paper-structure-table)')) return true
+      return false
+    }
+
+    const trySliceBlock = (block, item, currentFitting, isCont, currentH, maxH) => {
+      if (!block || !block.tagName) return null
+
+      // --- 1. CODE SNIPPET SLICING ---
+      const isCode = block.classList.contains('obe-code-snippet-container') ||
+                     block.classList.contains('obe-code-block') ||
+                     block.tagName.toLowerCase() === 'pre' ||
+                     !!block.querySelector('pre.obe-code-block, table.obe-code-table, pre')
+
+      if (isCode) {
+        // Case A: Line-numbered code table
+        const codeTable = block.querySelector('.obe-code-table')
+        const codeRows = codeTable ? Array.from(codeTable.querySelectorAll('tbody > tr, tr')) : []
+
+        if (codeTable && codeRows.length > 1) {
+          let bestK = 0
+          let bestPart1 = null
+
+          for (let k = 1; k < codeRows.length; k++) {
+            const cand1 = block.cloneNode(true)
+            const cand1Tbody = cand1.querySelector('.obe-code-table tbody') || cand1.querySelector('.obe-code-table')
+            if (cand1Tbody) {
+              cand1Tbody.innerHTML = codeRows.slice(0, k).map(r => r.outerHTML).join('')
+            }
+            const testH = measureRowWithChildren(item, [...currentFitting, cand1], isCont, false)
+            if (currentH + testH <= maxH) {
+              bestK = k
+              bestPart1 = cand1
+            } else {
+              break
+            }
+          }
+
+          if (bestK >= 1 && bestPart1) {
+            const cand2 = block.cloneNode(true)
+            const cand2Tbody = cand2.querySelector('.obe-code-table tbody') || cand2.querySelector('.obe-code-table')
+            if (cand2Tbody) {
+              cand2Tbody.innerHTML = codeRows.slice(bestK).map(r => r.outerHTML).join('')
+            }
+            return { part1: bestPart1, part2: cand2 }
+          }
+          return null
+        }
+
+        // Case B: Non-table code block (code/pre with newline-separated lines)
+        const codeTarget = block.querySelector('code') || block.querySelector('pre') || (block.tagName.toLowerCase() === 'pre' ? block : null)
+        if (codeTarget) {
+          const rawHtml = codeTarget.innerHTML
+          let codeLines = rawHtml.split(/\r?\n/)
+          let joinDelimiter = '\n'
+          if (codeLines.length <= 1 && rawHtml.includes('<br')) {
+            codeLines = rawHtml.split(/<br\s*\/?>/i)
+            joinDelimiter = '<br/>'
+          }
+
+          if (codeLines.length > 2) {
+            let bestK = 0
+            let bestPart1 = null
+
+            for (let k = 1; k < codeLines.length; k++) {
+              const cand1 = block.cloneNode(true)
+              const cand1Target = cand1.querySelector('code') || cand1.querySelector('pre') || (cand1.tagName.toLowerCase() === 'pre' ? cand1 : null)
+              if (cand1Target) {
+                cand1Target.innerHTML = codeLines.slice(0, k).join(joinDelimiter)
+              }
+              const testH = measureRowWithChildren(item, [...currentFitting, cand1], isCont, false)
+              if (currentH + testH <= maxH) {
+                bestK = k
+                bestPart1 = cand1
+              } else {
+                break
+              }
+            }
+
+            if (bestK >= 1 && bestPart1) {
+              const cand2 = block.cloneNode(true)
+              const cand2Target = cand2.querySelector('code') || cand2.querySelector('pre') || (cand2.tagName.toLowerCase() === 'pre' ? cand2 : null)
+              if (cand2Target) {
+                cand2Target.innerHTML = codeLines.slice(bestK).join(joinDelimiter)
+              }
+              return { part1: bestPart1, part2: cand2 }
+            }
+          }
+        }
+        return null
+      }
+
+      // --- 2. USER DATA TABLE SLICING ---
+      const isTable = block.tagName.toLowerCase() === 'table' &&
+                      !block.classList.contains('obe-paper-structure-table') &&
+                      block.getAttribute('data-obe-paper-structure') !== 'true'
+      const nestedTable = isTable ? block : block.querySelector('table:not(.obe-paper-structure-table):not(.obe-code-table)')
+
+      if (nestedTable) {
+        const thead = nestedTable.querySelector('thead')
+        const tbody = nestedTable.querySelector('tbody') || nestedTable
+        const allTrs = Array.from(tbody.querySelectorAll(':scope > tr'))
+
+        if (allTrs.length > 1) {
+          const hasThead = !!thead
+          const firstRowIsHeader = !hasThead && !!allTrs[0].querySelector('th')
+          const headerRow = firstRowIsHeader ? allTrs[0] : null
+          const dataRows = firstRowIsHeader ? allTrs.slice(1) : allTrs
+
+          if (dataRows.length > 1) {
+            let bestK = 0
+            let bestPart1 = null
+
+            for (let k = 1; k < dataRows.length; k++) {
+              const cand1 = block.cloneNode(true)
+              const cand1Table = cand1.tagName.toLowerCase() === 'table' ? cand1 : cand1.querySelector('table:not(.obe-paper-structure-table):not(.obe-code-table)')
+              const cand1Tbody = cand1Table.querySelector('tbody') || cand1Table
+              const cand1Rows = headerRow ? [headerRow, ...dataRows.slice(0, k)] : dataRows.slice(0, k)
+              cand1Tbody.innerHTML = cand1Rows.map(r => r.outerHTML).join('')
+
+              const testH = measureRowWithChildren(item, [...currentFitting, cand1], isCont, false)
+              if (currentH + testH <= maxH) {
+                bestK = k
+                bestPart1 = cand1
+              } else {
+                break
+              }
+            }
+
+            if (bestK >= 1 && bestPart1) {
+              const cand2 = block.cloneNode(true)
+              const cand2Table = cand2.tagName.toLowerCase() === 'table' ? cand2 : cand2.querySelector('table:not(.obe-paper-structure-table):not(.obe-code-table)')
+              const cand2Tbody = cand2Table.querySelector('tbody') || cand2Table
+              const cand2Rows = headerRow ? [headerRow, ...dataRows.slice(bestK)] : dataRows.slice(bestK)
+              cand2Tbody.innerHTML = cand2Rows.map(r => r.outerHTML).join('')
+
+              return { part1: bestPart1, part2: cand2 }
+            }
+          }
+        }
+        return null
+      }
+
+      return null
+    }
+
+    const extractGranularBlocks = (contentCell) => {
+      if (!contentCell) return []
+      if (contentCell.children.length > 1) {
+        return Array.from(contentCell.children)
+      }
+      if (contentCell.children.length === 1) {
+        const single = contentCell.firstElementChild
+        const tag = single.tagName.toLowerCase()
+        const isAtomic = single.classList.contains('scenario-box') ||
+                         single.classList.contains('katex-display') ||
+                         single.classList.contains('diagram-container') ||
+                         single.classList.contains('graph-container') ||
+                         single.classList.contains('obe-code-snippet-container') ||
+                         single.classList.contains('math-equation-wrapper') ||
+                         tag === 'table' || tag === 'svg' || tag === 'img' || tag === 'pre'
+        if (!isAtomic && single.children.length > 1) {
+          return Array.from(single.children)
+        }
+        return [single]
+      }
+      return []
+    }
+
+    const sheets = []
+
+    if (structureTable) {
+      // Select top-level rows only — NEVER tear nested user tables inside col-content-cell
+      const topLevelRows = Array.from(structureTable.querySelectorAll(':scope > tbody > tr, :scope > tr'))
+
+      const itemsToPack = topLevelRows.map(row => {
+        const isSpecial = !!row.querySelector('td[colspan="4"]') ||
+                          row.getAttribute('data-obe-row') === 'or-separator' ||
+                          row.textContent.trim().toUpperCase() === 'OR'
+
+        if (isSpecial) {
+          return {
+            type: 'header',
+            isSpecial: true,
+            html: row.outerHTML,
+            height: measureRowHtml(row.outerHTML)
+          }
+        }
+
+        const qNum = row.querySelector('.col-qnum-cell')?.innerHTML.trim() || ''
+        const subQ = row.querySelector('.col-subq-cell')?.innerHTML.trim() || ''
+        const marks = row.querySelector('.col-marks-cell')?.innerHTML.trim() || ''
+        const contentCell = row.querySelector('.col-content-cell')
+
+        const childBlocks = extractGranularBlocks(contentCell)
+        const fullHeight = measureRowHtml(row.outerHTML)
+
+        return {
+          type: 'question',
+          qNum,
+          subQ,
+          marks,
+          canSplit: childBlocks.length > 1 || (childBlocks.length === 1 && isSliceableContainer(childBlocks[0])),
+          childBlocks,
+          rowElement: row,
+          html: row.outerHTML,
+          height: fullHeight
+        }
+      })
+
+      // Fluid Space Allocation & Anti-Orphan Greedy Slicing Loop
+      let currentSheetRows = []
+      let currentSheetH = 0
+      let isFirstPage = true
+      let maxAllowedH = getAvailableHeight(true, headerHeightPx)
+
+      for (let i = 0; i < itemsToPack.length; i++) {
+        const item = itemsToPack[i]
+
+        // Special header row (PART A, PART B, OR separator)
+        if (item.isSpecial) {
+          if (currentSheetRows.length > 0 && (currentSheetH + item.height > maxAllowedH)) {
+            sheets.push([...currentSheetRows])
+            currentSheetRows = [item.html]
+            isFirstPage = false
+            maxAllowedH = getAvailableHeight(false, 0)
+            currentSheetH = item.height
+          } else {
+            currentSheetRows.push(item.html)
+            currentSheetH += item.height
+          }
+          continue
+        }
+
+        const remainingSpace = maxAllowedH - currentSheetH
+        const isQuestionStart = Boolean(item.qNum || item.subQ)
+
+        // Anti-Orphan Heading Rule: A question heading requires at least 140px (~38mm) of remaining space
+        // to prevent leaving a lone title/header stranded at the bottom of the page with its content/code on the next page
+        if (isQuestionStart && currentSheetRows.length > 0 && remainingSpace < 140) {
+          sheets.push([...currentSheetRows])
+          currentSheetRows = []
+          isFirstPage = false
+          maxAllowedH = getAvailableHeight(false, 0)
+          currentSheetH = 0
+        }
+
+        // Atomic question: cannot be sliced
+        if (!item.canSplit) {
+          if (currentSheetH + item.height <= maxAllowedH) {
+            currentSheetRows.push(item.html)
+            currentSheetH += item.height
+          } else {
+            // Look-behind: If last placed item was an orphaned PART or OR separator, pull it to next sheet
+            const prevItem = itemsToPack[i - 1]
+            if (prevItem && prevItem.isSpecial && currentSheetRows.length > 1) {
+              currentSheetRows.pop()
+              sheets.push([...currentSheetRows])
+              currentSheetRows = [prevItem.html, item.html]
+              isFirstPage = false
+              maxAllowedH = getAvailableHeight(false, 0)
+              currentSheetH = prevItem.height + item.height
+            } else {
+              sheets.push([...currentSheetRows])
+              currentSheetRows = [item.html]
+              isFirstPage = false
+              maxAllowedH = getAvailableHeight(false, 0)
+              currentSheetH = item.height
+            }
+          }
+          continue
+        }
+
+        // Divisible question: greedy child block slicing with anti-orphan protection
+        let remainingBlocks = item.childBlocks
+        let isContinuation = false
+
+        while (remainingBlocks.length > 0) {
+          // If all remaining blocks fit on current sheet
+          const fullRemainingH = measureRowWithChildren(item, remainingBlocks, isContinuation, true)
+          if (currentSheetH + fullRemainingH <= maxAllowedH) {
+            const rowHtml = renderRowHtml(item, remainingBlocks, isContinuation, true)
+            currentSheetRows.push(rowHtml)
+            currentSheetH += fullRemainingH
+            break
+          }
+
+          // Does not fit fully! Pack as many child blocks as fit into the remaining space
+          let fittingBlocks = []
+          let nextRemaining = []
+
+          for (let b = 0; b < remainingBlocks.length; b++) {
+            const testList = [...fittingBlocks, remainingBlocks[b]]
+            const testH = measureRowWithChildren(item, testList, isContinuation, false)
+            if (currentSheetH + testH <= maxAllowedH) {
+              fittingBlocks.push(remainingBlocks[b])
+            } else {
+              // remainingBlocks[b] does not fit in full!
+              // Attempt to smart-slice code snippet or user data table across pages
+              const sliceResult = trySliceBlock(
+                remainingBlocks[b],
+                item,
+                fittingBlocks,
+                isContinuation,
+                currentSheetH,
+                maxAllowedH
+              )
+
+              if (sliceResult) {
+                fittingBlocks.push(sliceResult.part1)
+                nextRemaining = [sliceResult.part2, ...remainingBlocks.slice(b + 1)]
+              } else {
+                nextRemaining = remainingBlocks.slice(b)
+              }
+              break
+            }
+          }
+
+          // Anti-orphan safeguard: If only 1 block fits on a new question start,
+          // and that block is a short question statement (< 180 chars / < 100px) while major blocks remain,
+          // do not leave an isolated heading at the bottom of the sheet! Push the whole question to next sheet.
+          if (!isContinuation && fittingBlocks.length === 1 && remainingBlocks.length > 1) {
+            const firstBlock = fittingBlocks[0]
+            const tag = firstBlock.tagName ? firstBlock.tagName.toLowerCase() : ''
+            const isShortHeader = (tag === 'p' || tag === 'div' || tag.startsWith('h')) && firstBlock.textContent.trim().length < 180
+            if (isShortHeader && currentSheetRows.length > 0) {
+              fittingBlocks = []
+              nextRemaining = item.childBlocks
+            }
+          }
+
+          if (fittingBlocks.length > 0) {
+            // Render fitting slice on current sheet (marks shown if this is question start)
+            const partHtml = renderRowHtml(item, fittingBlocks, isContinuation, !isContinuation)
+            currentSheetRows.push(partHtml)
+            sheets.push([...currentSheetRows])
+
+            // Advance to new sheet for remaining slice
+            currentSheetRows = []
+            isFirstPage = false
+            maxAllowedH = getAvailableHeight(false, 0)
+            currentSheetH = 0
+            isContinuation = true
+            remainingBlocks = nextRemaining
+          } else {
+            // No blocks fit in remaining space on current sheet
+            if (currentSheetRows.length > 0) {
+              // Check look-behind for orphaned special header
+              const prevItem = itemsToPack[i - 1]
+              if (!isContinuation && prevItem && prevItem.isSpecial && currentSheetRows.length > 1) {
+                currentSheetRows.pop()
+                sheets.push([...currentSheetRows])
+                currentSheetRows = [prevItem.html]
+                isFirstPage = false
+                maxAllowedH = getAvailableHeight(false, 0)
+                currentSheetH = prevItem.height
+              } else {
+                sheets.push([...currentSheetRows])
+                currentSheetRows = []
+                isFirstPage = false
+                maxAllowedH = getAvailableHeight(false, 0)
+                currentSheetH = 0
+              }
+            } else {
+              // Current sheet is already blank, but even 1 block exceeds maxAllowedH (very large block)
+              // Attempt to slice the oversized block across pages
+              const sliceResult = trySliceBlock(
+                remainingBlocks[0],
+                item,
+                [],
+                isContinuation,
+                0,
+                maxAllowedH
+              )
+
+              if (sliceResult) {
+                const partHtml = renderRowHtml(item, [sliceResult.part1], isContinuation, !isContinuation)
+                currentSheetRows.push(partHtml)
+                sheets.push([...currentSheetRows])
+
+                currentSheetRows = []
+                isFirstPage = false
+                maxAllowedH = getAvailableHeight(false, 0)
+                currentSheetH = 0
+                isContinuation = true
+                remainingBlocks = [sliceResult.part2, ...remainingBlocks.slice(1)]
+              } else {
+                // Force place at least 1 block to ensure progress
+                const forcedBlock = [remainingBlocks[0]]
+                const forcedHtml = renderRowHtml(item, forcedBlock, isContinuation, remainingBlocks.length === 1)
+                currentSheetRows.push(forcedHtml)
+                sheets.push([...currentSheetRows])
+
+                currentSheetRows = []
+                isFirstPage = false
+                maxAllowedH = getAvailableHeight(false, 0)
+                currentSheetH = 0
+                isContinuation = true
+                remainingBlocks = remainingBlocks.slice(1)
+              }
+            }
+          }
+        }
+      }
+
+      if (currentSheetRows.length > 0) {
+        sheets.push(currentSheetRows)
+      }
+    } else {
+      // Fallback if content has no structure table: chunk top-level child elements
+      const topLevelBlocks = Array.from(contentDoc.body.children)
+      const measuredBlocks = topLevelBlocks.map(block => {
+        const clone = block.cloneNode(true)
+        sandbox.appendChild(clone)
+        const height = clone.offsetHeight || 30
+        sandbox.removeChild(clone)
+        return { html: block.outerHTML, height }
+      })
+
+      let currentSheetRows = []
+      let currentSheetUsedH = 0
+      let maxAllowedH = getAvailableHeight(true, headerHeightPx)
+
+      for (const item of measuredBlocks) {
+        if (currentSheetRows.length > 0 && (currentSheetUsedH + item.height > maxAllowedH)) {
+          sheets.push(currentSheetRows)
+          currentSheetRows = [item.html]
+          maxAllowedH = getAvailableHeight(false, 0)
+          currentSheetUsedH = item.height
+        } else {
+          currentSheetRows.push(item.html)
+          currentSheetUsedH += item.height
+        }
+      }
+      if (currentSheetRows.length > 0) {
+        sheets.push(currentSheetRows)
+      }
+    }
+
+    // Clean up sandbox DOM element
+    try { document.body.removeChild(sandbox) } catch (e) {}
+
+    // Ensure at least one sheet exists
+    if (sheets.length === 0) {
+      sheets.push([])
+    }
+
+    const totalPages = sheets.length
+
+    // Column definition template for OBE Question Paper structure table
+    const colgroupHtml = `
+      <colgroup>
+        <col class="col-qnum" style="width:24px;" />
+        <col class="col-subq" style="width:20px;" />
+        <col class="col-content" style="width:auto;" />
+        <col class="col-marks" style="width:42px;" />
+      </colgroup>
     `
 
-    const printWindow = window.open('', '_blank')
-    printWindow.document.write(`
+    // Generate discrete A4 print sheets with deterministic page numbering
+    const generatedSheetsHtml = sheets.map((sheetRows, index) => {
+      const pageNumber = index + 1
+      const isFirstPage = index === 0
+      const isLastPage = index === sheets.length - 1
+
+      let sheetBodyContent = ''
+      if (structureTable) {
+        const isBordersCleared = structureTable.classList.contains('borders-cleared') ||
+                                 structureTable.getAttribute('data-obe-borders-cleared') === 'true'
+        const rowsHtml = sheetRows.join('')
+        const tableHtml = rowsHtml ? `
+          <table class="obe-paper-structure-table${isBordersCleared ? ' borders-cleared' : ''}" data-obe-paper-structure="true"${isBordersCleared ? ' data-obe-borders-cleared="true"' : ''}>
+            ${colgroupHtml}
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        ` : ''
+
+        sheetBodyContent = `
+          ${isFirstPage ? `<div class="print-exam-header">${cleanHeaderHtml}${coDescriptions}</div>${preTableHtml}` : ''}
+          ${tableHtml}
+          ${isLastPage && postTableHtml ? `<div class="post-table-content">${postTableHtml}</div>` : ''}
+        `
+      } else {
+        sheetBodyContent = `
+          ${isFirstPage ? `<div class="print-exam-header">${cleanHeaderHtml}${coDescriptions}</div>` : ''}
+          ${sheetRows.join('')}
+        `
+      }
+
+      return `
+        <div class="exam-print-sheet">
+          <!-- TOP RUNNING HEADER -->
+          <div class="sheet-header-confidential">EXAMINATION CONFIDENTIAL</div>
+
+          <!-- SHEET CONTENT -->
+          <div class="sheet-content-body">
+            ${sheetBodyContent}
+          </div>
+
+          <!-- PINNED BOTTOM FOOTER WITH PROMINENT PAGE NUMBER -->
+          <div class="sheet-footer-container">
+            <div class="sheet-page-number">${pageNumber} OF ${totalPages}</div>
+            <div class="sheet-footer-confidential">EXAMINATION CONFIDENTIAL</div>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    // -------------------------------------------------------------------------
+    // Discrete Sheet Print Document with Zero-Margin @page CSS
+    // -------------------------------------------------------------------------
+    const printDocumentHtml = `
       <!DOCTYPE html>
       <html>
         <head>
-          <title>&nbsp;</title>
+          <title> </title>
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
           <style>
             ${katexCssInline}
-            @page {
-              size: A4 portrait;
-              margin: 0 !important; /* Zero margin forces browsers (Chrome/Edge) to completely suppress date, time, and about:blank URL! */
-            }
-            * {
-              box-sizing: border-box;
-            }
-            html, body {
-              margin: 0 !important;
-              padding: 0 !important;
-              background: #fff !important;
-              color: #000 !important;
-              font-family: 'Times New Roman', Times, serif;
-            }
-            table { border-collapse: collapse; width: 100%; }
-            table:not(.obe-paper-structure-table) th, table:not(.obe-paper-structure-table) td { border: 1px solid #000; padding: 6px 8px; text-align: left; }
-            ${getPrintStyles()}
 
-            /* Hide static duplicate confidential tags in header */
-            .exam-page .static-top-confidential {
-              display: none !important;
-            }
+            * { box-sizing: border-box; }
 
             @media print {
+              @page {
+                size: A4 portrait;
+                margin: 0 !important; /* CRITICAL: Completely suppresses Chromium Date, Time, URL, and 1/5 */
+              }
+
               html, body {
                 margin: 0 !important;
                 padding: 0 !important;
                 background: #fff !important;
+                font-family: "Times New Roman", Times, serif !important;
+                color: #000 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
               }
-              button, .no-print { display: none !important; }
-              .exam-page {
+
+              /* Fixed A4 dimensions with protected internal margins */
+              .exam-print-sheet {
+                width: 210mm !important;
+                height: 297mm !important;
+                max-height: 297mm !important;
+                position: relative !important; /* Creates positioning context for absolute footer */
+                box-sizing: border-box !important;
+                padding: 10mm 18mm 0mm 18mm !important;
+                page-break-after: always !important;
+                break-after: page !important;
+                overflow: hidden !important;
+                background: #fff !important;
+              }
+
+              .exam-print-sheet:last-child {
+                page-break-after: auto !important;
+                break-after: auto !important;
+              }
+
+              /* Top Running Header: Pinned at top as protected block */
+              .sheet-header-confidential {
+                text-align: center !important;
+                font-size: 9.5pt !important;
+                font-weight: bold !important;
+                letter-spacing: 0.5px !important;
+                text-transform: uppercase !important;
+                margin-bottom: 3mm !important;
+                height: 14px !important;
+                line-height: 14px !important;
+                background: #ffffff !important;
+                z-index: 9999 !important;
+                font-family: "Times New Roman", Times, serif !important;
+              }
+
+              /* Content area strictly bounded above footer zone */
+              .sheet-content-body {
+                width: 100% !important;
+                max-height: 266mm !important; /* Maximized content area ending cleanly above the 13mm footer zone */
+                overflow: hidden !important;
+              }
+
+              /* ABSOLUTELY PINNED FOOTER: Compact protected block locked to the bottom */
+              .sheet-footer-container {
+                position: absolute !important;
+                bottom: 3.5mm !important;
+                left: 18mm !important;
+                right: 18mm !important;
+                height: 9.5mm !important;
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
+                text-align: center !important;
+                background: #ffffff !important;
+                border-top: none !important;
+                z-index: 9999 !important;
+                pointer-events: none !important;
+                font-family: "Times New Roman", Times, serif !important;
+              }
+
+              .sheet-page-number {
+                font-size: 10pt !important;
+                font-weight: bold !important;
+                font-family: "Times New Roman", Times, serif !important;
+                letter-spacing: 0.5px !important;
+                line-height: 1.1 !important;
+                margin-bottom: 1px !important;
+              }
+
+              .sheet-footer-confidential {
+                font-size: 8.5pt !important;
+                font-weight: bold !important;
+                letter-spacing: 0.5px !important;
+                text-transform: uppercase !important;
+                line-height: 1.1 !important;
+                font-family: "Times New Roman", Times, serif !important;
+              }
+
+              /* Aggressively suppress any residual in-DOM footers */
+              .static-top-confidential,
+              .exam-footer,
+              .footer-confidential,
+              .running-header-top,
+              .running-footer-bottom {
+                display: none !important;
+              }
+
+              /* University Header */
+              .print-exam-header {
+                margin: 0 0 3mm 0 !important;
+                padding: 0 !important;
+              }
+
+              /* ================================================================
+                 QUESTION PAPER STRUCTURE TABLE
+                 ================================================================ */
+              table.obe-paper-structure-table,
+              table[data-obe-paper-structure="true"] {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                table-layout: fixed !important;
+                margin-top: 2px !important;
+                margin-bottom: 2px !important;
+              }
+
+              /* Column widths */
+              table.obe-paper-structure-table col.col-qnum,
+              table[data-obe-paper-structure="true"] col.col-qnum {
+                width: 24px !important;
+              }
+              table.obe-paper-structure-table col.col-subq,
+              table[data-obe-paper-structure="true"] col.col-subq {
+                width: 20px !important;
+              }
+              table.obe-paper-structure-table col.col-content,
+              table[data-obe-paper-structure="true"] col.col-content {
+                width: auto !important;
+              }
+              table.obe-paper-structure-table col.col-marks,
+              table[data-obe-paper-structure="true"] col.col-marks {
+                width: 42px !important;
+              }
+
+              /* Structure table cells: compact academic spacing */
+              table.obe-paper-structure-table > tbody > tr > td,
+              table[data-obe-paper-structure="true"] > tbody > tr > td {
+                vertical-align: top !important;
+                font-family: 'Times New Roman', Times, serif !important;
+                font-size: 10pt !important;
+                line-height: 1.3 !important;
+              }
+
+              /* Q# column */
+              .col-qnum-cell,
+              table.obe-paper-structure-table > tbody > tr > td:first-child:not([colspan]) {
+                width: 24px !important;
+                min-width: 24px !important;
+                max-width: 28px !important;
+                padding: 3px 2px 3px 0 !important;
+                font-weight: bold !important;
+                white-space: nowrap !important;
+                vertical-align: top !important;
+              }
+              /* Sub-Q column */
+              .col-subq-cell,
+              table.obe-paper-structure-table > tbody > tr:not([data-obe-row="or-separator"]) > td:nth-child(2):not([colspan]) {
+                width: 20px !important;
+                min-width: 20px !important;
+                max-width: 24px !important;
+                padding: 3px 3px 3px 0 !important;
+                white-space: nowrap !important;
+                vertical-align: top !important;
+                font-weight: bold !important;
+              }
+              /* Content column */
+              .col-content-cell,
+              td.col-content-cell,
+              td[colspan="2"].col-content-cell {
+                padding: 3px 8px !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: visible !important;
+                vertical-align: top !important;
+              }
+              /* Marks column */
+              .col-marks-cell,
+              table.obe-paper-structure-table > tbody > tr > td:last-child:not([colspan]) {
+                width: 42px !important;
+                min-width: 42px !important;
+                max-width: 46px !important;
+                padding: 3px 0 3px 3px !important;
+                text-align: right !important;
+                font-weight: bold !important;
+                white-space: nowrap !important;
+                vertical-align: top !important;
+              }
+
+              /* Content cell paragraphs */
+              .col-content-cell p,
+              td.col-content-cell p,
+              table.obe-paper-structure-table > tbody > tr > td.col-content-cell > p,
+              table[data-obe-paper-structure="true"] > tbody > tr > td.col-content-cell > p {
+                margin: 2px 0 3px 0 !important;
+                padding: 0 !important;
+                line-height: 1.25 !important;
+                display: block !important;
+                clear: both !important;
+              }
+
+              /* Borders-cleared structure table */
+              table.obe-paper-structure-table.borders-cleared > tbody > tr > td,
+              table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tbody > tr > td,
+              table.obe-paper-structure-table[style*="border: none"] > tbody > tr > td,
+              table.obe-paper-structure-table[style*="border:none"] > tbody > tr > td {
+                border: none !important;
+              }
+
+              /* Centered diagrams, graphs, and images */
+              .col-content-cell img,
+              .col-content-cell svg,
+              .col-content-cell canvas,
+              .col-content-cell .diagram-container,
+              .col-content-cell .graph-container,
+              .col-content-cell .e-rte-image,
+              .col-content-cell .e-img-inline,
+              .col-content-cell .e-rte-img-caption,
+              .col-content-cell figure,
+              td.col-content-cell img,
+              td.col-content-cell svg,
+              td.col-content-cell canvas,
+              td.col-content-cell .diagram-container,
+              td.col-content-cell .graph-container {
+                display: block !important;
+                margin: 6px auto !important;
+                text-align: center !important;
+                max-width: 90% !important;
+                height: auto !important;
+                clear: both !important;
+                float: none !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
               }
+
+              .col-content-cell p:has(img),
+              .col-content-cell p:has(svg),
+              .col-content-cell p:has(canvas) {
+                text-align: center !important;
+                display: block !important;
+                clear: both !important;
+                margin: 6px 0 !important;
+              }
+
+              /* Strictly prevent atomic components from breaking internally */
+              .col-content-cell table,
+              .col-content-cell img,
+              .col-content-cell svg,
+              .col-content-cell canvas,
+              .col-content-cell .graph-container,
+              .col-content-cell .diagram-container,
+              .col-content-cell .katex-display,
+              .col-content-cell pre,
+              .col-content-cell code,
+              .col-content-cell .obe-code-table {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+
+              /* Scenario description box styling: compact & tight */
+              .col-content-cell .scenario-box,
+              .col-content-cell blockquote {
+                margin: 4px 0 !important;
+                padding: 4px 8px !important;
+                background-color: #f8f9fa !important;
+                border-left: 3px solid #3b82f6 !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+
+              /* Compact math formulas */
+              .katex-display {
+                margin: 4px 0 !important;
+              }
+
+              /* Nested user data tables */
+              .col-content-cell table,
+              td.col-content-cell table,
+              td[colspan="2"].col-content-cell table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: auto !important;
+                border-collapse: collapse !important;
+                margin: 4px 0 !important;
+                overflow: visible !important;
+                font-size: 9pt !important;
+                line-height: 1.2 !important;
+              }
+
+              .col-content-cell table th,
+              .col-content-cell table td,
+              td.col-content-cell table th,
+              td.col-content-cell table td,
+              td[colspan="2"].col-content-cell table th,
+              td[colspan="2"].col-content-cell table td {
+                border: 1px solid #000 !important;
+                padding: 2px 4px !important;
+                font-size: 9pt !important;
+                line-height: 1.2 !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                vertical-align: middle !important;
+              }
+              .col-content-cell table th,
+              td.col-content-cell table th {
+                font-weight: bold !important;
+                background-color: transparent !important;
+              }
+
+              /* Auto-scale: 5+ columns */
+              .col-content-cell table.obe-print-compact,
+              td.col-content-cell table.obe-print-compact {
+                font-size: 8pt !important;
+                line-height: 1.1 !important;
+              }
+              .col-content-cell table.obe-print-compact th,
+              .col-content-cell table.obe-print-compact td,
+              td.col-content-cell table.obe-print-compact th,
+              td.col-content-cell table.obe-print-compact td {
+                padding: 1.5px 2.5px !important;
+                font-size: 8pt !important;
+                line-height: 1.1 !important;
+              }
+
+              /* Strip inherited widths from nested col/colgroup */
+              .col-content-cell table col,
+              .col-content-cell table colgroup,
+              td.col-content-cell table col,
+              td.col-content-cell table colgroup {
+                width: auto !important;
+                max-width: none !important;
+                min-width: 0 !important;
+              }
+
+              /* Inner table cell paragraphs */
+              .col-content-cell table td p,
+              .col-content-cell table td div {
+                display: block !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                line-height: inherit !important;
+              }
+
+              /* OR separator */
+              tr[data-obe-row="or-separator"] > td {
+                padding: 4px 6px !important;
+                font-size: 10pt !important;
+                font-weight: bold !important;
+                text-align: center !important;
+                letter-spacing: 2px !important;
+              }
+
+              /* PART A / PART B headers */
+              tr > td[colspan="4"] {
+                padding: 6px 6px !important;
+                font-size: 11pt !important;
+                text-align: center !important;
+                font-weight: bold !important;
+              }
+
+              /* Code blocks */
+              .obe-code-table {
+                font-size: 8.5pt !important;
+                line-height: 1.15 !important;
+                margin: 4px 0 !important;
+              }
+              .obe-code-table td {
+                padding: 3px 5px !important;
+              }
+
+              /* Fallback tables */
+              table:not(.obe-paper-structure-table):not([data-obe-paper-structure="true"]) {
+                border-collapse: collapse;
+              }
+              table:not(.obe-paper-structure-table):not([data-obe-paper-structure="true"]) th,
+              table:not(.obe-paper-structure-table):not([data-obe-paper-structure="true"]) td {
+                border: 1px solid #000;
+                text-align: left;
+              }
+
+              /* Import getPrintStyles (list styles, counter styles, etc.) */
+              ${getPrintStyles()}
+
+              /* Override getPrintStyles rules that conflict with compact layout */
+              table.obe-paper-structure-table > tbody > tr > td.col-content-cell,
+              table[data-obe-paper-structure="true"] > tbody > tr > td.col-content-cell {
+                overflow: visible !important;
+              }
+
+              button, .no-print { display: none !important; }
             }
           </style>
         </head>
         <body>
-          ${finalPrintBody}
+          ${generatedSheetsHtml}
 
           <script>
             async function doPrint() {
@@ -6673,8 +8450,8 @@ Equation description: "${aiEquationPrompt}"`
                   await document.fonts.ready;
                 }
               } catch(e) {}
-              // Suppress browser page title so browser never prints page title
-              document.title = '';
+
+              document.title = ' ';
               setTimeout(function() {
                 window.print();
                 setTimeout(function() { window.close(); }, 800);
@@ -6688,8 +8465,61 @@ Equation description: "${aiEquationPrompt}"`
           </script>
         </body>
       </html>
-    `)
-    printWindow.document.close()
+    `
+
+    // Render into hidden iframe — completely isolated from live editor
+    const printIframe = document.createElement('iframe')
+    printIframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;opacity:0;pointer-events:none;'
+    printIframe.setAttribute('aria-hidden', 'true')
+    document.body.appendChild(printIframe)
+
+    const iframeDoc = printIframe.contentDocument || printIframe.contentWindow.document
+    iframeDoc.open()
+    iframeDoc.write(printDocumentHtml)
+    iframeDoc.close()
+
+    const iframeWindow = printIframe.contentWindow
+    const triggerPrint = async () => {
+      try {
+        if (iframeDoc.fonts && iframeDoc.fonts.ready) {
+          await iframeDoc.fonts.ready
+        }
+        const images = iframeDoc.querySelectorAll('img')
+        if (images.length > 0) {
+          await Promise.all(Array.from(images).map(img => {
+            if (img.complete) return Promise.resolve()
+            return new Promise(resolve => {
+              img.onload = resolve
+              img.onerror = resolve
+            })
+          }))
+        }
+      } catch (e) { /* proceed anyway */ }
+
+      iframeDoc.title = ' '
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      try {
+        iframeWindow.focus()
+        iframeWindow.print()
+      } catch (e) {
+        const printWindow = window.open('', '_blank')
+        if (printWindow) {
+          printWindow.document.write(printDocumentHtml)
+          printWindow.document.close()
+        }
+      }
+
+      setTimeout(() => {
+        try { document.body.removeChild(printIframe) } catch (e) {}
+      }, 2000)
+    }
+
+    if (iframeDoc.readyState === 'complete') {
+      triggerPrint()
+    } else {
+      printIframe.addEventListener('load', triggerPrint)
+    }
   }
 
   const handleCustomImportClick = () => {
@@ -7247,9 +9077,24 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     if (editor.formatter && typeof editor.formatter.saveData === 'function') {
       editor.formatter.saveData()
     }
+
+    const diagramPayload = {
+      category: graphCategory,
+      type: graphType,
+      theme: graphTheme,
+      edgesText: graphEdgesText,
+      edgeRows: edgeRows,
+      customPositions: customNodePositions,
+      startState: graphCategory === 'automata' ? startState : null,
+      acceptStates: graphCategory === 'automata' ? acceptStates : [],
+      inputMode: graphInputMode
+    }
+    const payloadAttr = encodeURIComponent(JSON.stringify(diagramPayload))
+
     const svgMarkup = generateGraphSvg(graphEdgesText, graphType, graphTheme, customNodePositions, {
       startState: graphCategory === 'automata' ? startState : null,
-      acceptStates: graphCategory === 'automata' ? acceptStates : []
+      acceptStates: graphCategory === 'automata' ? acceptStates : [],
+      payloadAttr: payloadAttr
     })
     
     // Base64 encoding avoids URL fragment truncation (# symbol parsing issue) in browsers
@@ -7270,9 +9115,56 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     const spanW = isFinite(minX) ? (maxX - minX + 68) : 340
     const displayWidth = Math.min(Math.max(Math.round(spanW * 0.95), 180), 440)
 
-    // Insert image inside block container with clear: both to prevent text wrapping or auto-floating shift
-    const htmlToInsert = `<p style="clear: both; text-align: center; margin: 8px 0;"><img src="${dataUrl}" alt="Graph Diagram" class="e-rte-image e-imgbreak e-imgcenter obe-graph-diagram" data-obe-diagram="true" style="min-width: 120px; max-width: 100%; width: ${displayWidth}px; height: auto;" /></p><p style="clear: both;"><br></p>`
+    const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    let targetEl = editingDiagramElement
+    if ((!targetEl || !targetEl.isConnected) && editingDiagramId && editArea) {
+      targetEl = editArea.querySelector(`[data-diagram-id="${editingDiagramId}"]`)
+    }
+
+    if (targetEl) {
+      // In-place Update existing diagram in question paper DOM
+      const prevWidth = targetEl.style?.width || targetEl.getAttribute?.('width')
+      targetEl.src = dataUrl
+      targetEl.setAttribute('data-diagram-payload', payloadAttr)
+      targetEl.setAttribute('data-obe-diagram', 'true')
+      targetEl.setAttribute('alt', 'Graph Diagram')
+      targetEl.setAttribute('title', 'Double-click to edit CS Diagram in Studio')
+      if (editingDiagramId) {
+        targetEl.setAttribute('data-diagram-id', editingDiagramId)
+      }
+      targetEl.classList.add('e-rte-image', 'obe-graph-diagram')
+      targetEl.style.width = prevWidth || `${displayWidth}px`
+      targetEl.style.height = 'auto'
+      targetEl.style.minWidth = '120px'
+      targetEl.style.maxWidth = '100%'
+
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      if (editArea) {
+        const newHtml = editArea.innerHTML
+        setEditorValue(newHtml)
+        if (typeof editor.value !== 'undefined') editor.value = newHtml
+      }
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+
+      setEditingDiagramElement(null)
+      setEditingDiagramId(null)
+      setShowGraphGenModal(false)
+      return
+    }
+
+    // Insert new diagram image inside block container with clear: both to prevent text wrapping or auto-floating shift
+    const newDiagramId = `cs-diag-${Date.now()}`
+    const htmlToInsert = `<p style="clear: both; text-align: center; margin: 8px 0;"><img src="${dataUrl}" alt="Graph Diagram" title="Double-click to edit CS Diagram in Studio" class="e-rte-image e-imgbreak e-imgcenter obe-graph-diagram" data-obe-diagram="true" data-diagram-id="${newDiagramId}" data-diagram-payload="${payloadAttr}" style="min-width: 120px; max-width: 100%; width: ${displayWidth}px; height: auto;" /></p><p style="clear: both;"><br></p>`
     editor.executeCommand('insertHTML', htmlToInsert)
+    if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+      editor.formatter.saveData()
+    }
+    setEditingDiagramElement(null)
+    setEditingDiagramId(null)
     setShowGraphGenModal(false)
   }
 
@@ -7369,11 +9261,19 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
   }
 
   // ─── Exam Paper Structure Builder Handlers ───
+  const makePresetQuestion = (subCount, marks, blooms = []) => ({
+    subCount,
+    marks,
+    blooms: blooms.length ? blooms : Array(subCount || 1).fill(''),
+    subSpaceRows: Array(subCount || 1).fill(0),
+    qSpaceRows: 1
+  })
+
   const handlePaperStructureAddPart = () => {
     setPaperStructureParts(prev => {
       const idx = prev.length
       const partName = `PART ${String.fromCharCode(65 + idx)}`
-      return [...prev, { name: partName, questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }] }]
+      return [...prev, { name: partName, questions: [makePresetQuestion(2, [10, 10])] }]
     })
   }
 
@@ -7392,7 +9292,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
   const handlePaperStructureAddQuestion = (partIdx) => {
     setPaperStructureParts(prev => prev.map((part, i) => {
       if (i !== partIdx) return part
-      return { ...part, questions: [...part.questions, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+      return { ...part, questions: [...part.questions, makePresetQuestion(2, [10, 10])] }
     }))
   }
 
@@ -7424,7 +9324,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const newBlooms = Array(effectiveCount).fill('')
           if (q.blooms) q.blooms.forEach((b, k) => { if (k < effectiveCount) newBlooms[k] = b })
           // Preserve existing sub-question spacings
-          const defaultSubSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 1) : (q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+          const defaultSubSpace = Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 0) : (q.subSpaceRows !== undefined ? q.subSpaceRows : 0)
           const newSubSpaces = Array(effectiveCount).fill(defaultSubSpace)
           if (Array.isArray(q.subSpaceRows)) {
             q.subSpaceRows.forEach((sp, k) => { if (k < effectiveCount) newSubSpaces[k] = sp })
@@ -7471,7 +9371,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             questionOrBlooms: newQOrBlooms,
             questionOrContents: newQOrContents,
             qOrBeforeSpace: q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 1,
-            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1
+            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1,
+            qSpaceRows: q.qSpaceRows !== undefined ? q.qSpaceRows : 1
           }
         })
       }
@@ -7676,7 +9577,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const count = q.subCount || 1
           const currentArr = Array.isArray(q.subSpaceRows)
             ? [...q.subSpaceRows]
-            : Array(count).fill(q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+            : Array(count).fill(q.subSpaceRows !== undefined ? q.subSpaceRows : 0)
           currentArr[subIdx] = newRows
           return { ...q, subSpaceRows: currentArr }
         })
@@ -7722,6 +9623,17 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         })
       }
     }))
+  }
+
+  const handlePaperStructureSetGlobalQSpaceRows = (rowsCount) => {
+    const newRows = Math.max(0, Math.min(10, parseInt(rowsCount) || 0))
+    setPaperStructureParts(prev => prev.map(part => ({
+      ...part,
+      questions: part.questions.map(q => ({
+        ...q,
+        qSpaceRows: newRows
+      }))
+    })))
   }
 
   const handlePaperStructureSetSpaceRows = (partIdx, qIdx, rowsCount) => {
@@ -7786,9 +9698,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           {
             name: '',
             questions: [
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
             ]
           }
         ])
@@ -7797,8 +9709,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           {
             name: '',
             questions: [
-              { subCount: 1, marks: [5], blooms: [''] },
-              { subCount: 1, marks: [5], blooms: [''] }
+              { subCount: 1, marks: [5], blooms: [''], subSpaceRows: [0], qSpaceRows: 1 },
+              { subCount: 1, marks: [5], blooms: [''], subSpaceRows: [0], qSpaceRows: 1 }
             ]
           }
         ])
@@ -7807,16 +9719,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           {
             name: 'PART A',
             questions: [
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
             ]
           },
           {
             name: 'PART B',
             questions: [
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] },
-              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
+              { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
             ]
           }
         ])
@@ -7834,7 +9746,6 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       editor.formatter.saveData()
     }
 
-    const tableHtml = generateExamPaperStructureHtml(paperStructureParts, questions)
     const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
     
     let existingTable = null
@@ -7848,6 +9759,15 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         })
       }
     }
+
+    const isBordersCleared = existingTable ? (
+      existingTable.getAttribute('data-obe-borders-cleared') === 'true' ||
+      existingTable.classList.contains('borders-cleared') ||
+      existingTable.style.border === 'none' ||
+      existingTable.style.borderWidth === '0px'
+    ) : false
+
+    const tableHtml = generateExamPaperStructureHtml(paperStructureParts, questions, isBordersCleared)
 
     if (existingTable && isEditingExistingTable) {
       if (editor.formatter && typeof editor.formatter.saveData === 'function') {
@@ -10360,7 +12280,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         setShowFloatingAiMenu(false);
                         setIsContextMenuTriggered(false);
                         setActiveAiSubmenu(null);
-                        setShowGraphGenModal(true);
+                        handleOpenNewDiagramModal();
                       }}
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-medium transition-all text-left"
                     >
@@ -10785,7 +12705,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             </button>
             <button
               onMouseEnter={() => setActiveAiSubmenu(null)}
-              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); setShowGraphGenModal(true); }}
+              onClick={() => { setShowAiMenu(false); setActiveAiSubmenu(null); handleOpenNewDiagramModal(); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 font-normal transition-all text-left"
             >
               <span className="text-sm">📈</span>
@@ -11488,11 +13408,17 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     <Share2 size={20} className="text-emerald-300" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-base leading-tight">CS Diagram Studio</h3>
-                    <p className="text-xs text-emerald-200">Create vector SVG graphs, trees, automata state diagrams & maps for exam papers</p>
+                    <h3 className="font-extrabold text-base leading-tight">
+                      {editingDiagramElement ? 'CS Diagram Studio — Edit Diagram' : 'CS Diagram Studio'}
+                    </h3>
+                    <p className="text-xs text-emerald-200">
+                      {editingDiagramElement
+                        ? 'Modify and update existing vector SVG diagram in-place'
+                        : 'Create vector SVG graphs, trees, automata state diagrams & maps for exam papers'}
+                    </p>
                   </div>
                 </div>
-                <button onClick={() => setShowGraphGenModal(false)} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
+                <button onClick={handleCloseDiagramModal} className="p-1 hover:bg-white/20 rounded-lg text-emerald-100 hover:text-white">
                   <X size={20} />
                 </button>
               </div>
@@ -11867,11 +13793,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                           style={{ maxWidth: '100%', height: 'auto', maxHeight: '340px', cursor: draggingNode ? 'grabbing' : 'default' }}
                         >
                           <defs>
-                            <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                              <path d="M 0 0 L 10 5 L 0 10 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
+                            <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="27" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse">
+                              <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
                             </marker>
-                            <marker id="arrowhead-loop-interactive" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
-                              <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
+                            <marker id="arrowhead-loop-interactive" viewBox="0 0 10 10" refX="7.5" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto">
+                              <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill={graphTheme === 'bw' ? '#000000' : '#047857'} />
                             </marker>
                           </defs>
 
@@ -11957,31 +13883,22 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                               if (!pairGroups[key]) pairGroups[key] = []
                               pairGroups[key].push(idx)
                             })
+                            const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType) || graphCategory === 'automata'
 
                             return activeGraphData.edges.map((edge, idx) => {
                               const p1 = activeGraphPositions[edge.from]
                               const p2 = activeGraphPositions[edge.to]
                               if (!p1 || !p2) return null
-                              const isDirected = (graphType === 'directed' || graphType === 'horizontal' || graphType.endsWith('_directed') || ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType))
+                              const isDirected = (graphType === 'directed' || graphType === 'horizontal' || graphType.endsWith('_directed') || isAutomata)
                               const isSelfLoop = edge.from === edge.to
-
-                              const u = edge.from < edge.to ? edge.from : edge.to
-                              const v = edge.from < edge.to ? edge.to : edge.from
-                              const key = `${u}~~~${v}`
-                              const group = pairGroups[key] || [idx]
-                              const k = group.length
-                              const subIdx = group.indexOf(idx)
-
-                              const pu = activeGraphPositions[u]
-                              const pv = activeGraphPositions[v]
 
                               let edgePath = null
                               let midX = (p1.x + p2.x) / 2
                               let midY = (p1.y + p2.y) / 2
 
                               if (isSelfLoop) {
-                                const loopGeo = getSelfLoopGeometry(edge.from, activeGraphPositions, activeGraphData.edges, subIdx, {
-                                  isAutomata: ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType) || graphCategory === 'automata',
+                                const loopGeo = getSelfLoopGeometry(edge.from, activeGraphPositions, activeGraphData.edges, 0, {
+                                  isAutomata,
                                   startState
                                 })
                                 if (loopGeo) {
@@ -11989,22 +13906,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   midX = loopGeo.midX
                                   midY = loopGeo.midY
                                 }
-                              } else if (k > 1 && pu && pv) {
-                                const dx = pv.x - pu.x
-                                const dy = pv.y - pu.y
-                                const dist = Math.sqrt(dx * dx + dy * dy) || 1
-                                const nx = -dy / dist
-                                const ny = dx / dist
-
-                                const step = Math.min(46, Math.max(30, dist * 0.22))
-                                const offset = (subIdx - (k - 1) / 2) * step
-
-                                if (Math.abs(offset) > 1) {
-                                  const cx = (pu.x + pv.x) / 2 + nx * offset
-                                  const cy = (pu.y + pv.y) / 2 + ny * offset
-                                  midX = (pu.x + pv.x) / 2 + nx * (offset * 0.55)
-                                  midY = (pu.y + pv.y) / 2 + ny * (offset * 0.55)
-                                  edgePath = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`
+                              } else {
+                                const geo = computeEdgeGeometry(edge, idx, activeGraphData.edges, activeGraphPositions, activeGraphData.nodes, isAutomata, pairGroups)
+                                if (geo) {
+                                  edgePath = geo.path
+                                  midX = geo.midX
+                                  midY = geo.midY
                                 }
                               }
 
@@ -12064,9 +13971,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                           {graphCategory === 'automata' && startState && activeGraphPositions[startState] && (
                             <g className="start-state-indicator pointer-events-none">
                               <line
-                                x1={activeGraphPositions[startState].x - 46}
+                                x1={activeGraphPositions[startState].x - 48}
                                 y1={activeGraphPositions[startState].y}
-                                x2={activeGraphPositions[startState].x - 23}
+                                x2={activeGraphPositions[startState].x}
                                 y2={activeGraphPositions[startState].y}
                                 stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
                                 strokeWidth="2.5"
@@ -12129,11 +14036,19 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               </div>
 
               <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex justify-end gap-2.5">
-                <button onClick={() => setShowGraphGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
+                <button onClick={handleCloseDiagramModal} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
                   Cancel
                 </button>
                 <button onClick={handleInsertGraph} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
-                  <Plus size={16} /> Insert Resizable CS Diagram into Question Paper
+                  {editingDiagramElement ? (
+                    <>
+                      <Check size={16} /> Update CS Diagram in Question Paper
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} /> Insert Resizable CS Diagram into Question Paper
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -12351,7 +14266,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [5]), makePresetQuestion(1, [5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12359,7 +14274,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12367,7 +14282,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                            { name: '', questions: [makePresetQuestion(2, [5, 5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12378,7 +14293,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [5]), makePresetQuestion(1, [5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12386,7 +14301,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [10], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12394,7 +14309,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }, { subCount: 1, marks: [5], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [5]), makePresetQuestion(1, [5]), makePresetQuestion(1, [5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12402,7 +14317,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 1, marks: [15], blooms: [''] }] }
+                            { name: '', questions: [makePresetQuestion(1, [15])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12410,7 +14325,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 2, marks: [5, 5], blooms: ['', ''] }] }
+                            { name: '', questions: [makePresetQuestion(2, [5, 5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12418,7 +14333,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 3, marks: [5, 5, 5], blooms: ['', '', ''] }] }
+                            { name: '', questions: [makePresetQuestion(3, [5, 5, 5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12429,7 +14344,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                            { name: '', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12437,7 +14352,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                            { name: '', questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12445,7 +14360,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                            { name: '', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12456,8 +14371,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: 'PART A', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] },
-                            { name: 'PART B', questions: [{ subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }, { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''] }] }
+                            { name: 'PART A', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] },
+                            { name: 'PART B', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12465,8 +14380,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: 'PART A', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] },
-                            { name: 'PART B', questions: [{ subCount: 2, marks: [10, 10], blooms: ['', ''] }, { subCount: 2, marks: [10, 10], blooms: ['', ''] }] }
+                            { name: 'PART A', questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] },
+                            { name: 'PART B', questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -12491,42 +14406,68 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 </div>
 
                 {/* Spacing Rows Formatting Control */}
-                <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-extrabold text-emerald-800">Format Spacing:</span>
-                    <span className="text-[11px] text-gray-500 font-medium">Add blank spacing rows between questions & sub-questions</span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[11px] text-gray-500 font-bold">Sub-Q Space:</span>
-                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => handlePaperStructureSetGlobalSubSpaceRows(n)}
-                          className="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded text-[11px] font-bold transition"
-                          title={`Set ${n} spacing row(s) between sub-questions`}
-                        >
-                          {n}
-                        </button>
-                      ))}
+                {(() => {
+                  const firstQ = paperStructureParts[0]?.questions[0]
+                  const currentSubSpace = firstQ?.subSpaceRows !== undefined
+                    ? (Array.isArray(firstQ.subSpaceRows) ? (firstQ.subSpaceRows[0] ?? 0) : firstQ.subSpaceRows)
+                    : 0
+                  const currentQSpace = firstQ?.qSpaceRows !== undefined
+                    ? firstQ.qSpaceRows
+                    : 1
+
+                  return (
+                    <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold text-emerald-800">Format Spacing:</span>
+                        <span className="text-[11px] text-gray-500 font-medium">Add blank spacing rows between questions & sub-questions</span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-gray-500 font-bold">Sub-Q Space:</span>
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                            const isSelected = currentSubSpace === n
+                            return (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => handlePaperStructureSetGlobalSubSpaceRows(n)}
+                                className={`px-1.5 py-0.5 rounded text-[11px] transition ${
+                                  isSelected
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold shadow-2xs'
+                                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold'
+                                }`}
+                                title={`Set ${n} spacing row(s) between sub-questions`}
+                              >
+                                {n}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div className="flex items-center gap-1 border-l border-gray-200 pl-2">
+                          <span className="text-[11px] text-emerald-800 font-extrabold">Q-to-Q Space:</span>
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                            const isSelected = currentQSpace === n
+                            return (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => handlePaperStructureSetGlobalQSpaceRows(n)}
+                                className={`px-1.5 py-0.5 rounded text-[11px] transition ${
+                                  isSelected
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold shadow-2xs'
+                                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold'
+                                }`}
+                                title={`Set ${n} spacing row(s) between main questions`}
+                              >
+                                {n}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 border-l border-gray-200 pl-2">
-                      <span className="text-[11px] text-emerald-800 font-extrabold">Q-to-Q Space:</span>
-                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => handlePaperStructureSetGlobalSpaceRows(n)}
-                          className="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-extrabold transition shadow-2xs"
-                          title={`Set ${n} spacing row(s) between main questions`}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                  )
+                })()}
 
                 {/* Parts Configuration */}
                 {paperStructureParts.map((part, partIdx) => (
@@ -12601,7 +14542,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                 <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
                                   <label className="text-xs text-gray-500 font-medium whitespace-nowrap">All Sub-Q Spacing:</label>
                                   <select
-                                    value={Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 1) : (q.subSpaceRows !== undefined ? q.subSpaceRows : (q.spaceRows !== undefined ? q.spaceRows : 1))}
+                                    value={Array.isArray(q.subSpaceRows) ? (q.subSpaceRows[0] ?? 0) : (q.subSpaceRows !== undefined ? q.subSpaceRows : (q.spaceRows !== undefined ? q.spaceRows : 0))}
                                     onChange={(e) => handlePaperStructureSetSubSpaceRows(partIdx, qIdx, e.target.value)}
                                     className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white font-bold text-gray-700 cursor-pointer outline-none focus:border-emerald-500"
                                   >
@@ -12628,8 +14569,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   const subLetter = String.fromCharCode(97 + sIdx)
                                   const currentBloom = q.blooms && q.blooms[sIdx] ? q.blooms[sIdx] : ''
                                   const subSpaceVal = Array.isArray(q.subSpaceRows)
-                                    ? (q.subSpaceRows[sIdx] !== undefined ? q.subSpaceRows[sIdx] : 1)
-                                    : (q.subSpaceRows !== undefined ? q.subSpaceRows : 1)
+                                    ? (q.subSpaceRows[sIdx] !== undefined ? q.subSpaceRows[sIdx] : 0)
+                                    : (q.subSpaceRows !== undefined ? q.subSpaceRows : 0)
 
                                   return (
                                     <div key={sIdx} className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 shadow-2xs">
@@ -14227,53 +16168,54 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           suffix: ") ";
         }
 
-        /* Multi-Level List Hierarchy Styling */
+        /* Multi-Level List Hierarchy Styling (36px Tab Indent to prevent overflow) */
         .e-richtexteditor .e-rte-content ol,
         .question-paper-preview ol {
           margin-top: 6px !important;
           margin-bottom: 6px !important;
-          padding-left: 28px !important;
-          list-style-type: decimal;
+          padding-left: 36px !important;
+          list-style-type: decimal !important;
+          list-style-position: outside !important;
         }
         .e-richtexteditor .e-rte-content ol > li,
         .question-paper-preview ol > li {
-          list-style-type: decimal;
+          list-style-type: inherit !important;
         }
 
         .e-richtexteditor .e-rte-content ol ol,
         .question-paper-preview ol ol {
-          list-style-type: lower-alpha;
+          list-style-type: lower-alpha !important;
           margin-top: 4px !important;
           margin-bottom: 4px !important;
           padding-left: 28px !important;
         }
         .e-richtexteditor .e-rte-content ol ol > li,
         .question-paper-preview ol ol > li {
-          list-style-type: lower-alpha;
+          list-style-type: inherit !important;
         }
 
         .e-richtexteditor .e-rte-content ol ol ol,
         .question-paper-preview ol ol ol {
-          list-style-type: lower-roman;
+          list-style-type: lower-roman !important;
           margin-top: 4px !important;
           margin-bottom: 4px !important;
           padding-left: 28px !important;
         }
         .e-richtexteditor .e-rte-content ol ol ol > li,
         .question-paper-preview ol ol ol > li {
-          list-style-type: lower-roman;
+          list-style-type: inherit !important;
         }
 
         .e-richtexteditor .e-rte-content ol ol ol ol,
         .question-paper-preview ol ol ol ol {
-          list-style-type: upper-alpha;
+          list-style-type: upper-alpha !important;
           margin-top: 4px !important;
           margin-bottom: 4px !important;
           padding-left: 28px !important;
         }
         .e-richtexteditor .e-rte-content ol ol ol ol > li,
         .question-paper-preview ol ol ol ol > li {
-          list-style-type: upper-alpha;
+          list-style-type: inherit !important;
         }
 
         /* Explicit Numbered List Format Overrides */
@@ -14281,9 +16223,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-lower-alpha,
         .e-richtexteditor .e-rte-content ol[style*="lower-alpha"] li,
         .e-richtexteditor .e-rte-content ol.e-list-lower-alpha li,
+        .e-richtexteditor .e-rte-content li[style*="lower-alpha"],
         .question-paper-preview ol[style*="lower-alpha"],
         .question-paper-preview ol.e-list-lower-alpha,
-        .question-paper-preview ol[style*="lower-alpha"] li {
+        .question-paper-preview ol[style*="lower-alpha"] li,
+        .question-paper-preview li[style*="lower-alpha"] {
           list-style-type: lower-alpha !important;
         }
 
@@ -14291,9 +16235,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-upper-alpha,
         .e-richtexteditor .e-rte-content ol[style*="upper-alpha"] li,
         .e-richtexteditor .e-rte-content ol.e-list-upper-alpha li,
+        .e-richtexteditor .e-rte-content li[style*="upper-alpha"],
         .question-paper-preview ol[style*="upper-alpha"],
         .question-paper-preview ol.e-list-upper-alpha,
-        .question-paper-preview ol[style*="upper-alpha"] li {
+        .question-paper-preview ol[style*="upper-alpha"] li,
+        .question-paper-preview li[style*="upper-alpha"] {
           list-style-type: upper-alpha !important;
         }
 
@@ -14301,9 +16247,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-lower-roman,
         .e-richtexteditor .e-rte-content ol[style*="lower-roman"] li,
         .e-richtexteditor .e-rte-content ol.e-list-lower-roman li,
+        .e-richtexteditor .e-rte-content li[style*="lower-roman"],
         .question-paper-preview ol[style*="lower-roman"],
         .question-paper-preview ol.e-list-lower-roman,
-        .question-paper-preview ol[style*="lower-roman"] li {
+        .question-paper-preview ol[style*="lower-roman"] li,
+        .question-paper-preview li[style*="lower-roman"] {
           list-style-type: lower-roman !important;
         }
 
@@ -14311,9 +16259,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-upper-roman,
         .e-richtexteditor .e-rte-content ol[style*="upper-roman"] li,
         .e-richtexteditor .e-rte-content ol.e-list-upper-roman li,
+        .e-richtexteditor .e-rte-content li[style*="upper-roman"],
         .question-paper-preview ol[style*="upper-roman"],
         .question-paper-preview ol.e-list-upper-roman,
-        .question-paper-preview ol[style*="upper-roman"] li {
+        .question-paper-preview ol[style*="upper-roman"] li,
+        .question-paper-preview li[style*="upper-roman"] {
           list-style-type: upper-roman !important;
         }
 
@@ -14321,9 +16271,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-lower-greek,
         .e-richtexteditor .e-rte-content ol[style*="lower-greek"] li,
         .e-richtexteditor .e-rte-content ol.e-list-lower-greek li,
+        .e-richtexteditor .e-rte-content li[style*="lower-greek"],
         .question-paper-preview ol[style*="lower-greek"],
         .question-paper-preview ol.e-list-lower-greek,
-        .question-paper-preview ol[style*="lower-greek"] li {
+        .question-paper-preview ol[style*="lower-greek"] li,
+        .question-paper-preview li[style*="lower-greek"] {
           list-style-type: lower-greek !important;
         }
 
@@ -14331,14 +16283,109 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .e-richtexteditor .e-rte-content ol.e-list-decimal,
         .e-richtexteditor .e-rte-content ol[style*="decimal"] li,
         .e-richtexteditor .e-rte-content ol.e-list-decimal li,
+        .e-richtexteditor .e-rte-content li[style*="decimal"],
         .question-paper-preview ol[style*="decimal"],
         .question-paper-preview ol.e-list-decimal,
-        .question-paper-preview ol[style*="decimal"] li {
+        .question-paper-preview ol[style*="decimal"] li,
+        .question-paper-preview li[style*="decimal"] {
           list-style-type: decimal !important;
         }
 
+        /* Base Unordered List Defaults & Overrides in RTE and Preview */
+        .e-richtexteditor .e-rte-content ul,
+        .question-paper-preview ul {
+          margin-top: 6px !important;
+          margin-bottom: 6px !important;
+          padding-left: 36px !important;
+          list-style-type: disc !important;
+          list-style-position: outside !important;
+        }
+        .e-richtexteditor .e-rte-content ul > li,
+        .question-paper-preview ul > li {
+          list-style-type: inherit !important;
+        }
+        .e-richtexteditor .e-rte-content ul ul,
+        .question-paper-preview ul ul {
+          list-style-type: circle !important;
+          margin-top: 4px !important;
+          margin-bottom: 4px !important;
+          padding-left: 28px !important;
+        }
+        .e-richtexteditor .e-rte-content ul ul > li,
+        .question-paper-preview ul ul > li {
+          list-style-type: inherit !important;
+        }
+        .e-richtexteditor .e-rte-content ul ul ul,
+        .question-paper-preview ul ul ul {
+          list-style-type: square !important;
+          margin-top: 4px !important;
+          margin-bottom: 4px !important;
+          padding-left: 28px !important;
+        }
+        .e-richtexteditor .e-rte-content ul ul ul > li,
+        .question-paper-preview ul ul ul > li {
+          list-style-type: inherit !important;
+        }
+
+        .e-richtexteditor .e-rte-content ul[style*="disc"],
+        .e-richtexteditor .e-rte-content ul.e-list-disc,
+        .e-richtexteditor .e-rte-content ul[style*="disc"] li,
+        .e-richtexteditor .e-rte-content ul.e-list-disc li,
+        .e-richtexteditor .e-rte-content li[style*="disc"],
+        .question-paper-preview ul[style*="disc"],
+        .question-paper-preview ul.e-list-disc,
+        .question-paper-preview ul[style*="disc"] li,
+        .question-paper-preview li[style*="disc"] {
+          list-style-type: disc !important;
+        }
+
+        .e-richtexteditor .e-rte-content ul[style*="circle"],
+        .e-richtexteditor .e-rte-content ul.e-list-circle,
+        .e-richtexteditor .e-rte-content ul[style*="circle"] li,
+        .e-richtexteditor .e-rte-content ul.e-list-circle li,
+        .e-richtexteditor .e-rte-content li[style*="circle"],
+        .question-paper-preview ul[style*="circle"],
+        .question-paper-preview ul.e-list-circle,
+        .question-paper-preview ul[style*="circle"] li,
+        .question-paper-preview li[style*="circle"] {
+          list-style-type: circle !important;
+        }
+
+        .e-richtexteditor .e-rte-content ul[style*="square"],
+        .e-richtexteditor .e-rte-content ul.e-list-square,
+        .e-richtexteditor .e-rte-content ul[style*="square"] li,
+        .e-richtexteditor .e-rte-content ul.e-list-square li,
+        .e-richtexteditor .e-rte-content li[style*="square"],
+        .question-paper-preview ul[style*="square"],
+        .question-paper-preview ul.e-list-square,
+        .question-paper-preview ul[style*="square"] li,
+        .question-paper-preview li[style*="square"] {
+          list-style-type: square !important;
+        }
+
+        .e-richtexteditor .e-rte-content ul[style*="none"],
+        .e-richtexteditor .e-rte-content ul.e-list-none,
+        .e-richtexteditor .e-rte-content ul[style*="none"] li,
+        .e-richtexteditor .e-rte-content ul.e-list-none li,
+        .e-richtexteditor .e-rte-content ol[style*="none"],
+        .e-richtexteditor .e-rte-content ol.e-list-none,
+        .e-richtexteditor .e-rte-content ol[style*="none"] li,
+        .e-richtexteditor .e-rte-content ol.e-list-none li,
+        .e-richtexteditor .e-rte-content li[style*="none"],
+        .question-paper-preview ul[style*="none"],
+        .question-paper-preview ul.e-list-none,
+        .question-paper-preview ul[style*="none"] li,
+        .question-paper-preview ol[style*="none"],
+        .question-paper-preview ol.e-list-none,
+        .question-paper-preview ol[style*="none"] li,
+        .question-paper-preview li[style*="none"] {
+          list-style-type: none !important;
+        }
+
         .e-richtexteditor .e-rte-content > ol > li,
-        .question-paper-preview > ol > li {
+        .e-richtexteditor .e-rte-content > ul > li,
+        .question-paper-preview > ol > li,
+        .question-paper-preview > ul > li {
           margin-top: 8px !important;
           margin-bottom: 8px !important;
         }
