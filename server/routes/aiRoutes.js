@@ -7,7 +7,7 @@ const router = express.Router()
 // Local NLP Microservice Configuration (Python FastAPI @ localhost:8000)
 // ---------------------------------------------------------------------------
 const NLP_SERVICE_BASE = (process.env.ML_SERVICE_URL || process.env.NLP_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '')
-const NLP_FETCH_TIMEOUT_MS = 90_000 // 90-second timeout for Render cold-starts & SBERT inference
+const NLP_FETCH_TIMEOUT_MS = 120_000 // 120-second timeout for Render cold-starts & SBERT inference
 
 /**
  * Checks whether the local/remote NLP microservice is reachable.
@@ -31,8 +31,7 @@ async function checkNlpServiceHealth(timeoutMs = 6000) {
     }
     return { online: false, status: 'warming', httpStatus: response.status }
   } catch (err) {
-    const isTimeout = err.name === 'AbortError'
-    return { online: false, status: isTimeout ? 'warming' : 'offline', error: err.message }
+    return { online: false, status: 'warming', error: err.message }
   }
 }
 
@@ -493,42 +492,42 @@ router.post('/similarity-check', requireAuth, async (req, res) => {
       return res.status(200).json({ success: true, results: [], maxSimilarity: 0, totalArchivesCompared: 0, message: 'No archived papers to compare against.' })
     }
 
-    // Health probe: if online or warming, attempt ML service
-    const health = await checkNlpServiceHealth(4000)
+    // Route directly through the ML microservice for Sentence-BERT analysis
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
 
-    let mlAttemptSuccess = false
-    let nlpData = null
+      const nlpResponse = await fetch(`${NLP_SERVICE_BASE}/similarity-check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPaperText, archivedPapers }),
+        signal: controller.signal
+      })
+      clearTimeout(timer)
 
-    // Attempt ML microservice whenever it is online OR if not explicitly known to be completely dead
-    if (health.online || health.status === 'warming') {
-      console.log(`[Similarity Check] Routing to NLP service (${health.device || 'remote'}) for ${archivedPapers.length} archive(s)`)
-      try {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
-
-        const nlpResponse = await fetch(`${NLP_SERVICE_BASE}/similarity-check`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ currentPaperText, archivedPapers }),
-          signal: controller.signal
-        })
-        clearTimeout(timer)
-
-        if (nlpResponse.ok) {
-          nlpData = await nlpResponse.json().catch(() => ({}))
-          if (nlpData && nlpData.success) {
-            console.log(`[Similarity Check] ✓ NLP service returned results — maxSimilarity=${nlpData.maxSimilarity}%`)
-            mlAttemptSuccess = true
-            return res.json(nlpData)
-          }
-        } else {
-          console.warn(`[Similarity Check] NLP service responded with HTTP ${nlpResponse.status}`)
+      if (nlpResponse.ok) {
+        const nlpData = await nlpResponse.json().catch(() => ({}))
+        if (nlpData && nlpData.success) {
+          console.log(`[Similarity Check] ✓ NLP service returned results — maxSimilarity=${nlpData.maxSimilarity}%`)
+          return res.json(nlpData)
         }
-      } catch (nlpErr) {
-        console.warn(`[Similarity Check] ML service fetch failed (${nlpErr.message}), falling back to keyword analysis.`)
       }
-    } else {
-      console.warn('[Similarity Check] ML microservice is currently offline. Using keyword-based fallback.')
+
+      const isColdStart = nlpResponse.status === 502 || nlpResponse.status === 503 || nlpResponse.status === 504
+      if (isColdStart) {
+        return res.status(nlpResponse.status).json({
+          success: false,
+          status: 'warming',
+          message: 'ML microservice is warming up.'
+        })
+      }
+    } catch (nlpErr) {
+      console.warn(`[Similarity Check] ML service fetch failed (${nlpErr.message})`)
+      return res.status(503).json({
+        success: false,
+        status: 'warming',
+        message: 'ML microservice is warming up.'
+      })
     }
 
     // -----------------------------------------------------------------------

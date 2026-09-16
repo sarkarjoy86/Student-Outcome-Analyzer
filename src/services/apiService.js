@@ -137,9 +137,9 @@ async function handleResponse(response) {
  */
 export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
   const {
-    maxRetries = 18,
-    backoff = [2500, 3500, 4500, 5500, 6500, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000],
-    maxTotalTimeMs = 110000,
+    maxRetries = 24,
+    backoff = [2500, 3500, 4500, 5500, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000],
+    maxTotalTimeMs = 150000,
     onProgress = null,
     signal = null
   } = retryConfig;

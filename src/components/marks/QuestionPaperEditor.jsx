@@ -2315,6 +2315,11 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         }
       })
 
+      if (mlStatus !== 'ready') {
+        wakeUpMLService({ silent: false, waitForReady: false })
+        showNotification('Connecting to AI service for question similarity analysis...', 'info', 4000)
+      }
+
       const res = await apiService.checkQuestionSimilarity(
         {
           currentPaperText: currentPlainText,
@@ -2327,6 +2332,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
       if (res.success) {
         setSimilarityResults(res)
+        showNotification(`✓ Question similarity check complete (${res.totalArchivesCompared || 0} papers analyzed).`, 'success', 3500)
       } else {
         setSimilarityError(res.message || 'Failed to analyze similarity.')
       }
@@ -5505,6 +5511,11 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyLoading(true)
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
+
+    if (mlStatus !== 'ready') {
+      wakeUpMLService({ silent: false, waitForReady: false })
+      showNotification('Connecting to AI service for Bloom & CO analysis...', 'info', 4000)
+    }
 
     try {
       const outcomesPayload = (coDetails && coDetails.length > 0)
@@ -17320,23 +17331,58 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         }}
       />
 
-      {/* Non-Blocking Toast Notifications Container */}
+      {/* Non-Blocking Notifications Container (Top-Right Stack with Translucent Glassy Dark Emerald Aesthetic) */}
       <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
+        {/* Real-Time AI Cold-Start Warming Card */}
+        {aiWarmingInfo && (
+          <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-2xl flex items-start gap-3.5 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-50 border-emerald-500/50 ring-1 ring-emerald-400/20">
+            <div className="relative flex items-center justify-center shrink-0 mt-0.5">
+              <Sparkles size={17} className="text-amber-400 animate-pulse" />
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            </div>
+            <div className="flex-1 flex flex-col text-left pr-1">
+              <span className="text-white font-bold tracking-wide leading-tight">
+                {aiWarmingInfo.statusMsg || 'AI service is waking up from standby...'}
+              </span>
+              <span className="text-[11px] text-emerald-200/90 font-normal mt-0.5 leading-tight">
+                {aiWarmingInfo.attempt > 1
+                  ? `Attempt ${aiWarmingInfo.attempt}/${aiWarmingInfo.maxAttempts || 24} • Elapsed: ${aiWarmingInfo.elapsedSec || 0}s (Microservice waking from sleep)`
+                  : 'Waking up ML container... You can keep editing without interruption.'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (aiWarmingInfo.onCancel) aiWarmingInfo.onCancel()
+                setAiWarmingInfo(null)
+              }}
+              className="shrink-0 text-emerald-300/80 hover:text-white hover:bg-white/15 p-1 rounded-lg transition cursor-pointer"
+              title="Dismiss"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        {/* Regular Toast Notifications */}
         {notifications.map(n => {
-          let bg = 'bg-slate-900/90 text-white border-slate-700'
+          let bg = 'bg-emerald-950/90 text-emerald-50 border-emerald-500/40 ring-1 ring-emerald-400/15'
           let IconComp = Sparkles
-          let iconColor = 'text-blue-400'
+          let iconColor = 'text-emerald-400'
 
           if (n.type === 'success') {
-            bg = 'bg-emerald-950/90 text-emerald-100 border-emerald-600/50'
+            bg = 'bg-emerald-950/95 text-emerald-100 border-emerald-400/60 ring-1 ring-emerald-400/25'
             IconComp = CheckCircle2
             iconColor = 'text-emerald-400'
           } else if (n.type === 'error') {
-            bg = 'bg-rose-950/90 text-rose-100 border-rose-600/50'
+            bg = 'bg-rose-950/95 text-rose-100 border-rose-500/50 ring-1 ring-rose-400/20'
             IconComp = AlertCircle
             iconColor = 'text-rose-400'
           } else if (n.type === 'warning') {
-            bg = 'bg-amber-950/90 text-amber-100 border-amber-600/50'
+            bg = 'bg-amber-950/95 text-amber-100 border-amber-500/50 ring-1 ring-amber-400/20'
             IconComp = AlertTriangle
             iconColor = 'text-amber-400'
           }
@@ -17344,13 +17390,14 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           return (
             <div
               key={n.id}
-              className={`pointer-events-auto px-4 py-3 rounded-xl border shadow-xl flex items-start gap-3 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold ${bg}`}
+              className={`pointer-events-auto px-4 py-3 rounded-2xl border shadow-xl flex items-start gap-3 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold ${bg}`}
             >
               <IconComp size={16} className={`shrink-0 mt-0.5 ${iconColor}`} />
               <div className="flex-1 leading-relaxed break-words">{n.message}</div>
               <button
+                type="button"
                 onClick={() => dismissNotification(n.id)}
-                className="shrink-0 text-white/60 hover:text-white p-0.5 rounded transition cursor-pointer"
+                className="shrink-0 text-white/60 hover:text-white hover:bg-white/10 p-1 rounded-lg transition cursor-pointer"
                 title="Dismiss"
               >
                 <X size={14} />
@@ -17359,35 +17406,6 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           )
         })}
       </div>
-
-      {/* Non-Blocking AI Cold-Start Warming Overlay */}
-      {aiWarmingInfo && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[99998] bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-500/40 flex items-center gap-3.5 text-xs font-semibold backdrop-blur-md no-print animate-in fade-in slide-in-from-top-3">
-          <div className="relative flex items-center justify-center shrink-0">
-            <Sparkles size={16} className="text-amber-400 animate-pulse" />
-            <span className="absolute -top-1 -right-1 flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-            </span>
-          </div>
-          <div className="flex flex-col text-left">
-            <span className="text-white font-bold tracking-wide">
-              {aiWarmingInfo.statusMsg || 'Connecting to AI Engine (Cold-Start Mitigation)...'}
-            </span>
-            <span className="text-[11px] text-slate-300 font-normal">
-              {aiWarmingInfo.attempt > 1 ? `Attempt ${aiWarmingInfo.attempt}/${aiWarmingInfo.maxAttempts || 5} • Elapsed: ${aiWarmingInfo.elapsedSec || 0}s (Microservice waking from sleep)` : 'Waking up ML container... You can keep editing without interruption.'}
-            </span>
-          </div>
-          {aiWarmingInfo.onCancel && (
-            <button
-              onClick={aiWarmingInfo.onCancel}
-              className="ml-2 px-2.5 py-1 bg-white/15 hover:bg-white/25 text-white rounded-lg text-[11px] font-bold transition border border-white/20 cursor-pointer"
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }
