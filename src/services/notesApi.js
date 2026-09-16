@@ -10,6 +10,7 @@
  */
 
 import { getApiBaseUrl } from './apiService.js';
+import { getNoteBlobFromIDB } from '../utils/notesStorage.js';
 
 const API_BASE = getApiBaseUrl();
 
@@ -109,13 +110,21 @@ export function getCachedNotesStatus(courseInput) {
       return { hasNotes: false, fileName: null, fileType: null, totalChunks: 0, sampleChunks: [], files: [] };
     }
     const parsed = JSON.parse(raw);
+    const files = Array.isArray(parsed.files) ? parsed.files : [];
+    let sampleChunks = Array.isArray(parsed.sampleChunks) ? parsed.sampleChunks : [];
+
+    // If root sampleChunks is empty but files have chunks, flatten from files
+    if (sampleChunks.length === 0 && files.length > 0) {
+      sampleChunks = files.flatMap(f => f.sampleChunks || []).filter(Boolean);
+    }
+
     return {
       hasNotes: Boolean(parsed.hasNotes),
-      fileName: parsed.fileName || null,
-      fileType: parsed.fileType || null,
-      totalChunks: Number(parsed.totalChunks) || 0,
-      sampleChunks: Array.isArray(parsed.sampleChunks) ? parsed.sampleChunks : [],
-      files: Array.isArray(parsed.files) ? parsed.files : []
+      fileName: parsed.fileName || files[0]?.fileName || null,
+      fileType: parsed.fileType || files[0]?.fileType || null,
+      totalChunks: Number(parsed.totalChunks) || sampleChunks.length || 0,
+      sampleChunks,
+      files
     };
   } catch (err) {
     console.warn('[notesApi] getCachedNotesStatus error:', err);
@@ -125,6 +134,7 @@ export function getCachedNotesStatus(courseInput) {
 
 /**
  * Saves notes metadata to browser LocalStorage for persistent client-side storage.
+ * Stores up to 1,000 question chunks locally to ensure zero-latency offline suggestions.
  *
  * @param {string|object} courseInput
  * @param {object} notesData
@@ -141,12 +151,12 @@ export function saveNotesToLocalStorage(courseInput, notesData) {
       fileName: notesData.fileName || null,
       fileType: notesData.fileType || null,
       totalChunks: Number(notesData.totalChunks) || 0,
-      sampleChunks: (notesData.sampleChunks || []).slice(0, 100),
+      sampleChunks: (notesData.sampleChunks || []).slice(0, 1000),
       files: (notesData.files || []).map(f => ({
         fileName: f.fileName,
         fileType: f.fileType,
         totalChunks: Number(f.totalChunks) || 0,
-        sampleChunks: (f.sampleChunks || []).slice(0, 50)
+        sampleChunks: (f.sampleChunks || []).slice(0, 1000)
       })),
       updatedAt: new Date().toISOString()
     };
@@ -291,12 +301,188 @@ export async function uploadNotesFile(file, courseInput) {
   }
 }
 
+// In-flight sync tracker to prevent duplicate concurrent uploads
+const activeSyncCourses = new Set();
+
 /**
- * Get suggestions from notes for a given question query text
+ * Searches client-side cached question chunks with 0ms latency.
+ * Provides instant live suggestions even if backend ML service is cold or restarting.
+ *
+ * @param {string|object} courseInput
+ * @param {string} queryText
+ * @param {number} topK
+ * @returns {Array<{id: string, questionText: string, similarity: number, matchPercentage: number, source: string, isLocalMatch: boolean}>}
+ */
+export function searchLocalCachedNotes(courseInput, queryText, topK = 20) {
+  if (!queryText || typeof queryText !== 'string' || queryText.trim().length < 2) return [];
+
+  const courseKey = getNormalizedCourseKey(courseInput);
+  if (!courseKey) return [];
+
+  const cached = getCachedNotesStatus(courseKey);
+  if (!cached || !cached.hasNotes) return [];
+
+  const rawChunks = [
+    ...(cached.sampleChunks || []),
+    ...(cached.files || []).flatMap(f => f.sampleChunks || [])
+  ];
+
+  if (rawChunks.length === 0) return [];
+
+  // Deduplicate raw chunks
+  const uniqueQuestions = Array.from(new Set(rawChunks.map(c => stripQuestionLeadingNumber(c)).filter(Boolean)));
+  if (uniqueQuestions.length === 0) return [];
+
+  const cleanQuery = queryText.trim().toLowerCase();
+  // Split into tokens of 2+ characters
+  const queryTokens = cleanQuery
+    .split(/[\s,.;:?!'"`()[\]{}]+/)
+    .map(t => t.trim().toLowerCase())
+    .filter(t => t.length >= 2);
+
+  const matches = [];
+
+  for (let i = 0; i < uniqueQuestions.length; i++) {
+    const qText = uniqueQuestions[i];
+    const qLower = qText.toLowerCase();
+
+    let score = 0;
+
+    // 1. Direct prefix match (e.g. "how" at the very beginning of the question)
+    if (qLower.startsWith(cleanQuery)) {
+      score = 0.98;
+    }
+    // 2. Direct substring match (e.g. "how" somewhere in the question)
+    else if (qLower.includes(cleanQuery)) {
+      // Reward matches closer to the beginning of the sentence
+      const idx = qLower.indexOf(cleanQuery);
+      score = idx < 15 ? 0.94 : 0.88;
+    }
+    // 3. Multi-token overlap scoring
+    else if (queryTokens.length > 0) {
+      let matchedCount = 0;
+      for (const tok of queryTokens) {
+        if (qLower.includes(tok)) {
+          matchedCount++;
+        }
+      }
+      const ratio = matchedCount / queryTokens.length;
+      if (ratio >= 0.5) {
+        score = 0.65 + (0.28 * ratio);
+      }
+    }
+
+    if (score > 0) {
+      // Small bonus if it's formatted as a full question
+      if (qText.includes('?')) score = Math.min(score + 0.01, 0.99);
+
+      matches.push({
+        id: `local-note-${i}-${qText.slice(0, 16).replace(/\W+/g, '')}`,
+        questionText: qText,
+        similarity: Number(score.toFixed(2)),
+        matchPercentage: Math.round(score * 100),
+        source: cached.fileName || 'Reference Questions',
+        isLocalMatch: true
+      });
+    }
+  }
+
+  // Sort descending by similarity score
+  matches.sort((a, b) => b.similarity - a.similarity);
+  return matches.slice(0, topK);
+}
+
+/**
+ * Silently re-syncs reference note document Blobs from browser IndexedDB to the ML microservice.
+ * Runs in the background whenever Render's ephemeral container wipes in-memory cache upon restart.
+ *
+ * @param {string|object} courseInput
+ * @returns {Promise<boolean>}
+ */
+export async function syncNotesBlobToBackend(courseInput) {
+  const courseKey = getNormalizedCourseKey(courseInput);
+  if (!courseKey || activeSyncCourses.has(courseKey)) return false;
+
+  const cached = getCachedNotesStatus(courseKey);
+  if (!cached || !cached.hasNotes) return false;
+
+  activeSyncCourses.add(courseKey);
+
+  try {
+    // Check if server already has notes loaded to avoid redundant uploads
+    const statusUrl = getNotesEndpoint(`/status/${encodeURIComponent(courseKey)}`);
+    const statusRes = await fetch(statusUrl).catch(() => null);
+    if (statusRes && statusRes.ok) {
+      const statusData = await statusRes.json().catch(() => ({}));
+      if (statusData.hasNotes && (statusData.totalChunks > 0 || (statusData.files && statusData.files.length > 0))) {
+        activeSyncCourses.delete(courseKey);
+        return true;
+      }
+    }
+
+    console.info(`[notesApi] Server has 0 chunks for ${courseKey}. Auto-syncing document Blob from IndexedDB...`);
+
+    const filesToSync = (cached.files && cached.files.length > 0)
+      ? cached.files
+      : (cached.fileName ? [{ fileName: cached.fileName }] : []);
+
+    let syncedCount = 0;
+
+    for (const f of filesToSync) {
+      const fileName = f.fileName;
+      if (!fileName) continue;
+
+      const blob = await getNoteBlobFromIDB(courseKey, fileName);
+      if (!blob) {
+        console.warn(`[notesApi] No stored IndexedDB blob found for ${courseKey} - ${fileName}`);
+        continue;
+      }
+
+      console.info(`[notesApi] Uploading ${fileName} (${blob.size} bytes) to server for ${courseKey}...`);
+      const fileObj = new File([blob], fileName, {
+        type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        lastModified: Date.now()
+      });
+
+      const formData = new FormData();
+      formData.append('file', fileObj);
+      formData.append('courseId', courseKey);
+
+      const uploadUrl = getNotesEndpoint('/upload');
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (uploadRes.ok) {
+        const uploadData = await uploadRes.json().catch(() => ({}));
+        syncedCount++;
+        console.info(`[notesApi] Successfully re-synced ${fileName} to server! Chunks: ${uploadData.totalChunks || uploadData.fileChunks}`);
+      } else {
+        console.warn(`[notesApi] Re-sync upload failed with HTTP status ${uploadRes.status}`);
+      }
+    }
+
+    return syncedCount > 0;
+  } catch (err) {
+    console.warn('[notesApi] syncNotesBlobToBackend error:', err.message);
+    return false;
+  } finally {
+    activeSyncCourses.delete(courseKey);
+  }
+}
+
+/**
+ * Get suggestions from notes for a given question query text.
+ * Integrates dual-engine fallback:
+ * 1. Queries backend ML service for neural embeddings.
+ * 2. Instant client-side candidate search from local cache if server is warming, empty, or unreachable.
+ *
  * @param {string|object} courseInput 
  * @param {string} queryText 
  * @param {number} topK 
- * @returns {Promise<Array<{id: number, questionText: string, matchPercentage: number}>>}
+ * @param {AbortSignal|null} signal
+ * @returns {Promise<Array<{id: string|number, questionText: string, similarity: number, matchPercentage: number}>>}
  */
 export async function suggestQuestionsFromNotes(courseInput, queryText, topK = 20, signal = null) {
   try {
@@ -305,34 +491,79 @@ export async function suggestQuestionsFromNotes(courseInput, queryText, topK = 2
       return [];
     }
 
-    const endpoint = getNotesEndpoint('/suggest');
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        courseId: courseKey,
-        queryText: queryText.trim(),
-        topK,
-      }),
-      ...(signal ? { signal } : {}),
-    });
+    const trimmedQuery = queryText.trim();
 
-    if (!response.ok) {
-      return [];
+    // 1. Instant local search from cached sample chunks (0ms latency fallback)
+    const localMatches = searchLocalCachedNotes(courseKey, trimmedQuery, topK);
+
+    // 2. Fetch semantic suggestions from backend ML service with a 4s timeout
+    let serverSuggestions = [];
+    let serverHadEmptyNotes = false;
+
+    try {
+      const endpoint = getNotesEndpoint('/suggest');
+      const fetchPromise = fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseId: courseKey,
+          queryText: trimmedQuery,
+          topK,
+        }),
+        ...(signal ? { signal } : {}),
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Suggest fetch timeout')), 4000)
+      );
+
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
+
+      if (response.ok) {
+        const data = await response.json();
+        const rawSuggestions = data.suggestions || [];
+        if (rawSuggestions.length > 0) {
+          serverSuggestions = rawSuggestions.map(item => ({
+            ...item,
+            questionText: stripQuestionLeadingNumber(item.questionText)
+          }));
+        } else {
+          serverHadEmptyNotes = true;
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      console.warn('[notesApi] Backend suggest warning, using local candidate search:', err.message);
     }
 
-    const data = await response.json();
-    const suggestions = data.suggestions || [];
-    return suggestions.map(item => ({
-      ...item,
-      questionText: stripQuestionLeadingNumber(item.questionText)
-    }));
+    // If server returned empty suggestions, trigger silent background re-sync
+    if (serverHadEmptyNotes) {
+      syncNotesBlobToBackend(courseKey).catch(() => {});
+    }
+
+    // If server returned results, merge with any high-confidence local matches
+    if (serverSuggestions.length > 0) {
+      const seen = new Set(serverSuggestions.map(s => s.questionText.toLowerCase().trim()));
+      const combined = [...serverSuggestions];
+      for (const loc of localMatches) {
+        const norm = loc.questionText.toLowerCase().trim();
+        if (!seen.has(norm) && combined.length < topK) {
+          combined.push(loc);
+          seen.add(norm);
+        }
+      }
+      return combined;
+    }
+
+    // Fall back to instant local candidate search results
+    return localMatches;
   } catch (error) {
     if (error.name === 'AbortError') {
       throw error;
     }
-    console.warn('[notesApi] suggestQuestionsFromNotes warning:', error.message);
-    return [];
+    console.warn('[notesApi] suggestQuestionsFromNotes error:', error.message);
+    const courseKey = getNormalizedCourseKey(courseInput);
+    return searchLocalCachedNotes(courseKey, queryText, topK);
   }
 }
 
@@ -380,15 +611,16 @@ export async function getNotesStatus(courseInput) {
       };
 
       // Synchronize with LocalStorage
-      if (freshStatus.hasNotes) {
+      if (freshStatus.hasNotes && freshStatus.totalChunks > 0) {
         saveNotesToLocalStorage(courseKey, freshStatus);
         return freshStatus;
       }
 
       // If server returned hasNotes: false, but client has cached notes from a previous session,
-      // preserve local cache rather than wiping it out!
+      // preserve local cache rather than wiping it out, and trigger silent re-sync!
       if (cached && cached.hasNotes) {
-        console.warn(`[notesApi] Server returned no notes for ${courseKey}, preserving local cache (${cached.totalChunks} chunks)`);
+        console.warn(`[notesApi] Server returned no notes for ${courseKey}, preserving local cache (${cached.totalChunks} chunks) and triggering silent re-sync`);
+        syncNotesBlobToBackend(courseKey).catch(() => {});
         return cached;
       }
 
@@ -399,6 +631,9 @@ export async function getNotesStatus(courseInput) {
   }
 
   // Fallback to client LocalStorage snapshot if ML service is unreachable or restarting
+  if (cached && cached.hasNotes) {
+    syncNotesBlobToBackend(courseKey).catch(() => {});
+  }
   return cached;
 }
 

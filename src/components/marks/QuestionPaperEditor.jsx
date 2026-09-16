@@ -22,7 +22,7 @@ import html2canvas from 'html2canvas'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { BAIUST_LOGO } from './baiustLogo'
-import { getNotesStatus, suggestQuestionsFromNotes, stripQuestionLeadingNumber, getNormalizedCourseKey, getCachedNotesStatus } from '../../services/notesApi'
+import { getNotesStatus, suggestQuestionsFromNotes, stripQuestionLeadingNumber, getNormalizedCourseKey, getCachedNotesStatus, syncNotesBlobToBackend } from '../../services/notesApi'
 import { smartFormatCode, isCodeLikelySingleLine, detectEmbeddedCodeInQuestion } from '../../utils/codeFormatter'
 import ReferenceNotesModal from '../dashboard/ReferenceNotesModal'
 import TableDesignModal from './TableDesignModal'
@@ -2047,7 +2047,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     try { localStorage.removeItem('obe_live_suggest_toggle') } catch {}
   }, [])
 
-  // Dual-Layer Live Suggest Toggle with Auto ML Microservice Cold-Start Wake-up
+  // Dual-Layer Live Suggest Toggle with Auto ML Microservice Cold-Start Wake-up & Auto-Sync
   const handleToggleLiveSuggest = useCallback((forceState = null) => {
     setIsLiveSuggestActive(prev => {
       const nextState = forceState !== null ? forceState : !prev
@@ -2059,10 +2059,14 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         } else {
           showNotification('Live question suggestions active.', 'success', 2500)
         }
+        // Auto re-sync notes from browser IndexedDB to server if Render restarted
+        if (notesCourseId) {
+          syncNotesBlobToBackend(notesCourseId).catch(() => {})
+        }
       }
       return nextState
     })
-  }, [mlStatus, wakeUpMLService, showNotification])
+  }, [mlStatus, wakeUpMLService, showNotification, notesCourseId])
 
   // Real-time toast alert when AI service transitions from warming to ready during active Live Suggest
   const prevMlStatusRef = useRef(mlStatus)
@@ -5660,8 +5664,14 @@ Equation description: "${aiEquationPrompt}"`
     }
   }, [notesCourseId, refreshNotesStatus])
 
-  // Real-time debounced typing listener (450ms) for Teacher's Reference Notes Question Auto-Suggestion
-  // Real-time debounced typing listener (450ms) for Teacher's Reference Notes Question Auto-Suggestion
+  // Background Auto-Sync: If client LocalStorage or IndexedDB has notes but server restarted, silently re-sync
+  useEffect(() => {
+    if (notesCourseId && notesStatusInfo?.hasNotes) {
+      syncNotesBlobToBackend(notesCourseId).catch(() => {})
+    }
+  }, [notesCourseId, notesStatusInfo?.hasNotes])
+
+  // Real-time debounced typing listener (300ms) for Teacher's Reference Notes Question Auto-Suggestion
   // Dual-Layer Optimization: Manual toggle gate (Layer 1) + Debounce & AbortController (Layer 2)
   useEffect(() => {
     if (!notesStatusInfo?.hasNotes || !isLiveSuggestActive) return
@@ -5684,18 +5694,30 @@ Equation description: "${aiEquationPrompt}"`
           if (sel && sel.rangeCount > 0) {
             const range = sel.getRangeAt(0)
             const node = range.startContainer
-            const fullText = (node.nodeType === Node.TEXT_NODE ? node.textContent : node.innerText) || ''
-            
+
             if (node.nodeType === Node.TEXT_NODE) {
+              const fullText = node.textContent || ''
               const beforeCursor = fullText.slice(0, range.startOffset ?? fullText.length)
               const lastBreak = Math.max(beforeCursor.lastIndexOf('\n'), beforeCursor.lastIndexOf('\r'))
               activeLineText = (lastBreak >= 0 ? beforeCursor.slice(lastBreak + 1) : beforeCursor).trim()
               if (!activeLineText) activeLineText = fullText.trim()
-            } else {
-              activeLineText = fullText.trim()
+              targetObj = { type: 'rteNode', node, range: range.cloneRange() }
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+              let targetNode = node
+              if (node.childNodes && node.childNodes.length > 0) {
+                const childIdx = Math.min(range.startOffset, node.childNodes.length - 1)
+                const child = node.childNodes[childIdx]
+                if (child) {
+                  targetNode = child
+                }
+              }
+              const block = targetNode.closest ? targetNode.closest('p, li, td, th, h1, h2, h3, h4, h5, h6, blockquote') : null
+              const elToRead = (block && !block.classList?.contains('e-content')) ? block : targetNode
+              const rawText = elToRead.textContent || ''
+              const lines = rawText.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean)
+              activeLineText = lines[lines.length - 1] || rawText.trim()
+              targetObj = { type: 'rteNode', node: targetNode, range: range.cloneRange() }
             }
-
-            targetObj = { type: 'rteNode', node, range: range.cloneRange() }
           }
         }
       }
@@ -5765,42 +5787,70 @@ Equation description: "${aiEquationPrompt}"`
     }
 
     const handleTypingQuery = (e) => {
-      if (e.key === 'Escape') {
+      if (e?.key === 'Escape') {
         setActiveNoteSuggestions([])
         setShowAllSuggestions(false)
         return
       }
 
       clearTimeout(noteDebounceTimerRef.current)
-      noteDebounceTimerRef.current = setTimeout(executeSuggestQuery, 450)
+      noteDebounceTimerRef.current = setTimeout(executeSuggestQuery, 300)
     }
 
     // Immediately check and fetch suggestions for currently active line when Live is toggled ON
     executeSuggestQuery()
 
-    document.addEventListener('keyup', handleTypingQuery)
-    document.addEventListener('input', handleTypingQuery)
+    // Attach listeners with capture across document, window, editorDoc, and editPanel
+    const attachedTargets = []
+    const addListener = (target) => {
+      if (!target || typeof target.addEventListener !== 'function') return
+      try {
+        target.addEventListener('keyup', handleTypingQuery, true)
+        target.addEventListener('input', handleTypingQuery, true)
+        attachedTargets.push(target)
+      } catch (e) {}
+    }
+
+    addListener(document)
+    addListener(window)
 
     const editor = rteRef.current
     const editorDoc = editor?.contentModule?.getDocument ? editor.contentModule.getDocument() : null
     if (editorDoc && editorDoc !== document) {
-      try {
-        editorDoc.addEventListener('keyup', handleTypingQuery)
-        editorDoc.addEventListener('input', handleTypingQuery)
-      } catch (e) {}
+      addListener(editorDoc)
     }
 
+    const editPanel = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+    if (editPanel) {
+      addListener(editPanel)
+    }
+
+    const domPanels = document.querySelectorAll('.e-rte-content .e-content, .e-rte-content iframe')
+    domPanels.forEach(p => {
+      addListener(p)
+      if (p.tagName === 'IFRAME' && p.contentDocument) {
+        addListener(p.contentDocument)
+      }
+    })
+
+    // Safety interval to ensure listeners stay attached if view switches (e.g. fullscreen toggle)
+    const listenerSyncInterval = setInterval(() => {
+      const currentEditPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : null
+      if (currentEditPanel && !attachedTargets.includes(currentEditPanel)) {
+        addListener(currentEditPanel)
+      }
+    }, 1500)
+
     return () => {
+      clearInterval(listenerSyncInterval)
       clearTimeout(noteDebounceTimerRef.current)
       suggestAbortRef.current?.abort()
-      document.removeEventListener('keyup', handleTypingQuery)
-      document.removeEventListener('input', handleTypingQuery)
-      if (editorDoc && editorDoc !== document) {
+      attachedTargets.forEach(target => {
         try {
-          editorDoc.removeEventListener('keyup', handleTypingQuery)
-          editorDoc.removeEventListener('input', handleTypingQuery)
+          target.removeEventListener('keyup', handleTypingQuery, true)
+          target.removeEventListener('input', handleTypingQuery, true)
         } catch (e) {}
-      }
+      })
     }
   }, [notesStatusInfo, notesCourseId, isLiveSuggestActive])
 
