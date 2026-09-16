@@ -1945,7 +1945,10 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Strictly Scoped Keep-Alive Heartbeat for ML Service (Render Cold-Start Mitigation)
-  const { status: mlStatus, isWarming: isMlWarming } = useMLServiceWakeup({ isEditingSession: true })
+  const { status: mlStatus, isWarming: isMlWarming, wakeUp: wakeUpMLService } = useMLServiceWakeup({
+    isEditingSession: true,
+    autoWarm: true
+  })
 
   // Non-blocking Toast Notification State
   const [notifications, setNotifications] = useState([])
@@ -2043,6 +2046,32 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   useEffect(() => {
     try { localStorage.removeItem('obe_live_suggest_toggle') } catch {}
   }, [])
+
+  // Dual-Layer Live Suggest Toggle with Auto ML Microservice Cold-Start Wake-up
+  const handleToggleLiveSuggest = useCallback((forceState = null) => {
+    setIsLiveSuggestActive(prev => {
+      const nextState = forceState !== null ? forceState : !prev
+      if (nextState) {
+        // Teacher toggled Live ON: Ensure ML microservice begins waking up if not yet ready
+        if (mlStatus !== 'ready') {
+          wakeUpMLService({ silent: false, waitForReady: false })
+          showNotification('Connecting to AI service for real-time question suggestions...', 'info', 4000)
+        } else {
+          showNotification('Live question suggestions active.', 'success', 2500)
+        }
+      }
+      return nextState
+    })
+  }, [mlStatus, wakeUpMLService, showNotification])
+
+  // Real-time toast alert when AI service transitions from warming to ready during active Live Suggest
+  const prevMlStatusRef = useRef(mlStatus)
+  useEffect(() => {
+    if (prevMlStatusRef.current !== 'ready' && mlStatus === 'ready' && isLiveSuggestActive) {
+      showNotification('✓ AI suggestion engine is ready! Real-time question suggestions are now live.', 'success', 4000)
+    }
+    prevMlStatusRef.current = mlStatus
+  }, [mlStatus, isLiveSuggestActive, showNotification])
 
   const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
   const [showParagraphMarks, setShowParagraphMarks] = useState(false)
@@ -11175,16 +11204,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             {/* Live Suggestions Toggle Switch */}
             <button
               type="button"
-              onClick={() => setIsLiveSuggestActive(prev => !prev)}
+              onClick={() => handleToggleLiveSuggest()}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer border shadow-2xs ${
                 isLiveSuggestActive
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
                   : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
               }`}
-              title={isLiveSuggestActive ? 'Live suggestions are active — click to pause' : 'Suggestions paused — click to enable'}
+              title={isLiveSuggestActive ? (isMlWarming ? 'AI service is waking up... click to pause' : 'Live suggestions are active — click to pause') : 'Suggestions paused — click to enable'}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${isLiveSuggestActive ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-              {isLiveSuggestActive ? 'Live' : 'Paused'}
+              <span className={`w-1.5 h-1.5 rounded-full ${isLiveSuggestActive ? (isMlWarming ? 'bg-amber-500 animate-ping' : 'bg-emerald-500') : 'bg-gray-400'}`} />
+              {isLiveSuggestActive ? (isMlWarming ? 'Warming...' : 'Live') : 'Paused'}
             </button>
             <span className="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
               {notesStatusInfo.totalChunks} Qs
@@ -11349,7 +11378,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 Suggestions are paused Click{' '}
                 <button
                   type="button"
-                  onClick={() => setIsLiveSuggestActive(true)}
+                  onClick={() => handleToggleLiveSuggest(true)}
                   className="font-bold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer inline"
                 >
                   Live
@@ -11361,6 +11390,23 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               type="button"
               onClick={() => setShowNotesModal(true)}
               className="text-[11px] font-semibold text-amber-800 hover:text-amber-900 hover:underline flex items-center gap-1 cursor-pointer pl-5"
+            >
+              <span>Browse all {notesStatusInfo.totalChunks} indexed questions manually &rarr;</span>
+            </button>
+          </div>
+        ) : isLiveSuggestActive && isMlWarming ? (
+          /* Microservice Warming State Feedback */
+          <div className="bg-indigo-50/70 rounded-xl p-2.5 border border-indigo-200/70 text-[11px] text-indigo-900 leading-snug font-medium space-y-1.5 animate-in fade-in duration-150">
+            <div className="flex items-start gap-2">
+              <span className="text-amber-500 text-xs mt-0.5">⏳</span>
+              <p>
+                <span className="font-bold text-indigo-950">AI Microservice is waking up from standby...</span> Real-time question suggestions will appear automatically as soon as it's ready.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNotesModal(true)}
+              className="text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 hover:underline flex items-center gap-1 cursor-pointer pl-5"
             >
               <span>Browse all {notesStatusInfo.totalChunks} indexed questions manually &rarr;</span>
             </button>

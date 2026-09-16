@@ -54,19 +54,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       body: formData
     });
 
-    const data = await mlResponse.json();
+    const data = await mlResponse.json().catch(() => ({}));
 
     if (!mlResponse.ok) {
+      const isColdStart = mlResponse.status === 502 || mlResponse.status === 503 || mlResponse.status === 504;
       return res.status(mlResponse.status).json({
         success: false,
-        message: data.detail || data.message || 'Failed to index notes in ML service.'
+        status: isColdStart ? 'warming' : 'error',
+        message: data.detail || data.message || (isColdStart ? 'ML microservice is warming up.' : 'Failed to index notes in ML service.')
       });
     }
 
     return res.status(200).json(data);
   } catch (error) {
     if (error.name === 'AbortError') {
-      return res.status(504).json({ success: false, message: 'Notes indexing timed out.' });
+      return res.status(504).json({ success: false, status: 'warming', message: 'Notes indexing timed out.' });
     }
     console.error('[Notes Route Upload Error]:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -92,19 +94,21 @@ router.post('/suggest', async (req, res) => {
       body: JSON.stringify({ courseId, queryText, topK })
     });
 
-    const data = await mlResponse.json();
+    const data = await mlResponse.json().catch(() => ({}));
 
     if (!mlResponse.ok) {
+      const isColdStart = mlResponse.status === 502 || mlResponse.status === 503 || mlResponse.status === 504;
       return res.status(mlResponse.status).json({
         success: false,
-        message: data.detail || data.message || 'Failed to fetch suggestions from ML service.'
+        status: isColdStart ? 'warming' : 'error',
+        message: data.detail || data.message || (isColdStart ? 'ML microservice is warming up.' : 'Failed to fetch suggestions from ML service.')
       });
     }
 
     return res.status(200).json(data);
   } catch (error) {
     if (error.name === 'AbortError') {
-      return res.status(504).json({ success: false, message: 'Question suggestion timed out.' });
+      return res.status(504).json({ success: false, status: 'warming', message: 'Question suggestion timed out.' });
     }
     console.error('[Notes Route Suggest Error]:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -123,12 +127,16 @@ router.get('/status/:courseId', async (req, res) => {
       method: 'GET'
     });
 
-    const data = await mlResponse.json();
+    const data = await mlResponse.json().catch(() => ({}));
 
     if (!mlResponse.ok) {
+      const isColdStart = mlResponse.status === 502 || mlResponse.status === 503 || mlResponse.status === 504;
       return res.status(mlResponse.status).json({
         success: false,
-        message: data.detail || data.message || 'Failed to get notes status from ML service.'
+        status: isColdStart ? 'warming' : 'error',
+        hasNotes: false,
+        mlServiceAvailable: false,
+        message: data.detail || data.message || (isColdStart ? 'ML microservice is warming up.' : 'Failed to get notes status from ML service.')
       });
     }
 
@@ -139,6 +147,7 @@ router.get('/status/:courseId', async (req, res) => {
       success: false,
       hasNotes: false,
       mlServiceAvailable: false,
+      status: 'warming',
       message: 'ML service is currently unavailable or starting up: ' + error.message
     });
   }

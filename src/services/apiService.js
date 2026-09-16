@@ -137,9 +137,9 @@ async function handleResponse(response) {
  */
 export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
   const {
-    maxRetries = 5,
-    backoff = [2000, 3000, 5000, 8000, 12000],
-    maxTotalTimeMs = 90000,
+    maxRetries = 18,
+    backoff = [2500, 3500, 4500, 5500, 6500, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000, 7000],
+    maxTotalTimeMs = 110000,
     onProgress = null,
     signal = null
   } = retryConfig;
@@ -156,7 +156,7 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
 
     const elapsedMs = Date.now() - startTime;
     if (elapsedMs >= maxTotalTimeMs) {
-      throw new Error(`AI operation timed out after ${Math.round(elapsedMs / 1000)}s while waiting for service to wake up.`);
+      throw new Error(`AI operation timed out after ${Math.round(elapsedMs / 1000)}s while waiting for microservice to wake up. Please try again shortly.`);
     }
 
     try {
@@ -185,9 +185,10 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
         (typeof data.message === 'string' && data.message.toLowerCase().includes('warming'));
 
       if (!res.ok || data.success === false) {
-        if (isColdStart && attempt < maxRetries) {
+        const canRetry = isColdStart && (attempt < maxRetries) && ((Date.now() - startTime) < maxTotalTimeMs);
+        if (canRetry) {
           attempt++;
-          const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 5000;
+          const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 7000;
           if (onProgress) {
             onProgress({
               attempt,
@@ -230,9 +231,10 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
         err.message.includes('timeout')
       );
 
-      if (isNetworkError && attempt < maxRetries) {
+      const canRetryNet = isNetworkError && (attempt < maxRetries) && ((Date.now() - startTime) < maxTotalTimeMs);
+      if (canRetryNet) {
         attempt++;
-        const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 5000;
+        const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 7000;
         if (onProgress) {
           onProgress({
             attempt,
@@ -259,7 +261,7 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
     }
   }
 
-  throw new Error('AI microservice request failed after maximum retries.');
+  throw new Error('AI microservice request timed out while waking up from standby. Please try again.');
 }
 
 export const apiService = {
