@@ -1225,18 +1225,51 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       if (questions && questions.length > 0) {
         let allQAbsent = true
         let hasAnyQ = false
+        let qSum = 0
         questions.forEach(q => {
           const val = existing?.questionMarks?.[q.questionNumber] ?? ''
           temp[sId][q.questionNumber] = val
           if (val !== '') {
             hasAnyQ = true
-            if (val !== 'A') allQAbsent = false
+            if (val === 'A' || String(val).trim().toUpperCase() === 'A') {
+              // absent
+            } else {
+              allQAbsent = false
+              qSum += parseFloat(val) || 0
+            }
           }
         })
+
         if (hasAnyQ && allQAbsent) {
           temp[sId]['_ctTotal'] = 'A'
-        } else if (existing?.totalMark === 'A') {
+        } else if (existing?.totalMark === 'A' || existing?.isAbsent) {
           temp[sId]['_ctTotal'] = 'A'
+          questions.forEach(q => {
+            if (temp[sId][q.questionNumber] === '') {
+              temp[sId][q.questionNumber] = 'A'
+            }
+          })
+        } else if (hasAnyQ) {
+          temp[sId]['_ctTotal'] = qSum
+        } else if (existing?.totalMark !== undefined && existing?.totalMark !== null && existing?.totalMark !== '') {
+          temp[sId]['_ctTotal'] = existing.totalMark
+          const enteredTotal = parseFloat(existing.totalMark) || 0
+          const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+          let accum = 0
+          questions.forEach(q => {
+            const qMax = parseFloat(q.maxMarks) || 0
+            const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+            const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+            temp[sId][q.questionNumber] = distributed
+            accum += distributed
+          })
+          const diff = enteredTotal - accum
+          if (Math.abs(diff) > 0.01 && questions.length > 0) {
+            const lastQ = questions[questions.length - 1].questionNumber
+            temp[sId][lastQ] = Math.round(((temp[sId][lastQ] || 0) + diff) * 2) / 2
+          }
+        } else {
+          temp[sId]['_ctTotal'] = ''
         }
       } else {
         temp[sId]['marks'] = existing?.totalMark ?? ''
@@ -1277,6 +1310,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     setTempMarks(temp)
   }
 
+  // Helper to persist current marks strictly as a local draft (zero database pollution)
+  const saveCurrentDraftToLocalStorage = (asmtId = selectedAssessmentId) => {
+    if (!asmtId || !offering?._id || !tempMarks || Object.keys(tempMarks).length === 0) return
+    const draftKey = getMarksDraftKey(asmtId)
+    if (draftKey) {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify({
+          tempMarks,
+          timestamp: Date.now()
+        }))
+      } catch (e) {}
+    }
+  }
+
   // Persist unsaved tempMarks to localStorage as draft
   useEffect(() => {
     if (selectedAssessmentId && offering?._id && Object.keys(tempMarks).length > 0) {
@@ -1306,117 +1353,71 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     )
   }
 
-  const autoSaveMarks = async (targetAsmtId = selectedAssessmentId) => {
-    if (!targetAsmtId || !offering?._id || !tempMarks || Object.keys(tempMarks).length === 0) return
-    try {
-      const questions = marksSpreadsheetData.metadata[targetAsmtId] || []
-      const selectedAsmt = (marksSpreadsheetData.assessments || []).find(a => a._id === targetAsmtId)
-      const isCTWithUniformCO = selectedAsmt && selectedAsmt.type === 'cts' && questions.length > 0 &&
-        new Set(questions.map(q => (q.co || 'NONE').toUpperCase().replace(/[\s-_]/g, ''))).size === 1
-      const isTotalMode = marksEntryMode === 'total' && isCTWithUniformCO
+  // Seamless bi-directional mode switcher that guarantees marks are never lost or zeroed
+  const handleMarksEntryModeChange = (newMode) => {
+    setMarksEntryMode(newMode)
+    const questions = marksSpreadsheetData.metadata[selectedAssessmentId] || []
+    if (!questions || questions.length === 0) return
 
-      let hasEnteredAnyMark = false
+    setTempMarks(prev => {
+      const next = { ...prev }
+      const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
 
-      const payload = (marksSpreadsheetData.students || []).map(s => {
-        const sId = s._id
-        const studentTemp = tempMarks[sId] || {}
-        let totalMark = 0
-        const questionMarks = {}
-        let isEmpty = true
-        let isAbsent = false
-
-        if (questions && questions.length > 0) {
-          if (isTotalMode) {
-            const totalVal = studentTemp['_ctTotal']
-            if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
-              if (String(totalVal).trim().toUpperCase() === 'A') {
-                totalMark = 0
-                isAbsent = true
-                questions.forEach(q => {
-                  questionMarks[q.questionNumber] = 'A'
-                })
+      Object.keys(next).forEach(sId => {
+        const sMarks = { ...(next[sId] || {}) }
+        if (newMode === 'total') {
+          // If switching to total, compute _ctTotal from entered question marks if _ctTotal is empty
+          const hasTotal = sMarks._ctTotal !== undefined && sMarks._ctTotal !== null && sMarks._ctTotal !== ''
+          if (!hasTotal) {
+            const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+            if (hasAnyQ) {
+              const allQAbsent = questions.every(q => String(sMarks[q.questionNumber]).trim().toUpperCase() === 'A')
+              if (allQAbsent) {
+                sMarks._ctTotal = 'A'
               } else {
-                const enteredTotal = parseFloat(totalVal) || 0
-                const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
-                questions.forEach(q => {
-                  const qMax = parseFloat(q.maxMarks) || 0
-                  const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
-                  const distributed = Math.round((enteredTotal * proportion) * 2) / 2
-                  questionMarks[q.questionNumber] = distributed
-                  totalMark += distributed
-                })
-                const diff = enteredTotal - totalMark
-                if (Math.abs(diff) > 0.01 && questions.length > 0) {
-                  const lastQ = questions[questions.length - 1].questionNumber
-                  questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
-                  totalMark = enteredTotal
-                }
+                sMarks._ctTotal = questions.reduce((acc, q) => {
+                  const val = sMarks[q.questionNumber]
+                  return acc + (String(val).trim().toUpperCase() === 'A' ? 0 : (parseFloat(val) || 0))
+                }, 0)
               }
-              isEmpty = false
-              hasEnteredAnyMark = true
-            }
-          } else {
-            let anyEntered = false
-            let allAbsent = questions.length > 0
-            questions.forEach(q => {
-              const val = studentTemp[q.questionNumber]
-              if (val !== undefined && val !== null && val !== '') {
-                anyEntered = true
-                if (String(val).trim().toUpperCase() === 'A') {
-                  questionMarks[q.questionNumber] = 'A'
-                  isAbsent = true
-                } else {
-                  allAbsent = false
-                  const markVal = parseFloat(val) || 0
-                  questionMarks[q.questionNumber] = markVal
-                  totalMark += markVal
-                }
-              } else {
-                allAbsent = false
-              }
-            })
-            if (anyEntered) {
-              isEmpty = false
-              hasEnteredAnyMark = true
-              if (allAbsent) isAbsent = true
             }
           }
-        } else {
-          const val = studentTemp['marks']
-          if (val !== undefined && val !== null && val !== '') {
-            if (String(val).trim().toUpperCase() === 'A') {
-              totalMark = 0
-              isAbsent = true
+        } else if (newMode === 'perQuestion') {
+          // If switching to per-question, distribute _ctTotal into question marks if questions are empty
+          const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+          const hasTotal = sMarks._ctTotal !== undefined && sMarks._ctTotal !== null && sMarks._ctTotal !== ''
+          if (!hasAnyQ && hasTotal) {
+            if (String(sMarks._ctTotal).trim().toUpperCase() === 'A') {
+              questions.forEach(q => { sMarks[q.questionNumber] = 'A' })
             } else {
-              totalMark = parseFloat(val) || 0
+              const enteredTotal = parseFloat(sMarks._ctTotal) || 0
+              let accum = 0
+              questions.forEach(q => {
+                const qMax = parseFloat(q.maxMarks) || 0
+                const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+                sMarks[q.questionNumber] = distributed
+                accum += distributed
+              })
+              const diff = enteredTotal - accum
+              if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                const lastQ = questions[questions.length - 1].questionNumber
+                sMarks[lastQ] = Math.round(((sMarks[lastQ] || 0) + diff) * 2) / 2
+              }
             }
-            isEmpty = false
-            hasEnteredAnyMark = true
           }
         }
-
-        return { studentId: sId, questionMarks, totalMark, isAbsent, isEmpty }
+        next[sId] = sMarks
       })
-
-      if (hasEnteredAnyMark) {
-        await apiService.saveMarksSpreadsheet(offering._id, {
-          assessmentId: targetAsmtId,
-          marks: payload
-        })
-        const draftKey = getMarksDraftKey(targetAsmtId)
-        if (draftKey) {
-          try { localStorage.removeItem(draftKey) } catch (e) {}
-        }
-      }
-    } catch (e) {
-      console.error('Auto-save marks failed silently:', e)
-    }
+      return next
+    })
   }
 
   const handleAssessmentChange = (id) => {
     const currentId = selectedAssessmentId
     if (currentId && currentId !== id) {
-      autoSaveMarks(currentId).catch(e => console.error('Auto-save marks error:', e))
+      // Strictly save local draft only — never push to database until explicitly requested
+      saveCurrentDraftToLocalStorage(currentId)
     }
     setSelectedAssessmentId(id)
     initializeTempMarks(
@@ -1431,7 +1432,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const handleSelectTab = (tabId, pushHistory = true) => {
     if (tabId === activeTab && !activeAssessmentForPaper) return;
     if (activeTab === 'marksEntry') {
-      autoSaveMarks();
+      // Strictly save local draft only — never push to database until explicitly requested
+      saveCurrentDraftToLocalStorage(selectedAssessmentId);
     }
     setActiveTab(tabId);
     localStorage.setItem("teacherActiveTab", tabId);
@@ -1534,7 +1536,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
   const handleSpreadsheetMarkChange = (studentId, key, val, maxVal, questionsList = []) => {
     // If teacher inputs 'a' or 'A', treat as Absent
-    const isAbsentInput = typeof val === 'string' && (val.trim().toUpperCase() === 'A' || val.toUpperCase() === 'A')
+    const isAbsentInput = typeof val === 'string' && val.trim().toUpperCase() === 'A'
     if (isAbsentInput) {
       setTempMarks(prev => {
         const studentPrev = prev[studentId] || {}
@@ -1546,7 +1548,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           return { ...prev, [studentId]: newObj }
         } else {
           const newObj = { ...studentPrev, [key]: 'A' }
-          delete newObj._ctTotal
+          if (questionsList && questionsList.length > 0) {
+            const allQAbsent = questionsList.every(q => {
+              const qVal = q.questionNumber === key ? 'A' : newObj[q.questionNumber]
+              return String(qVal).trim().toUpperCase() === 'A'
+            })
+            if (allQAbsent) {
+              newObj._ctTotal = 'A'
+            } else {
+              newObj._ctTotal = questionsList.reduce((acc, q) => {
+                const qVal = q.questionNumber === key ? 'A' : newObj[q.questionNumber]
+                return acc + (String(qVal).trim().toUpperCase() === 'A' ? 0 : (parseFloat(qVal) || 0))
+              }, 0)
+            }
+          }
           return { ...prev, [studentId]: newObj }
         }
       })
@@ -1584,7 +1599,25 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         return { ...prev, [studentId]: newObj }
       } else {
         const newObj = { ...studentPrev, [key]: val }
-        delete newObj._ctTotal
+        if (questionsList && questionsList.length > 0) {
+          const enteredQs = questionsList.filter(q => {
+            const qVal = q.questionNumber === key ? val : newObj[q.questionNumber]
+            return qVal !== undefined && qVal !== null && qVal !== ''
+          })
+          if (enteredQs.length === 0) {
+            newObj._ctTotal = ''
+          } else if (enteredQs.every(q => {
+            const qVal = q.questionNumber === key ? val : newObj[q.questionNumber]
+            return String(qVal).trim().toUpperCase() === 'A'
+          })) {
+            newObj._ctTotal = 'A'
+          } else {
+            newObj._ctTotal = questionsList.reduce((acc, q) => {
+              const qVal = q.questionNumber === key ? val : newObj[q.questionNumber]
+              return acc + (String(qVal).trim().toUpperCase() === 'A' ? 0 : (parseFloat(qVal) || 0))
+            }, 0)
+          }
+        }
         return { ...prev, [studentId]: newObj }
       }
     })
@@ -1611,7 +1644,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         if (questions && questions.length > 0) {
           if (isTotalMode) {
             // Total mode: distribute the entered total proportionally across questions
-            const totalVal = studentTemp['_ctTotal']
+            let totalVal = studentTemp['_ctTotal']
+            // Fallback if _ctTotal is empty but question marks exist
+            if ((totalVal === undefined || totalVal === null || totalVal === '') && questions.some(q => studentTemp[q.questionNumber] !== undefined && studentTemp[q.questionNumber] !== '')) {
+              const allQAbsent = questions.every(q => String(studentTemp[q.questionNumber]).trim().toUpperCase() === 'A')
+              if (allQAbsent) {
+                totalVal = 'A'
+              } else {
+                totalVal = questions.reduce((acc, q) => acc + (String(studentTemp[q.questionNumber]).trim().toUpperCase() === 'A' ? 0 : (parseFloat(studentTemp[q.questionNumber]) || 0)), 0)
+              }
+            }
+
             if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
               if (String(totalVal).trim().toUpperCase() === 'A') {
                 totalMark = 0
@@ -1660,6 +1703,38 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                 allAbsent = false
               }
             })
+
+            // Fallback: if questions not entered, but _ctTotal was entered
+            if (!anyEntered && studentTemp['_ctTotal'] !== undefined && studentTemp['_ctTotal'] !== null && studentTemp['_ctTotal'] !== '') {
+              const totalVal = studentTemp['_ctTotal']
+              if (String(totalVal).trim().toUpperCase() === 'A') {
+                totalMark = 0
+                isAbsent = true
+                allAbsent = true
+                anyEntered = true
+                questions.forEach(q => { questionMarks[q.questionNumber] = 'A' })
+              } else {
+                const enteredTotal = parseFloat(totalVal) || 0
+                const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+                let accum = 0
+                questions.forEach(q => {
+                  const qMax = parseFloat(q.maxMarks) || 0
+                  const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                  const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+                  questionMarks[q.questionNumber] = distributed
+                  accum += distributed
+                })
+                const diff = enteredTotal - accum
+                if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                  const lastQ = questions[questions.length - 1].questionNumber
+                  questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
+                }
+                totalMark = enteredTotal
+                anyEntered = true
+                allAbsent = false
+              }
+            }
+
             if (anyEntered) {
               isEmpty = false
               if (allAbsent) isAbsent = true
@@ -3798,7 +3873,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                 <span className="text-xs font-extrabold text-green-900">Entry Mode:</span>
                                 <select
                                   value={effectiveMode}
-                                  onChange={(e) => setMarksEntryMode(e.target.value)}
+                                  onChange={(e) => handleMarksEntryModeChange(e.target.value)}
                                   disabled={hasDifferentCOs}
                                   className={`border px-3 py-1.5 rounded-lg text-xs font-bold outline-none transition-all ${
                                     hasDifferentCOs
@@ -3850,23 +3925,49 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                   const sId = s._id
                                   const sMarks = tempMarks[sId] || {}
 
-                                  // Calculate total
+                                  // Accurately determine whether marks have been entered for this student
+                                  let isStudentEntered = false
                                   let sum = 0
                                   let isAllAbsent = false
+
                                   if (isTotalMode) {
-                                    isAllAbsent = sMarks['_ctTotal'] === 'A'
-                                    sum = isAllAbsent ? 0 : (parseFloat(sMarks['_ctTotal']) || 0)
-                                  } else if (hasQuestions) {
-                                    const enteredQs = questions.filter(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
-                                    isAllAbsent = enteredQs.length > 0 && enteredQs.every(q => sMarks[q.questionNumber] === 'A')
-                                    questions.forEach(q => {
-                                      if (sMarks[q.questionNumber] !== 'A') {
-                                        sum += parseFloat(sMarks[q.questionNumber]) || 0
+                                    const tVal = sMarks['_ctTotal']
+                                    if (tVal !== undefined && tVal !== null && tVal !== '') {
+                                      isStudentEntered = true
+                                      isAllAbsent = String(tVal).trim().toUpperCase() === 'A'
+                                      sum = isAllAbsent ? 0 : (parseFloat(tVal) || 0)
+                                    } else if (hasQuestions) {
+                                      const enteredQs = questions.filter(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== null && sMarks[q.questionNumber] !== '')
+                                      if (enteredQs.length > 0) {
+                                        isStudentEntered = true
+                                        isAllAbsent = enteredQs.every(q => String(sMarks[q.questionNumber]).trim().toUpperCase() === 'A')
+                                        sum = isAllAbsent ? 0 : enteredQs.reduce((acc, q) => {
+                                          const val = sMarks[q.questionNumber]
+                                          return acc + (String(val).trim().toUpperCase() === 'A' ? 0 : (parseFloat(val) || 0))
+                                        }, 0)
                                       }
-                                    })
+                                    }
+                                  } else if (hasQuestions) {
+                                    const enteredQs = questions.filter(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== null && sMarks[q.questionNumber] !== '')
+                                    if (enteredQs.length > 0) {
+                                      isStudentEntered = true
+                                      isAllAbsent = enteredQs.every(q => String(sMarks[q.questionNumber]).trim().toUpperCase() === 'A')
+                                      sum = isAllAbsent ? 0 : enteredQs.reduce((acc, q) => {
+                                        const val = sMarks[q.questionNumber]
+                                        return acc + (String(val).trim().toUpperCase() === 'A' ? 0 : (parseFloat(val) || 0))
+                                      }, 0)
+                                    } else if (sMarks['_ctTotal'] !== undefined && sMarks['_ctTotal'] !== null && sMarks['_ctTotal'] !== '') {
+                                      isStudentEntered = true
+                                      isAllAbsent = String(sMarks['_ctTotal']).trim().toUpperCase() === 'A'
+                                      sum = isAllAbsent ? 0 : (parseFloat(sMarks['_ctTotal']) || 0)
+                                    }
                                   } else {
-                                    isAllAbsent = sMarks['marks'] === 'A'
-                                    sum = isAllAbsent ? 0 : (parseFloat(sMarks['marks']) || 0)
+                                    const mVal = sMarks['marks']
+                                    if (mVal !== undefined && mVal !== null && mVal !== '') {
+                                      isStudentEntered = true
+                                      isAllAbsent = String(mVal).trim().toUpperCase() === 'A'
+                                      sum = isAllAbsent ? 0 : (parseFloat(mVal) || 0)
+                                    }
                                   }
 
                                   return (
@@ -3892,17 +3993,17 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                             if (displayTotal === undefined || displayTotal === '') {
                                               const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
                                               if (hasAnyQ) {
-                                                const allQAbsent = questions.length > 0 && questions.every(q => sMarks[q.questionNumber] === 'A')
+                                                const allQAbsent = questions.length > 0 && questions.every(q => String(sMarks[q.questionNumber]).trim().toUpperCase() === 'A')
                                                 if (allQAbsent) {
                                                   displayTotal = 'A'
                                                 } else {
-                                                  displayTotal = questions.reduce((acc, q) => acc + (sMarks[q.questionNumber] === 'A' ? 0 : (parseFloat(sMarks[q.questionNumber]) || 0)), 0)
+                                                  displayTotal = questions.reduce((acc, q) => acc + (String(sMarks[q.questionNumber]).trim().toUpperCase() === 'A' ? 0 : (parseFloat(sMarks[q.questionNumber]) || 0)), 0)
                                                 }
                                               } else {
                                                 displayTotal = ''
                                               }
                                             }
-                                            const isAbsent = displayTotal === 'A'
+                                            const isAbsent = String(displayTotal).trim().toUpperCase() === 'A'
                                             return (
                                               <input
                                                 type="text"
@@ -3915,7 +4016,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                                     ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
                                                     : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
                                                 }`}
-                                                placeholder="0"
+                                                placeholder="—"
                                               />
                                             )
                                           })()}
@@ -3923,7 +4024,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                       ) : hasQuestions ? (
                                         questions.map(q => {
                                           const val = sMarks[q.questionNumber] ?? ''
-                                          const isAbsent = val === 'A'
+                                          const isAbsent = String(val).trim().toUpperCase() === 'A'
                                           return (
                                             <td key={q.questionNumber} className="px-2 py-1.5 border-r text-center">
                                               <input
@@ -3937,7 +4038,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                                     ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
                                                     : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
                                                 }`}
-                                                placeholder="0"
+                                                placeholder="—"
                                               />
                                             </td>
                                           )
@@ -3946,7 +4047,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                         <td className="px-2 py-1.5 border-r text-center">
                                           {(() => {
                                             const val = sMarks['marks'] ?? ''
-                                            const isAbsent = val === 'A'
+                                            const isAbsent = String(val).trim().toUpperCase() === 'A'
                                             return (
                                               <input
                                                 type="text"
@@ -3959,14 +4060,16 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                                     ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
                                                     : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
                                                 }`}
-                                                placeholder="0"
+                                                placeholder="—"
                                               />
                                             )
                                           })()}
                                         </td>
                                       )}
-                                      <td className={`px-4 py-2 text-center font-extrabold ${isAllAbsent ? 'bg-red-50/60 text-red-600' : 'bg-gray-50/50 text-gray-800'}`}>
-                                        {isAllAbsent ? (
+                                      <td className={`px-4 py-2 text-center font-extrabold ${!isStudentEntered ? 'bg-white text-gray-400' : isAllAbsent ? 'bg-red-50/60 text-red-600' : 'bg-gray-50/50 text-gray-800'}`}>
+                                        {!isStudentEntered ? (
+                                          <span className="text-gray-400 font-medium text-xs">—</span>
+                                        ) : isAllAbsent ? (
                                           <span className="inline-flex items-center justify-center gap-1 text-red-600 font-extrabold">
                                             <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[11px] font-black border border-red-200">A</span>
                                             <span className="text-[11px] text-gray-500 font-medium">({sum.toFixed(1)} / {selectedAssessment.maxMarks})</span>
