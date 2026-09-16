@@ -1029,4 +1029,21 @@ export const apiService = {
     const res = await fetchWithDefaults(`${API_BASE}/api/copo-requests/history${qs ? `?${qs}` : ""}`);
     return handleResponse(res);
   },
+
+  async deleteCloudinaryImage(urlOrPublicId) {
+    if (!urlOrPublicId) return null;
+    try {
+      const isUrl = typeof urlOrPublicId === 'string' && urlOrPublicId.startsWith('http');
+      const payload = isUrl ? { url: urlOrPublicId } : { publicId: urlOrPublicId };
+      const res = await fetchWithDefaults(`${API_BASE}/api/upload/delete-image`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        skipCache: true,
+      });
+      return handleResponse(res);
+    } catch (err) {
+      console.warn("Failed to delete image from Cloudinary:", err);
+      return null;
+    }
+  },
 };

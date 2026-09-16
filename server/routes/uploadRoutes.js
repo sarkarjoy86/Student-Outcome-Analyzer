@@ -107,4 +107,67 @@ router.post('/upload/image', requireAuth, (req, res, next) => {
   }
 });
 
+/**
+ * Extract Cloudinary public_id from a full URL
+ */
+export const getCloudinaryPublicId = (url) => {
+  if (!url || typeof url !== 'string' || !url.includes('cloudinary.com')) return null;
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname;
+    const uploadIndex = pathname.indexOf('/upload/');
+    if (uploadIndex === -1) return null;
+    let pathAfterUpload = pathname.substring(uploadIndex + '/upload/'.length);
+    pathAfterUpload = pathAfterUpload.replace(/^v\d+\//, '');
+    const lastDotIndex = pathAfterUpload.lastIndexOf('.');
+    if (lastDotIndex !== -1) {
+      pathAfterUpload = pathAfterUpload.substring(0, lastDotIndex);
+    }
+    return decodeURIComponent(pathAfterUpload);
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
+ * POST /api/upload/delete-image
+ * Deletes an image from Cloudinary by URL or publicId
+ */
+router.post('/upload/delete-image', requireAuth, async (req, res) => {
+  try {
+    const url = req.body?.url;
+    const publicId = req.body?.publicId || getCloudinaryPublicId(url);
+
+    if (!publicId) {
+      return res.status(400).json({ message: 'publicId or valid Cloudinary URL is required.' });
+    }
+
+    // Safety restriction: only images inside question-papers folder can be deleted
+    if (!publicId.startsWith('question-papers/')) {
+      return res.status(403).json({ message: 'Only question paper images can be deleted.' });
+    }
+
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      throw new Error('Cloudinary environment variables are not defined on the server.');
+    }
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: 'image',
+      invalidate: true
+    });
+
+    return res.status(200).json({ success: true, result });
+  } catch (error) {
+    console.error('[Upload Delete Error]:', error);
+    res.status(500).json({ message: 'Failed to delete image from Cloudinary.', error: error.message });
+  }
+});
+
 export default router;
+

@@ -2670,6 +2670,81 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const uploadingCountRef = useRef(0)
   const savedEquationRangeRef = useRef(null)  // Save cursor position before equation modal opens
 
+  // Cloudinary image tracking and debounced auto-deletion (30-second window for Ctrl+Z undo)
+  const activeCloudinaryImagesRef = useRef(new Set())
+  const pendingDeletionTimersRef = useRef(new Map())
+
+  // Helper to extract Cloudinary image URLs from an HTML string
+  const extractCloudinaryUrls = useCallback((html) => {
+    if (!html || typeof html !== 'string' || !html.includes('cloudinary.com')) return []
+    try {
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = html
+      const imgs = tempDiv.querySelectorAll('img')
+      const urls = []
+      imgs.forEach(img => {
+        const src = img.getAttribute('src') || ''
+        if (src.includes('cloudinary.com') && src.includes('question-papers')) {
+          urls.push(src)
+        }
+      })
+      if (urls.length > 0) return urls
+    } catch (e) {}
+
+    const urls = []
+    const regex = /https?:\/\/res\.cloudinary\.com\/[^\s"'<>]+\/question-papers\/[^\s"'<>]+/gi
+    let match
+    while ((match = regex.exec(html)) !== null) {
+      urls.push(match[0])
+    }
+    return urls
+  }, [])
+
+  // Automatic Cloudinary image lifecycle tracker:
+  // Detects when images are removed from the editor, waits 30 seconds (allowing Ctrl+Z undo),
+  // and deletes them from Cloudinary if not restored.
+  useEffect(() => {
+    if (loading) return
+
+    const currentLiveHtml = rteRef.current ? (rteRef.current.value || '') : editorValue
+    const currentUrls = new Set(extractCloudinaryUrls(currentLiveHtml))
+
+    // 1. If an image with a pending deletion timer reappeared in HTML (e.g. via Undo / Ctrl+Z), cancel deletion!
+    currentUrls.forEach(url => {
+      if (pendingDeletionTimersRef.current.has(url)) {
+        clearTimeout(pendingDeletionTimersRef.current.get(url))
+        pendingDeletionTimersRef.current.delete(url)
+      }
+      activeCloudinaryImagesRef.current.add(url)
+    })
+
+    // 2. If a tracked Cloudinary image is no longer in the HTML, schedule 30s deletion
+    activeCloudinaryImagesRef.current.forEach(url => {
+      if (!currentUrls.has(url) && !pendingDeletionTimersRef.current.has(url)) {
+        const timerId = setTimeout(async () => {
+          pendingDeletionTimersRef.current.delete(url)
+          activeCloudinaryImagesRef.current.delete(url)
+          try {
+            await apiService.deleteCloudinaryImage(url)
+          } catch (err) {
+            console.warn('[Cloudinary] 30s debounced delete failed:', err)
+          }
+        }, 30000)
+        pendingDeletionTimersRef.current.set(url, timerId)
+      }
+    })
+  }, [editorValue, loading, extractCloudinaryUrls])
+
+  // Cleanup all pending deletion timers when unmounting
+  useEffect(() => {
+    return () => {
+      if (pendingDeletionTimersRef.current) {
+        pendingDeletionTimersRef.current.forEach(timerId => clearTimeout(timerId))
+        pendingDeletionTimersRef.current.clear()
+      }
+    }
+  }, [])
+
   // Visual Builder Handlers
   const handleUpdateVisualFraction = (numVal, denVal) => {
     setVisualFraction({ num: numVal, den: denVal })
@@ -4012,6 +4087,15 @@ Equation description: "${aiEquationPrompt}"`
   }
 
   const onActionComplete = useCallback((args) => {
+    // Sync editorValue when image actions (insert, delete, change) occur
+    if (args && (args.requestType === 'Images' || args.requestType === 'Image' || args.requestType === 'delete')) {
+      const editor = rteRef.current
+      if (editor?.contentModule?.getEditPanel) {
+        const newHtml = editor.contentModule.getEditPanel().innerHTML
+        setEditorValue(newHtml)
+      }
+    }
+
     // Gracefully handle FontName propagation if entire table is selected
     if (args && args.requestType === 'FontName') {
       const editor = rteRef.current
@@ -4037,6 +4121,16 @@ Equation description: "${aiEquationPrompt}"`
         } catch (e) {}
       }
     }
+  }, [])
+
+  const onImageRemoving = useCallback((args) => {
+    setTimeout(() => {
+      const editor = rteRef.current
+      if (editor?.contentModule?.getEditPanel) {
+        const newHtml = editor.contentModule.getEditPanel().innerHTML
+        setEditorValue(newHtml)
+      }
+    }, 10)
   }, [])
 
   // Click-to-Edit & MS Word Keyboard listener for Rich Text Editor
@@ -6158,6 +6252,14 @@ Equation description: "${aiEquationPrompt}"`
         content = content.replace(/'Times New Roman',\s*Georgia,\s*serif/gi, "'Times New Roman', Times, serif")
       }
       setEditorValue(content)
+      // Populate active Cloudinary image tracking
+      if (pendingDeletionTimersRef.current) {
+        pendingDeletionTimersRef.current.forEach(timerId => clearTimeout(timerId))
+        pendingDeletionTimersRef.current.clear()
+      }
+      const initialUrls = extractCloudinaryUrls(content)
+      activeCloudinaryImagesRef.current = new Set(initialUrls)
+
       if (content.includes('src="blob:') || content.includes("src='blob:")) {
         setShowBlobWarning(true)
       } else {
@@ -6243,6 +6345,8 @@ Equation description: "${aiEquationPrompt}"`
               }
               if (savedDraft.editorValue) {
                 setEditorValue(savedDraft.editorValue)
+                const draftUrls = extractCloudinaryUrls(savedDraft.editorValue)
+                draftUrls.forEach(u => activeCloudinaryImagesRef.current.add(u))
               }
               if (savedDraft.numQuestions) {
                 setNumQuestions(savedDraft.numQuestions)
@@ -6341,6 +6445,26 @@ Equation description: "${aiEquationPrompt}"`
       // 1. Process and upload any pasted base64/blob images to Cloudinary
       const currentRawContent = rteRef.current ? rteRef.current.value : editorValue
       const cleanContent = await processAndUploadHtmlImages(currentRawContent)
+
+      // Purge any orphaned Cloudinary images not present in finalized saved document
+      const finalSavedUrls = new Set(extractCloudinaryUrls(cleanContent))
+      const urlsToDeleteOnSave = []
+      activeCloudinaryImagesRef.current.forEach(url => {
+        if (!finalSavedUrls.has(url)) {
+          urlsToDeleteOnSave.push(url)
+        }
+      })
+      urlsToDeleteOnSave.forEach(url => {
+        if (pendingDeletionTimersRef.current.has(url)) {
+          clearTimeout(pendingDeletionTimersRef.current.get(url))
+          pendingDeletionTimersRef.current.delete(url)
+        }
+        activeCloudinaryImagesRef.current.delete(url)
+        apiService.deleteCloudinaryImage(url).catch(err => {
+          console.warn('[Cloudinary] Save-time purge error:', err)
+        })
+      })
+      finalSavedUrls.forEach(url => activeCloudinaryImagesRef.current.add(url))
 
       // Validate max marks allocation sum
       const totalAllocated = questions.reduce((sum, q) => sum + (q.maxMarks || 0), 0)
@@ -8605,7 +8729,9 @@ Equation description: "${aiEquationPrompt}"`
 
       const data = await res.json()
       if (data && (data.secureUrl || data.url)) {
-        return data.secureUrl || data.url
+        const finalUrl = data.secureUrl || data.url
+        activeCloudinaryImagesRef.current.add(finalUrl)
+        return finalUrl
       }
       return null
     } catch (err) {
@@ -8727,6 +8853,7 @@ Equation description: "${aiEquationPrompt}"`
         }
 
         if (newUrl) {
+          activeCloudinaryImagesRef.current.add(newUrl)
           // Strip "https://" or "http://" prefix from the start of newUrl
           // because Syncfusion will prepend the "path" setting (which we set to 'https://')
           let relativeName = newUrl
@@ -11940,6 +12067,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 imageUploading={onImageUploading}
                 imageUploadSuccess={onImageUploadSuccess}
                 imageUploadFailed={onImageUploadFailed}
+                imageRemoving={onImageRemoving}
                 dialogOpen={onDialogOpen}
                 height={780}
                 showCharCount={true}
@@ -12016,6 +12144,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     imageUploading={onImageUploading}
                     imageUploadSuccess={onImageUploadSuccess}
                     imageUploadFailed={onImageUploadFailed}
+                    imageRemoving={onImageRemoving}
                     dialogOpen={onDialogOpen}
                     height="100%"
                     showCharCount={true}
