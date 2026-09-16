@@ -1941,6 +1941,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [coDetails, setCoDetails] = useState([]) // Full CO objects with code + description
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [showBlobWarning, setShowBlobWarning] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Strictly Scoped Keep-Alive Heartbeat for ML Service (Render Cold-Start Mitigation)
