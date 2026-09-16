@@ -24,11 +24,19 @@ const studentMarksSchema = new mongoose.Schema({
     mark: {
       type: Number,
       default: 0
+    },
+    isAbsent: {
+      type: Boolean,
+      default: false
     }
   }],
   totalMark: {
     type: Number,
     default: 0
+  },
+  isAbsent: {
+    type: Boolean,
+    default: false
   },
   createdAt: {
     type: Date,

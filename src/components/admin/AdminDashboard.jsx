@@ -34,12 +34,17 @@ import {
   MessageSquare,
   RefreshCw,
   AlertTriangle,
+  ArrowLeftRight,
+  ShieldCheck,
+  UserCheck,
+  User,
 } from "lucide-react";
 
 export default function AdminDashboard() {
   const {
     users,
     createUser,
+    updateUser,
     deleteUser,
     adminResetPassword,
     logout,
@@ -74,6 +79,9 @@ export default function AdminDashboard() {
     email: "",
     newPassword: "",
   });
+
+  const [editingTeacher, setEditingTeacher] = useState(null);
+  const [editTeacherForm, setEditTeacherForm] = useState({ fullName: "", emailPrefix: "" });
 
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -154,6 +162,25 @@ export default function AdminDashboard() {
   const [offeringFilterSemester, setOfferingFilterSemester] = useState("current");
   const [offeringFilterTerm, setOfferingFilterTerm] = useState("ALL");
   const [offeringFilterYear, setOfferingFilterYear] = useState("ALL");
+  const [offeringMode, setOfferingMode] = useState("create"); // 'create' | 'replace'
+  const [replaceOfferingForm, setReplaceOfferingForm] = useState({
+    offeringId: "",
+    newTeacherId: "",
+    reason: "",
+  });
+  const [replacingInstructor, setReplacingInstructor] = useState(false);
+
+  // Retake Student Modal States
+  const [retakeModalOffering, setRetakeModalOffering] = useState(null);
+  const [retakeStudents, setRetakeStudents] = useState([]);
+  const [retakeLoading, setRetakeLoading] = useState(false);
+  const [retakeCandidates, setRetakeCandidates] = useState([]);
+  const [retakeCandidatesLoading, setRetakeCandidatesLoading] = useState(false);
+  const [selectedRetakeBatch, setSelectedRetakeBatch] = useState('');
+  const [selectedRetakeSection, setSelectedRetakeSection] = useState('');
+  const [retakeSections, setRetakeSections] = useState([]);
+  const [retakeSearchQuery, setRetakeSearchQuery] = useState('');
+  const [retakeEnrolling, setRetakeEnrolling] = useState(false);
 
   // CO-PO Request Panel States
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
@@ -320,6 +347,7 @@ export default function AdminDashboard() {
   };
 
   const fetchBatches = async () => {
+    if (typeof apiService.clearCache === 'function') apiService.clearCache();
     setBatchesLoading(true);
     try {
       const data = await apiService.getBatches();
@@ -379,6 +407,106 @@ export default function AdminDashboard() {
       console.error("Failed to load section students:", err);
     }
   };
+
+  // ======================== RETAKE STUDENT HANDLERS ========================
+  const openRetakeModal = async (offering) => {
+    setRetakeModalOffering(offering);
+    setRetakeStudents([]);
+    setRetakeCandidates([]);
+    setSelectedRetakeBatch('');
+    setSelectedRetakeSection('');
+    setRetakeSections([]);
+    setRetakeSearchQuery('');
+    setRetakeLoading(true);
+    try {
+      const res = await apiService.getRetakeStudents(offering._id);
+      setRetakeStudents(res.students || []);
+    } catch (err) {
+      console.error('Failed to load retake students:', err);
+    } finally {
+      setRetakeLoading(false);
+    }
+  };
+
+  const closeRetakeModal = () => {
+    setRetakeModalOffering(null);
+    setRetakeStudents([]);
+    setRetakeCandidates([]);
+    setSelectedRetakeBatch('');
+    setSelectedRetakeSection('');
+    setRetakeSections([]);
+    setRetakeSearchQuery('');
+  };
+
+  const handleRetakeBatchChange = async (batchId) => {
+    setSelectedRetakeBatch(batchId);
+    setSelectedRetakeSection('');
+    setRetakeCandidates([]);
+    setRetakeSearchQuery('');
+    if (!batchId) { setRetakeSections([]); return; }
+    try {
+      const res = await apiService.getSections(batchId);
+      setRetakeSections(res.sections || []);
+    } catch (err) {
+      console.error('Failed to load sections:', err);
+      setRetakeSections([]);
+    }
+  };
+
+  const handleRetakeSectionChange = async (sectionId) => {
+    setSelectedRetakeSection(sectionId);
+    setRetakeSearchQuery('');
+    if (!selectedRetakeBatch) return;
+    setRetakeCandidatesLoading(true);
+    try {
+      const res = await apiService.getRetakeCandidates(retakeModalOffering._id, selectedRetakeBatch, sectionId || '');
+      setRetakeCandidates(res.candidates || []);
+    } catch (err) {
+      console.error('Failed to load candidates:', err);
+      setRetakeCandidates([]);
+    } finally {
+      setRetakeCandidatesLoading(false);
+    }
+  };
+
+  const handleEnrollRetake = async (studentObjId) => {
+    if (!retakeModalOffering) return;
+    setRetakeEnrolling(true);
+    try {
+      await apiService.addRetakeStudent(retakeModalOffering._id, studentObjId);
+      // Refresh both lists
+      const [retakeRes, candRes] = await Promise.all([
+        apiService.getRetakeStudents(retakeModalOffering._id),
+        selectedRetakeBatch
+          ? apiService.getRetakeCandidates(retakeModalOffering._id, selectedRetakeBatch, selectedRetakeSection || '')
+          : Promise.resolve({ candidates: [] })
+      ]);
+      setRetakeStudents(retakeRes.students || []);
+      setRetakeCandidates(candRes.candidates || []);
+    } catch (err) {
+      alert('Failed to enroll retake student: ' + (err.message || 'Unknown error'));
+    } finally {
+      setRetakeEnrolling(false);
+    }
+  };
+
+  const handleRemoveRetake = async (studentObjId) => {
+    if (!retakeModalOffering) return;
+    if (!confirm('Remove this retake enrollment?')) return;
+    try {
+      await apiService.removeRetakeStudent(retakeModalOffering._id, studentObjId);
+      const res = await apiService.getRetakeStudents(retakeModalOffering._id);
+      setRetakeStudents(res.students || []);
+      // Refresh candidates if batch is selected
+      if (selectedRetakeBatch) {
+        const candRes = await apiService.getRetakeCandidates(retakeModalOffering._id, selectedRetakeBatch, selectedRetakeSection || '');
+        setRetakeCandidates(candRes.candidates || []);
+      }
+    } catch (err) {
+      alert('Failed to remove retake student: ' + (err.message || 'Unknown error'));
+    }
+  };
+
 
   const fetchOfferings = async () => {
     setOfferingsLoading(true);
@@ -500,17 +628,14 @@ export default function AdminDashboard() {
 
   const isCreateFormValid = () => {
     const fullName = newUserForm.fullName.trim();
-    const rawEmail = newUserForm.email;
+    const prefix = (
+      newUserForm.emailPrefix !== undefined
+        ? newUserForm.emailPrefix
+        : (newUserForm.email ? newUserForm.email.replace(/@baiust\.ac\.bd$/i, "") : "")
+    ).trim();
     const password = newUserForm.password.trim();
-    const email = rawEmail.trim().toLowerCase();
 
-    return (
-      fullName &&
-      email &&
-      password.length >= 6 &&
-      email.includes("@") &&
-      email.includes(".")
-    );
+    return fullName && prefix && password.length >= 6;
   };
 
   const isResetFormValid = () =>
@@ -526,13 +651,19 @@ export default function AdminDashboard() {
     }
 
     try {
-      const { fullName, email, password } = newUserForm;
+      const { fullName, password } = newUserForm;
+      const prefix = (
+        newUserForm.emailPrefix !== undefined
+          ? newUserForm.emailPrefix
+          : (newUserForm.email ? newUserForm.email.replace(/@baiust\.ac\.bd$/i, "") : "")
+      ).trim();
+      const finalEmail = `${prefix.toLowerCase()}@baiust.ac.bd`;
       await createUser({
         fullName: fullName.trim(),
-        email: email.trim(),
+        email: finalEmail,
         password: password.trim(),
       });
-      setNewUserForm({ fullName: "", email: "", password: "" });
+      setNewUserForm({ fullName: "", email: "", emailPrefix: "", password: "" });
     } catch (error) {
       console.error("Failed to create user");
     }
@@ -564,6 +695,49 @@ export default function AdminDashboard() {
       await deleteUser(userId);
     } catch (error) {
       console.error("Failed to delete teacher:", error);
+    }
+  };
+
+  const handleStartEditTeacher = (teacher) => {
+    const rawEmail = teacher.email || "";
+    const prefix = rawEmail.replace(/@baiust\.ac\.bd$/i, "");
+    setEditingTeacher(teacher);
+    setEditTeacherForm({
+      fullName: teacher.fullName || "",
+      emailPrefix: prefix,
+    });
+  };
+
+  const handleCancelEditTeacher = () => {
+    setEditingTeacher(null);
+    setEditTeacherForm({ fullName: "", emailPrefix: "" });
+  };
+
+  const handleSaveTeacher = async (e) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+    const name = (editTeacherForm.fullName || "").trim();
+    const prefix = (editTeacherForm.emailPrefix || "").trim().replace(/@baiust\.ac\.bd$/i, "");
+    if (!name) {
+      alert("Faculty full name is required.");
+      return;
+    }
+    if (!prefix) {
+      alert("Faculty email prefix is required.");
+      return;
+    }
+    const finalEmail = `${prefix.toLowerCase()}@baiust.ac.bd`;
+    try {
+      await updateUser(editingTeacher.id || editingTeacher._id, {
+        fullName: name,
+        email: finalEmail,
+      });
+      setEditingTeacher(null);
+      setEditTeacherForm({ fullName: "", emailPrefix: "" });
+      alert("Faculty member details updated successfully.");
+    } catch (error) {
+      console.error("Failed to update teacher:", error);
+      alert(error.message || "Failed to update faculty member.");
     }
   };
 
@@ -976,6 +1150,72 @@ export default function AdminDashboard() {
     });
   };
 
+  const getExistingOfferingForForm = () => {
+    if (!offeringForm.courseId || !offeringForm.batchId || !offeringForm.section) return null;
+    const targetNorm = String(offeringForm.section || "").trim().toLowerCase().replace(/^section\s+/i, "");
+    return offerings.find((o) => {
+      if (editingOfferingId && (o._id === editingOfferingId || String(o._id) === String(editingOfferingId))) {
+        return false;
+      }
+      const courseMatch = String(o.course?._id || o.course || "") === String(offeringForm.courseId);
+      const batchMatch = String(o.batch?._id || o.batch || "") === String(offeringForm.batchId);
+      const semesterMatch = !offeringForm.semesterId || String(o.semester?._id || o.semester || "") === String(offeringForm.semesterId);
+      const sectionMatch = String(o.section || "").trim().toLowerCase().replace(/^section\s+/i, "") === targetNorm;
+      return courseMatch && batchMatch && semesterMatch && sectionMatch;
+    });
+  };
+
+  const handleReplaceOfferingInstructor = async (e) => {
+    if (e) e.preventDefault();
+    if (!replaceOfferingForm.offeringId) {
+      alert("Please select a course offering to replace instructor for.");
+      return;
+    }
+    if (!replaceOfferingForm.newTeacherId) {
+      alert("Please select the new instructor.");
+      return;
+    }
+
+    const targetOffering = offerings.find((o) => o._id === replaceOfferingForm.offeringId);
+    const newTeacherDoc = users.find(
+      (u) => (u.id || u._id || "").toString() === replaceOfferingForm.newTeacherId.toString()
+    );
+
+    const oldTeacherName = targetOffering?.teacher?.fullName || "Current Instructor";
+    const newTeacherName = newTeacherDoc?.fullName || "New Instructor";
+    const courseTitle = `${targetOffering?.course?.courseCode || "Course"} (Batch ${targetOffering?.batch?.name || "N/A"} - Sec ${targetOffering?.section || ""})`;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to transfer ${courseTitle} from ${oldTeacherName} to ${newTeacherName}?\n\n` +
+      `✓ All student enrollments & attendance will be preserved.\n` +
+      `✓ All created assessments (CTs, Midterm, Final) and question papers remain intact.\n` +
+      `✓ All entered marks and CO-PO attainment calculations will automatically move to ${newTeacherName}'s dashboard.`
+    );
+
+    if (!confirmed) return;
+
+    setReplacingInstructor(true);
+    try {
+      const response = await apiService.replaceCourseOfferingTeacher(replaceOfferingForm.offeringId, {
+        newTeacherId: replaceOfferingForm.newTeacherId,
+        reason: (replaceOfferingForm.reason || "").trim(),
+      });
+
+      alert(response.message || `Course offering successfully transferred to ${newTeacherName}!`);
+      setReplaceOfferingForm({
+        offeringId: "",
+        newTeacherId: "",
+        reason: "",
+      });
+      setOfferingMode("create");
+      fetchOfferings();
+    } catch (err) {
+      alert(err.message || "Failed to replace course offering instructor.");
+    } finally {
+      setReplacingInstructor(false);
+    }
+  };
+
   const handleCreateOffering = async (e) => {
     e.preventDefault();
     if (
@@ -1040,6 +1280,7 @@ export default function AdminDashboard() {
   };
 
   const startEditOffering = async (offering) => {
+    setOfferingMode("create");
     setEditingOfferingId(offering._id);
     const semId = offering.semester?._id || offering.semester || "";
     const foundSem = sessions.find((s) => s._id === semId);
@@ -1302,18 +1543,30 @@ export default function AdminDashboard() {
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
                       Email Address
                     </label>
-                    <input
-                      type="email"
-                      value={newUserForm.email}
-                      onChange={(e) =>
-                        setNewUserForm({
-                          ...newUserForm,
-                          email: e.target.value,
-                        })
-                      }
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold bg-gray-50/30"
-                      placeholder="joy.cse@baiust.ac.bd"
-                    />
+                    <div className="flex items-center rounded-xl border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-600 bg-gray-50/30 overflow-hidden transition">
+                      <input
+                        type="text"
+                        value={
+                          newUserForm.emailPrefix !== undefined
+                            ? newUserForm.emailPrefix
+                            : (newUserForm.email ? newUserForm.email.replace(/@baiust\.ac\.bd$/i, "") : "")
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value.trim().replace(/@baiust\.ac\.bd$/i, "");
+                          setNewUserForm({
+                            ...newUserForm,
+                            emailPrefix: val,
+                            email: val ? `${val}@baiust.ac.bd` : "",
+                          });
+                        }}
+                        className="flex-1 px-4 py-2.5 outline-none text-xs font-semibold bg-transparent text-gray-800 placeholder:text-gray-400"
+                        placeholder="e.g. joy.cse"
+                        required
+                      />
+                      <span className="px-3.5 py-2.5 bg-gray-100/90 border-l border-gray-200 text-gray-600 text-xs font-bold select-none whitespace-nowrap">
+                        @baiust.ac.bd
+                      </span>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
@@ -1477,17 +1730,28 @@ export default function AdminDashboard() {
                           </td>
                           <td className="py-3.5 px-4 text-center">
                             {u.role !== "admin" && (
-                              <button
-                                onClick={() =>
-                                  handleDeleteTeacher(u.id, u.fullName)
-                                }
-                                disabled={actionLoading}
-                                className="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-red-200"
-                                title={`Delete ${u.fullName}`}
-                              >
-                                <Trash2 size={13} />
-                                Delete
-                              </button>
+                              <div className="inline-flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleStartEditTeacher(u)}
+                                  disabled={actionLoading}
+                                  className="inline-flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-amber-200 cursor-pointer"
+                                  title={`Edit ${u.fullName}`}
+                                >
+                                  <Edit2 size={13} />
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleDeleteTeacher(u.id, u.fullName)
+                                  }
+                                  disabled={actionLoading}
+                                  className="inline-flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-red-200 cursor-pointer"
+                                  title={`Delete ${u.fullName}`}
+                                >
+                                  <Trash2 size={13} />
+                                  Delete
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -2705,17 +2969,28 @@ export default function AdminDashboard() {
 
                   {/* Add Section inline form */}
                   <form onSubmit={handleCreateSection} className="flex gap-2 mb-4">
-                    <input
-                      type="text"
+                    <select
                       value={sectionForm.sectionName}
                       onChange={(e) => setSectionForm({ sectionName: e.target.value })}
-                      placeholder="e.g. A"
-                      className="flex-1 border border-gray-300 px-3 py-2 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-500"
+                      className="flex-1 border border-gray-300 px-3 py-2 rounded-xl text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
                       required
-                    />
+                    >
+                      <option value="">Select Section (A, B, C)</option>
+                      {['A', 'B', 'C'].map((sec) => {
+                        const alreadyExists = sections.some(
+                          (s) => s.sectionName?.toUpperCase() === sec
+                        );
+                        return (
+                          <option key={sec} value={sec} disabled={alreadyExists}>
+                            Section {sec} {alreadyExists ? '(Already Added)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
                     <button
                       type="submit"
-                      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md transition-all active:scale-[0.98]"
+                      disabled={!sectionForm.sectionName}
+                      className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-md transition-all active:scale-[0.98] cursor-pointer"
                     >
                       + Add
                     </button>
@@ -2802,7 +3077,7 @@ export default function AdminDashboard() {
                             })
                           }
                           className="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm bg-white focus:ring-2 focus:ring-purple-500 outline-none"
-                          placeholder="e.g. 201-15-13492"
+                          placeholder="e.g. 0822220105101086"
                           required
                         />
                       </div>
@@ -2965,201 +3240,505 @@ export default function AdminDashboard() {
 
         {activeTab === "courseOfferings" && (
           <div className="space-y-8">
-            {/* Create/Edit Course Offering Card */}
+            {/* Create / Replace Course Offering Card */}
             <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-6">
-              <div className="flex items-center gap-3 border-b border-gray-150 pb-4">
-                <div className="p-2.5 bg-orange-100/80 text-orange-800 rounded-xl">
-                  <ClipboardList size={20} />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-150 pb-4 gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl ${offeringMode === 'replace' ? 'bg-amber-100/80 text-amber-800' : 'bg-orange-100/80 text-orange-800'}`}>
+                    {offeringMode === 'replace' ? <ArrowLeftRight size={20} /> : <ClipboardList size={20} />}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      {offeringMode === 'replace'
+                        ? "Replace Course Offering (Instructor Transfer)"
+                        : editingOfferingId
+                        ? "Edit Course Offering"
+                        : "Create Course Offering"}
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium">
+                      {offeringMode === 'replace'
+                        ? "Reassign an existing course offering and its academic progress (CT/Mid/Final marks, question papers) to a new instructor"
+                        : "Assign a master course to a batch, section, and instructor for a specific session"}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-lg font-extrabold text-gray-900">
-                    {editingOfferingId ? "Edit Course Offering" : "Create Course Offering"}
-                  </h2>
-                  <p className="text-xs text-gray-500 font-medium">Assign a master course to a batch, section, and instructor for a specific session</p>
+
+                {/* Mode Selector Tabs */}
+                <div className="flex items-center bg-gray-100/90 p-1 rounded-xl border border-gray-200 self-start sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOfferingMode("create");
+                      setReplaceOfferingForm({ offeringId: "", newTeacherId: "", reason: "" });
+                    }}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      offeringMode === "create"
+                        ? "bg-white text-orange-700 shadow-xs"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    <Plus size={14} />
+                    Create Offering
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOfferingMode("replace");
+                      setEditingOfferingId(null);
+                    }}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      offeringMode === "replace"
+                        ? "bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-xs"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    <ArrowLeftRight size={14} />
+                    Replace Instructor
+                  </button>
                 </div>
               </div>
 
-              <form
-                onSubmit={handleCreateOffering}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-              >
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Master Course
-                  </label>
-                  <select
-                    value={offeringForm.courseId}
-                    onChange={(e) =>
-                      setOfferingForm({
-                        ...offeringForm,
-                        courseId: e.target.value,
-                        section: "", // reset section to prevent assigning an offered section
-                      })
-                    }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
-                  >
-                    <option value="">Select course</option>
-                    {courses.map((course) => (
-                      <option key={course._id} value={course._id}>
-                        {course.courseCode} — {course.courseName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Batch
-                  </label>
-                  <select
-                    value={offeringForm.batchId}
-                    onChange={(e) => handleBatchChangeInOffering(e.target.value)}
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
-                  >
-                    <option value="">Select batch</option>
-                    {batches.map((batch) => (
-                      <option key={batch._id} value={batch._id}>
-                        {batch.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Assigned Instructor
-                  </label>
-                  <select
-                    value={offeringForm.teacherId}
-                    onChange={(e) =>
-                      setOfferingForm({
-                        ...offeringForm,
-                        teacherId: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
-                  >
-                    <option value="">Select teacher</option>
-                    {users
-                      .filter((u) => u.role !== "admin")
-                      .map((user) => (
-                        <option key={user.id || user._id || user.email} value={user.id || user._id}>
-                          {user.fullName} ({user.email})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
-                      Academic Session
-                    </label>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                      Active Session Only
-                    </span>
-                  </div>
-                  <select
-                    value={offeringForm.semesterId}
-                    onChange={(e) => {
-                      const selectedSemId = e.target.value;
-                      const selectedSem = sessions.find((s) => s._id === selectedSemId);
-                      setOfferingForm({
-                        ...offeringForm,
-                        semesterId: selectedSemId,
-                        section: "", // reset section to re-validate availability
-                        academicYear: selectedSem ? String(selectedSem.academicYear) : offeringForm.academicYear,
-                      });
-                    }}
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
-                    required
-                  >
-                    <option value="">Select active session</option>
-                    {sessions
-                      .filter((s) => s.status === "active" || (editingOfferingId && s._id === offeringForm.semesterId))
-                      .map((session) => (
-                        <option key={session._id} value={session._id}>
-                          {session.semesterName} ({session.academicYear}) {session.status === "active" ? "— Active" : `— ${session.status}`}
-                        </option>
-                      ))}
-                  </select>
-                  {sessions.filter((s) => s.status === "active").length === 0 && (
-                    <p className="text-[11px] text-amber-700 mt-1 font-semibold">
-                      ⚠️ No active session found. Please activate a session in the Sessions tab.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Section
-                  </label>
-                  <select
-                    value={offeringForm.section}
-                    onChange={(e) =>
-                      setOfferingForm({
-                        ...offeringForm,
-                        section: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-white"
-                    required
-                  >
-                    <option value="">Select section</option>
-                    {offeringSections.map((sec) => {
-                      const offered = isSectionAlreadyOffered(sec.sectionName);
-                      return (
-                        <option key={sec._id} value={sec.sectionName} disabled={offered}>
-                          Section {sec.sectionName} {offered ? "(Already Offered)" : ""}
-                        </option>
+              {offeringMode === "replace" ? (
+                /* ============================================================ */
+                /* REPLACE COURSE OFFERING FORM                                 */
+                /* ============================================================ */
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                        Select Course Offering to Transfer <span className="text-red-500">*</span>
+                      </label>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                        Active Semesters Only
+                      </span>
+                    </div>
+                    {(() => {
+                      const activeOfferingsForReplace = offerings.filter(
+                        (o) => o.semester?.status === "active"
                       );
-                    })}
-                  </select>
-                </div>
+                      return (
+                        <>
+                          <select
+                            value={replaceOfferingForm.offeringId}
+                            onChange={(e) => {
+                              const selectedId = e.target.value;
+                              setReplaceOfferingForm({
+                                ...replaceOfferingForm,
+                                offeringId: selectedId,
+                                newTeacherId: "",
+                              });
+                            }}
+                            className="w-full border border-gray-300 px-4 py-3 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-bold bg-white shadow-2xs"
+                          >
+                            <option value="">-- Choose an active course offering to reassign --</option>
+                            {activeOfferingsForReplace.map((o) => (
+                              <option key={o._id} value={o._id}>
+                                {o.course?.courseCode} — {o.course?.courseName} | Batch {o.batch?.name || 'N/A'} • Sec {o.section} | Current: {o.teacher?.fullName || "Unassigned"} ({o.semester?.semesterName || 'Session'} {o.academicYear})
+                              </option>
+                            ))}
+                          </select>
+                          {activeOfferingsForReplace.length === 0 && (
+                            <p className="text-[11px] text-amber-700 mt-1.5 font-semibold">
+                              ⚠️ No active course offerings found. Course replacement is only applicable for currently active semesters.
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                    Academic Year
-                  </label>
-                  <input
-                    type="text"
-                    value={offeringForm.academicYear || ''}
-                    readOnly
-                    placeholder="Auto-assigned from session"
-                    className="w-full border border-gray-200 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 cursor-not-allowed select-none outline-none"
-                  />
-                </div>
+                  {(() => {
+                    const selectedOffering = offerings.find((o) => o._id === replaceOfferingForm.offeringId);
+                    if (!selectedOffering) {
+                      return (
+                        <div className="p-8 text-center bg-amber-50/40 rounded-2xl border border-dashed border-amber-200 space-y-2">
+                          <UserCheck size={28} className="text-amber-500 mx-auto opacity-75" />
+                          <p className="text-amber-900 font-bold text-sm">Please choose a course offering from the dropdown above</p>
+                          <p className="text-gray-500 text-xs max-w-md mx-auto">
+                            Selecting an offering will display its current instructor, student batch details, and allow you to safely reassign it to another teacher.
+                          </p>
+                        </div>
+                      );
+                    }
 
-                <div className="md:col-span-2 lg:col-span-3 flex gap-3 pt-2">
-                  <button
-                    type="submit"
-                    className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
-                  >
-                    {editingOfferingId ? <Save size={15} /> : <Plus size={15} />}
-                    {editingOfferingId ? "Update Course Offering" : "Save Course Offering"}
-                  </button>
-                  {editingOfferingId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingOfferingId(null);
+                    return (
+                      <div className="bg-amber-50/50 border border-amber-200/80 rounded-2xl p-5 space-y-5">
+                        {/* Course Overview Cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                          <div className="p-3.5 bg-white rounded-xl border border-amber-200/60 shadow-2xs">
+                            <span className="text-[10px] uppercase font-bold text-gray-400 block mb-1">Target Course</span>
+                            <span className="font-extrabold text-gray-900 text-sm">{selectedOffering.course?.courseCode}</span>
+                            <p className="text-gray-600 truncate font-medium">{selectedOffering.course?.courseName}</p>
+                          </div>
+                          <div className="p-3.5 bg-white rounded-xl border border-amber-200/60 shadow-2xs">
+                            <span className="text-[10px] uppercase font-bold text-gray-400 block mb-1">Batch & Section</span>
+                            <span className="font-extrabold text-purple-900 text-sm">Batch {selectedOffering.batch?.name || 'N/A'} • Sec {selectedOffering.section}</span>
+                            <p className="text-gray-600 font-medium">{selectedOffering.semester?.semesterName} ({selectedOffering.academicYear})</p>
+                          </div>
+                          <div className="p-3.5 bg-white rounded-xl border border-amber-200/60 shadow-2xs">
+                            <span className="text-[10px] uppercase font-bold text-gray-400 block mb-1">Current Assigned Instructor</span>
+                            <span className="font-extrabold text-blue-900 text-sm flex items-center gap-1.5">
+                              <User size={14} className="text-blue-600 shrink-0" />
+                              {selectedOffering.teacher?.fullName || "Unassigned"}
+                            </span>
+                            <p className="text-gray-500 text-[11px] truncate font-medium">{selectedOffering.teacher?.email || "No email"}</p>
+                          </div>
+                        </div>
+
+                        {/* Replacement Fields */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
+                              New Assigned Instructor <span className="text-red-500">*</span>
+                            </label>
+                            <select
+                              value={replaceOfferingForm.newTeacherId}
+                              onChange={(e) =>
+                                setReplaceOfferingForm({
+                                  ...replaceOfferingForm,
+                                  newTeacherId: e.target.value,
+                                })
+                              }
+                              className="w-full border border-amber-300 bg-white px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-bold shadow-2xs"
+                              required
+                            >
+                              <option value="">Select new instructor</option>
+                              {users
+                                .filter((u) => u.role !== "admin")
+                                .map((user) => {
+                                  const userId = user.id || user._id;
+                                  const currentTeacherId = selectedOffering.teacher?._id || selectedOffering.teacher;
+                                  const isCurrent = String(userId) === String(currentTeacherId);
+                                  return (
+                                    <option key={userId} value={userId} disabled={isCurrent}>
+                                      {user.fullName} ({user.email}) {isCurrent ? "— (Current Instructor)" : ""}
+                                    </option>
+                                  );
+                                })}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
+                              Reason for Reassignment (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={replaceOfferingForm.reason}
+                              onChange={(e) =>
+                                setReplaceOfferingForm({
+                                  ...replaceOfferingForm,
+                                  reason: e.target.value,
+                                })
+                              }
+                              placeholder="e.g. Instructor on leave / Faculty department adjustment"
+                              className="w-full border border-amber-300 bg-white px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-semibold shadow-2xs"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Seamless Academic Continuity Banner */}
+                        <div className="flex items-start gap-3 p-4 bg-emerald-50/90 border border-emerald-200 rounded-xl text-emerald-900 text-xs shadow-2xs">
+                          <ShieldCheck size={20} className="text-emerald-600 mt-0.5 shrink-0" />
+                          <div className="space-y-1">
+                            <span className="font-extrabold text-sm text-emerald-950 block">
+                              Safe Data Continuity & Academic Progress Guarantee:
+                            </span>
+                            <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
+                              All student enrollments, attendance records, created assessments (Class Tests, Midterm, Final exams), entered student marks, and question paper drafts will remain fully intact. The course offering will immediately appear on the new instructor's dashboard with all existing data ready to continue.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            type="button"
+                            onClick={handleReplaceOfferingInstructor}
+                            disabled={replacingInstructor || !replaceOfferingForm.newTeacherId}
+                            className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                          >
+                            {replacingInstructor ? (
+                              <RefreshCw size={15} className="animate-spin" />
+                            ) : (
+                              <ArrowLeftRight size={15} />
+                            )}
+                            {replacingInstructor ? "Transferring Course Offering..." : "Confirm & Replace Instructor"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOfferingMode("create");
+                              setReplaceOfferingForm({ offeringId: "", newTeacherId: "", reason: "" });
+                            }}
+                            className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                /* ============================================================ */
+                /* CREATE / EDIT COURSE OFFERING FORM                           */
+                /* ============================================================ */
+                <form
+                  onSubmit={handleCreateOffering}
+                  className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                >
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Master Course
+                    </label>
+                    <select
+                      value={offeringForm.courseId}
+                      onChange={(e) =>
                         setOfferingForm({
-                          courseId: "",
-                          batchId: "",
-                          teacherId: "",
-                          semesterId: "",
-                          section: "",
-                          academicYear: new Date().getFullYear(),
-                        });
-                        setOfferingSections([]);
-                      }}
-                      className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition"
+                          ...offeringForm,
+                          courseId: e.target.value,
+                          section: "", // reset section to prevent assigning an offered section
+                        })
+                      }
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                     >
-                      Cancel
+                      <option value="">Select course</option>
+                      {courses.map((course) => (
+                        <option key={course._id} value={course._id}>
+                          {course.courseCode} — {course.courseName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Batch
+                    </label>
+                    <select
+                      value={offeringForm.batchId}
+                      onChange={(e) => handleBatchChangeInOffering(e.target.value)}
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
+                    >
+                      <option value="">Select batch</option>
+                      {batches.map((batch) => (
+                        <option key={batch._id} value={batch._id}>
+                          {batch.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                        Assigned Instructor
+                      </label>
+                      {editingOfferingId && (
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                          🔒 Locked in Edit
+                        </span>
+                      )}
+                    </div>
+                    {editingOfferingId ? (
+                      <div className="space-y-1.5">
+                        <div className="w-full border border-gray-200 px-3.5 py-2 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 flex items-center justify-between cursor-not-allowed select-none">
+                          <span className="flex items-center gap-1.5 truncate text-[11px]">
+                            <User size={13} className="text-gray-500 shrink-0" />
+                            {users.find((u) => String(u.id || u._id) === String(offeringForm.teacherId))?.fullName || "Assigned Teacher"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetId = editingOfferingId;
+                              setEditingOfferingId(null);
+                              setOfferingMode("replace");
+                              setReplaceOfferingForm({
+                                offeringId: targetId,
+                                newTeacherId: "",
+                                reason: "",
+                              });
+                            }}
+                            className="ml-2 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-extrabold transition shrink-0 cursor-pointer flex items-center gap-1 shadow-2xs"
+                            title="Switch to Replace Instructor mode"
+                          >
+                            <ArrowLeftRight size={11} />
+                            Replace
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400 font-medium leading-tight">
+                          Instructor cannot be changed during Edit. Use <strong className="text-amber-700">Replace Instructor</strong> to safely transfer ownership.
+                        </p>
+                      </div>
+                    ) : (
+                      <select
+                        value={offeringForm.teacherId}
+                        onChange={(e) =>
+                          setOfferingForm({
+                            ...offeringForm,
+                            teacherId: e.target.value,
+                          })
+                        }
+                        className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
+                      >
+                        <option value="">Select teacher</option>
+                        {users
+                          .filter((u) => u.role !== "admin")
+                          .map((user) => (
+                            <option key={user.id || user._id || user.email} value={user.id || user._id}>
+                              {user.fullName} ({user.email})
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                        Academic Session
+                      </label>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                        Active Session Only
+                      </span>
+                    </div>
+                    <select
+                      value={offeringForm.semesterId}
+                      onChange={(e) => {
+                        const selectedSemId = e.target.value;
+                        const selectedSem = sessions.find((s) => s._id === selectedSemId);
+                        setOfferingForm({
+                          ...offeringForm,
+                          semesterId: selectedSemId,
+                          section: "", // reset section to re-validate availability
+                          academicYear: selectedSem ? String(selectedSem.academicYear) : offeringForm.academicYear,
+                        });
+                      }}
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
+                      required
+                    >
+                      <option value="">Select active session</option>
+                      {sessions
+                        .filter((s) => s.status === "active" || (editingOfferingId && s._id === offeringForm.semesterId))
+                        .map((session) => (
+                          <option key={session._id} value={session._id}>
+                            {session.semesterName} ({session.academicYear}) {session.status === "active" ? "— Active" : `— ${session.status}`}
+                          </option>
+                        ))}
+                    </select>
+                    {sessions.filter((s) => s.status === "active").length === 0 && (
+                      <p className="text-[11px] text-amber-700 mt-1 font-semibold">
+                        ⚠️ No active session found. Please activate a session in the Sessions tab.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Section
+                    </label>
+                    <select
+                      value={offeringForm.section}
+                      onChange={(e) =>
+                        setOfferingForm({
+                          ...offeringForm,
+                          section: e.target.value,
+                        })
+                      }
+                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-white"
+                      required
+                    >
+                      <option value="">Select section</option>
+                      {offeringSections.map((sec) => {
+                        const offered = isSectionAlreadyOffered(sec.sectionName);
+                        return (
+                          <option key={sec._id} value={sec.sectionName} disabled={offered}>
+                            Section {sec.sectionName} {offered ? "(Already Offered)" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Academic Year
+                    </label>
+                    <input
+                      type="text"
+                      value={offeringForm.academicYear || ''}
+                      readOnly
+                      placeholder="Auto-assigned from session"
+                      className="w-full border border-gray-200 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 cursor-not-allowed select-none outline-none"
+                    />
+                  </div>
+
+                  {/* Smart Detection Banner: When selected offering already exists */}
+                  {(() => {
+                    const existingOffering = getExistingOfferingForForm();
+                    if (!existingOffering || editingOfferingId) return null;
+                    return (
+                      <div className="md:col-span-2 lg:col-span-3 p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between flex-wrap gap-3 animate-fadeIn">
+                        <div className="flex items-center gap-2.5 text-xs text-amber-900">
+                          <AlertTriangle size={17} className="text-amber-600 shrink-0" />
+                          <div>
+                            <span className="font-bold">This section is already offered:</span>{" "}
+                            <span>
+                              {existingOffering.course?.courseCode} (Batch {existingOffering.batch?.name || 'N/A'} • Sec {existingOffering.section}) is currently assigned to <strong>{existingOffering.teacher?.fullName || "Another Teacher"}</strong>.
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOfferingMode("replace");
+                            setReplaceOfferingForm({
+                              offeringId: existingOffering._id,
+                              newTeacherId: offeringForm.teacherId || "",
+                              reason: "",
+                            });
+                          }}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <ArrowLeftRight size={13} />
+                          Switch to Replace Mode
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="md:col-span-2 lg:col-span-3 flex gap-3 pt-2">
+                    <button
+                      type="submit"
+                      className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white py-3 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {editingOfferingId ? <Save size={15} /> : <Plus size={15} />}
+                      {editingOfferingId ? "Update Course Offering" : "Save Course Offering"}
                     </button>
-                  )}
-                </div>
-              </form>
+                    {editingOfferingId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingOfferingId(null);
+                          setOfferingForm({
+                            courseId: "",
+                            batchId: "",
+                            teacherId: "",
+                            semesterId: "",
+                            section: "",
+                            academicYear: new Date().getFullYear(),
+                          });
+                          setOfferingSections([]);
+                        }}
+                        className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-xs transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
             </div>
 
             {/* Existing Course Offerings Directory */}
@@ -3232,6 +3811,19 @@ export default function AdminDashboard() {
                     </div>
                   )}
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      apiService.clearCache();
+                      fetchOfferings();
+                    }}
+                    className="p-2 bg-white hover:bg-gray-50 text-gray-700 rounded-xl border border-gray-200 shadow-xs text-xs font-bold transition flex items-center gap-1.5 cursor-pointer select-none"
+                    title="Refresh Course Offerings from Database"
+                  >
+                    <RefreshCw size={13} className={offeringsLoading ? "animate-spin text-orange-600" : "text-gray-500"} />
+                    <span className="text-xs font-bold">Refresh</span>
+                  </button>
+
                   <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1.5 rounded-full border border-orange-200">
                     {filteredAdminOfferings.length} {offeringFilterSemester === 'current' ? 'Active' : offeringFilterSemester === 'completed' ? 'Completed' : 'Total'} Offerings
                   </span>
@@ -3278,17 +3870,44 @@ export default function AdminDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex gap-2 self-end md:self-center">
+                        <div className="flex items-center gap-2 self-end md:self-center flex-wrap">
+                          {offering.semester?.status === 'active' && (
+                            <button
+                              onClick={() => {
+                                setOfferingMode("replace");
+                                setEditingOfferingId(null);
+                                setReplaceOfferingForm({
+                                  offeringId: offering._id,
+                                  newTeacherId: "",
+                                  reason: "",
+                                });
+                                window.scrollTo({ top: 320, behavior: "smooth" });
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-900 hover:bg-amber-100 rounded-lg text-xs font-bold border border-amber-200 transition shadow-2xs cursor-pointer"
+                              title="Replace Instructor / Transfer Course"
+                            >
+                              <ArrowLeftRight size={13} className="text-amber-700" />
+                              <span>Replace Teacher</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => openRetakeModal(offering)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 rounded-lg text-xs font-bold border border-indigo-200 transition shadow-2xs cursor-pointer"
+                            title="Manage Retake / Irregular Students"
+                          >
+                            <Users size={13} className="text-indigo-700" />
+                            <span>Retake Students</span>
+                          </button>
                           <button
                             onClick={() => startEditOffering(offering)}
-                            className="p-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold border border-blue-200 transition"
+                            className="p-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold border border-blue-200 transition cursor-pointer"
                             title="Edit Offering"
                           >
                             <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => handleDeleteOffering(offering._id)}
-                            className="p-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold border border-red-200 transition"
+                            className="p-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold border border-red-200 transition cursor-pointer"
                             title="Delete Offering"
                           >
                             <Trash2 size={14} />
@@ -3734,6 +4353,318 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
+
+      {/* ======================== RETAKE STUDENT MODAL ======================== */}
+      {retakeModalOffering && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={closeRetakeModal}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-white px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-200 shadow-2xs">
+                  <Users size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-gray-900 font-bold text-base">
+                      Manage Retake Students
+                    </h2>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                      Batch {retakeModalOffering.batch?.name || 'N/A'} • Sec {retakeModalOffering.section}
+                    </span>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    {retakeModalOffering.course?.courseCode} — {retakeModalOffering.course?.courseName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={closeRetakeModal}
+                className="text-gray-400 hover:text-gray-700 p-2 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+              {/* Currently Enrolled Retake Students */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-gray-800 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                    Enrolled Retake Students
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                    {retakeStudents.length} {retakeStudents.length === 1 ? 'student' : 'students'}
+                  </span>
+                </div>
+
+                {retakeLoading ? (
+                  <div className="text-center py-6 text-gray-400 italic text-sm">Loading...</div>
+                ) : retakeStudents.length === 0 ? (
+                  <div className="text-center py-6 bg-gray-50/70 rounded-xl border border-dashed border-gray-200">
+                    <p className="text-gray-500 text-sm font-medium">No retake students enrolled yet.</p>
+                    <p className="text-gray-400 text-xs mt-1">Use the section below to add students from other batches.</p>
+                  </div>
+                ) : (
+                  <div className="border border-gray-200 rounded-xl overflow-hidden shadow-2xs bg-white">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50/80 text-gray-600 uppercase tracking-wider font-bold border-b border-gray-200 text-[11px]">
+                          <th className="px-4 py-2.5 text-left">Roll / ID</th>
+                          <th className="px-4 py-2.5 text-left">Student Name</th>
+                          <th className="px-4 py-2.5 text-left">Original Batch</th>
+                          <th className="px-4 py-2.5 text-left">Section</th>
+                          <th className="px-4 py-2.5 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {retakeStudents.map((s) => (
+                          <tr key={s._id} className="hover:bg-indigo-50/20 transition">
+                            <td className="px-4 py-2.5 font-bold text-gray-900 font-mono">{s.studentId}</td>
+                            <td className="px-4 py-2.5 font-medium text-gray-700">{s.name}</td>
+                            <td className="px-4 py-2.5">
+                              <span className="inline-flex items-center px-2 py-0.5 bg-indigo-50 text-indigo-900 rounded-md text-[10px] font-bold border border-indigo-200">
+                                Batch {s.originalBatch || 'N/A'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-600 font-medium">{s.originalSection || 'N/A'}</td>
+                            <td className="px-4 py-2.5 text-center">
+                              <button
+                                onClick={() => handleRemoveRetake(s._id)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg text-xs font-semibold border border-transparent hover:border-red-200 transition cursor-pointer"
+                              >
+                                <Trash2 size={12} />
+                                <span>Remove</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Add Retake Student Panel */}
+              <div className="bg-slate-50/70 rounded-xl border border-gray-200 p-5 space-y-4">
+                <h3 className="font-bold text-gray-800 text-xs uppercase tracking-wider flex items-center gap-2">
+                  <UserPlus size={14} className="text-indigo-600" />
+                  Add Retake Student
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Batch Selector */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">Select Batch</label>
+                    <select
+                      value={selectedRetakeBatch}
+                      onChange={(e) => handleRetakeBatchChange(e.target.value)}
+                      className="w-full border border-gray-300 px-3 py-2 rounded-xl text-xs font-medium bg-white text-gray-800 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition cursor-pointer"
+                    >
+                      <option value="">-- Choose Batch --</option>
+                      {batches.map((b) => (
+                        <option key={b._id} value={b._id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Section Selector */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">Select Section</label>
+                    <select
+                      value={selectedRetakeSection}
+                      onChange={(e) => handleRetakeSectionChange(e.target.value)}
+                      className="w-full border border-gray-300 px-3 py-2 rounded-xl text-xs font-medium bg-white text-gray-800 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition cursor-pointer disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      disabled={!selectedRetakeBatch}
+                    >
+                      <option value="">-- Choose Section --</option>
+                      {retakeSections.map((sec) => (
+                        <option key={sec._id} value={sec._id}>{sec.sectionName}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Search & Candidates */}
+                {selectedRetakeBatch && (
+                  <div className="pt-1">
+                    <input
+                      type="text"
+                      placeholder="Search by ID or Student Name..."
+                      value={retakeSearchQuery}
+                      onChange={(e) => setRetakeSearchQuery(e.target.value)}
+                      className="w-full border border-gray-300 px-3.5 py-2 rounded-xl text-xs bg-white text-gray-800 placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition mb-3"
+                    />
+
+                    {retakeCandidatesLoading ? (
+                      <p className="text-gray-400 text-xs italic text-center py-4">Loading candidate students...</p>
+                    ) : retakeCandidates.length === 0 ? (
+                      <p className="text-gray-400 text-xs italic text-center py-4 bg-white rounded-xl border border-gray-200">
+                        {selectedRetakeSection ? 'No eligible students found in this section.' : 'Select a section to view students.'}
+                      </p>
+                    ) : (
+                      <div className="max-h-[220px] overflow-y-auto border border-gray-200 rounded-xl bg-white shadow-2xs divide-y divide-gray-100">
+                        {retakeCandidates
+                          .filter(c => {
+                            if (!retakeSearchQuery.trim()) return true;
+                            const q = retakeSearchQuery.toLowerCase();
+                            return (c.studentId || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q);
+                          })
+                          .map((candidate) => (
+                            <div
+                              key={candidate._id}
+                              className="flex items-center justify-between px-4 py-2.5 hover:bg-indigo-50/30 transition"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <span className="font-bold text-gray-900 text-xs font-mono">{candidate.studentId}</span>
+                                <span className="text-gray-600 text-xs font-medium">{candidate.name}</span>
+                              </div>
+                              <button
+                                onClick={() => handleEnrollRetake(candidate._id)}
+                                disabled={retakeEnrolling}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 rounded-lg text-xs font-bold border border-indigo-200 transition shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <UserPlus size={13} className="text-indigo-700" />
+                                <span>Enroll</span>
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 px-6 py-3 bg-gray-50 flex justify-end items-center">
+              <button
+                onClick={closeRetakeModal}
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-gray-700 rounded-xl text-xs font-bold transition border border-gray-200 shadow-2xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Faculty Member Modal */}
+      {editingTeacher && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={handleCancelEditTeacher}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden flex flex-col animate-in fade-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-white px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl border border-amber-200">
+                  <Edit2 size={18} />
+                </div>
+                <div>
+                  <h2 className="text-gray-900 font-bold text-base">
+                    Edit Faculty Account
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    Update faculty member details & university email
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCancelEditTeacher}
+                className="text-gray-400 hover:text-gray-700 p-2 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveTeacher} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  value={editTeacherForm.fullName}
+                  onChange={(e) =>
+                    setEditTeacherForm({
+                      ...editTeacherForm,
+                      fullName: e.target.value,
+                    })
+                  }
+                  className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 outline-none text-xs font-semibold bg-gray-50/30"
+                  placeholder="e.g. Joy Sarkar"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                  Email Address
+                </label>
+                <div className="flex items-center rounded-xl border border-gray-300 focus-within:ring-2 focus-within:ring-amber-500/20 focus-within:border-amber-600 bg-gray-50/30 overflow-hidden transition">
+                  <input
+                    type="text"
+                    value={editTeacherForm.emailPrefix}
+                    onChange={(e) => {
+                      const val = e.target.value.trim().replace(/@baiust\.ac\.bd$/i, "");
+                      setEditTeacherForm({
+                        ...editTeacherForm,
+                        emailPrefix: val,
+                      });
+                    }}
+                    className="flex-1 px-4 py-2.5 outline-none text-xs font-semibold bg-transparent text-gray-800 placeholder:text-gray-400"
+                    placeholder="e.g. joy.cse"
+                    required
+                  />
+                  <span className="px-3.5 py-2.5 bg-gray-100/90 border-l border-gray-200 text-gray-600 text-xs font-bold select-none whitespace-nowrap">
+                    @baiust.ac.bd
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Fixed university domain: <b>@baiust.ac.bd</b>
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-150">
+                <button
+                  type="button"
+                  onClick={handleCancelEditTeacher}
+                  disabled={actionLoading}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    actionLoading ||
+                    !editTeacherForm.fullName.trim() ||
+                    !editTeacherForm.emailPrefix.trim()
+                  }
+                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <Save size={14} />
+                  {actionLoading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

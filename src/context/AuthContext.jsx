@@ -362,6 +362,32 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const updateUser = async (userId, { fullName = "", email = "" }) => {
+    setActionLoading(true);
+    try {
+      const normalizedEmail = normalizeEmail(email);
+      if (!normalizedEmail) throw new Error("Email is required.");
+      if (!fullName.trim()) throw new Error("Full name is required.");
+
+      const data = await apiRequest(`/api/auth/admin/users/${userId}`, {
+        method: "PUT",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({
+          fullName: fullName.trim(),
+          email: normalizedEmail,
+        }),
+      });
+      await loadAdminUsers();
+      setSuccess(data.message || "Faculty updated successfully.");
+      return data;
+    } catch (error) {
+      setError(parseErrorMessage(error, "Failed to update faculty."));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const deleteUser = async (userId) => {
     setActionLoading(true);
     try {
@@ -393,6 +419,7 @@ export function AuthProvider({ children }) {
       logout,
       changePassword,
       createUser,
+      updateUser,
       deleteUser,
       adminResetPassword,
       refreshAuth,

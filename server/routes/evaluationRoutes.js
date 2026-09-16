@@ -394,8 +394,9 @@ router.post('/public/evaluations/:id/submit', async (req, res) => {
       })
       const sectionId = sectionDoc ? sectionDoc._id : null
       
+      const studentSecId = (student.sectionId?._id || student.sectionId);
       const studentInSection = student.batchId?.toString() === evaluation.courseOfferingId.batch.toString() &&
-                               (!sectionId || (student.sectionId && student.sectionId.toString() === sectionId.toString()))
+                               (!sectionId || (studentSecId && studentSecId.toString() === sectionId.toString()))
       
       if (studentInSection) {
         await Enrollment.create({ student: student._id, courseOffering: evaluation.courseOfferingId._id })

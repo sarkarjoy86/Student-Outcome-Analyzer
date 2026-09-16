@@ -17,6 +17,15 @@ import { syncCourseOfferingStudentsLongitudinalPO } from './poRecommendationRout
 
 const router = express.Router()
 
+// Helper to check if an enrollment belongs to the offering's section (or is an enrolled retake student)
+export function isStudentInSection(enrollment, sectionId) {
+  if (!enrollment || !enrollment.student) return false;
+  if (enrollment.enrollmentType === 'retake') return true;
+  if (!sectionId) return true;
+  const studentSecId = (enrollment.student.sectionId?._id || enrollment.student.sectionId);
+  return Boolean(studentSecId && studentSecId.toString() === sectionId.toString());
+}
+
 // Helper function to recalculate attainments
 export async function recalculateAttainments(offeringId) {
   try {
@@ -41,14 +50,14 @@ export async function recalculateAttainments(offeringId) {
     const kpiCO = offering.kpiCO || 50
     const kpiPO = offering.kpiPO || 50
 
-    const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+    const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
     const sectionDoc = offering && offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null
     const sectionId = sectionDoc ? sectionDoc._id : null
 
     const students = enrollments
-      .filter(e => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      .filter(e => isStudentInSection(e, sectionId))
       .map(e => e.student)
     if (students.length === 0) return
 
@@ -346,12 +355,12 @@ router.get('/teacher/course-offerings', requireAuth, async (req, res) => {
 
     const offeringsWithCounts = await Promise.all(offerings.map(async (offering) => {
       const sectionDoc = offering.batch && offering.section
-        ? await Section.findOne({ batchId: offering.batch._id, sectionName: offering.section })
+        ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
         : null
       const sectionId = sectionDoc ? sectionDoc._id : null
 
-      const enrollments = await Enrollment.find({ courseOffering: offering._id }).populate('student')
-      const validEnrollments = enrollments.filter(e => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      const enrollments = await Enrollment.find({ courseOffering: offering._id }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
+      const validEnrollments = enrollments.filter(e => isStudentInSection(e, sectionId))
 
       let studentCount = validEnrollments.length
       if (studentCount === 0 && offering.batch) {
@@ -382,8 +391,8 @@ router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, re
       return res.status(404).json({ message: 'Course offering not found' })
     }
 
-    const sectionDoc = offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+    const sectionDoc = offering.batch && offering.section
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null
     const sectionId = sectionDoc ? sectionDoc._id : null
 
@@ -391,8 +400,8 @@ router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, re
 
     if (offering.batch) {
       const studentsInSection = await Student.find({
-        batchId: offering.batch,
-        sectionId: sectionId
+        batchId: offering.batch._id || offering.batch,
+        ...(sectionId ? { sectionId: sectionId } : {})
       })
       for (const student of studentsInSection) {
         await Enrollment.findOneAndUpdate(
@@ -405,28 +414,30 @@ router.get('/teacher/course-offerings/:id/students', requireAuth, async (req, re
       if (sectionId) {
         const existingEnrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
         for (const e of existingEnrollments) {
-          if (e.student && (!e.student.sectionId || e.student.sectionId.toString() !== sectionId.toString())) {
+          if (e.enrollmentType === 'retake') continue // Never purge retake students
+          const stSecId = (e.student?.sectionId?._id || e.student?.sectionId)?.toString()
+          if (e.student && (!stSecId || stSecId !== sectionId.toString())) {
             await Enrollment.deleteOne({ _id: e._id })
           }
         }
       }
 
-      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
     } else {
-      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+      enrollments = await Enrollment.find({ courseOffering: offeringId }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
     }
 
     const students = enrollments
-      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      .filter((e) => isStudentInSection(e, sectionId))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
         name: e.student.name,
+        enrollmentType: e.enrollmentType || 'regular',
+        originalBatch: e.enrollmentType === 'retake' ? (e.student.batchId?.name || '') : '',
       }))
       .sort((a, b) => {
-        const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-        const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-        return numA - numB
+        return String(a.id || '').localeCompare(String(b.id || ''))
       })
 
     res.status(200).json({ students })
@@ -893,8 +904,8 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
       return res.status(404).json({ message: 'Course offering not found' })
     }
 
-    const sectionDoc = offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+    const sectionDoc = offering.batch && offering.section
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null
     const sectionId = sectionDoc ? sectionDoc._id : null
 
@@ -909,18 +920,18 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
     })
 
     // Fetch enrolled students
-    const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate('student')
+    const enrollments = await Enrollment.find({ courseOffering: offeringId }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
     const students = enrollments
-      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      .filter((e) => isStudentInSection(e, sectionId))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
         name: e.student.name,
+        enrollmentType: e.enrollmentType || 'regular',
+        originalBatch: e.enrollmentType === 'retake' ? (e.student.batchId?.name || '') : '',
       }))
       .sort((a, b) => {
-        const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-        const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-        return numA - numB
+        return String(a.id || '').localeCompare(String(b.id || ''))
       })
 
     // Fetch student marks
@@ -934,13 +945,16 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
       const qMarksObj = {}
       if (m.questionMarks) {
         m.questionMarks.forEach(qm => {
-          qMarksObj[qm.questionNumber] = qm.mark
+          qMarksObj[qm.questionNumber] = qm.isAbsent ? 'A' : qm.mark
         })
       }
 
+      const allQuestionsAbsent = m.questionMarks && m.questionMarks.length > 0 && m.questionMarks.every(qm => qm.isAbsent)
+
       marksMap[sId][aId] = {
         questionMarks: qMarksObj,
-        totalMark: m.totalMark || 0
+        totalMark: (m.isAbsent || allQuestionsAbsent) && (!m.questionMarks || m.questionMarks.length === 0 || allQuestionsAbsent) ? 'A' : (m.totalMark || 0),
+        isAbsent: !!m.isAbsent || !!allQuestionsAbsent
       }
     })
 
@@ -1030,14 +1044,16 @@ router.get('/teacher/course-offerings/:id/combined-batch-spreadsheet', requireAu
         : null
       const sectionId = sectionDoc ? sectionDoc._id : null
 
-      const enrollments = await Enrollment.find({ courseOffering: sister._id }).populate('student')
+      const enrollments = await Enrollment.find({ courseOffering: sister._id }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] })
       let sisterStudents = enrollments
-        .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+        .filter((e) => isStudentInSection(e, sectionId))
         .map((e) => ({
           _id: e.student._id,
           id: e.student.studentId,
           name: e.student.name,
-          section: sister.section || 'A'
+          section: sister.section || 'A',
+          enrollmentType: e.enrollmentType || 'regular',
+          originalBatch: e.enrollmentType === 'retake' ? (e.student.batchId?.name || '') : '',
         }))
 
       if (sisterStudents.length === 0 && sister.batch) {
@@ -1061,9 +1077,7 @@ router.get('/teacher/course-offerings/:id/combined-batch-spreadsheet', requireAu
     }
 
     const studentsList = Array.from(allStudentsMap.values()).sort((a, b) => {
-      const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-      const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-      return numA - numB
+      return String(a.id || '').localeCompare(String(b.id || ''))
     })
 
     const allMarks = await StudentMarks.find({ courseOffering: { $in: sisterOfferingIds } })
@@ -1079,13 +1093,16 @@ router.get('/teacher/course-offerings/:id/combined-batch-spreadsheet', requireAu
       const qMarksObj = {}
       if (m.questionMarks) {
         m.questionMarks.forEach(qm => {
-          qMarksObj[qm.questionNumber] = qm.mark
+          qMarksObj[qm.questionNumber] = qm.isAbsent ? 'A' : qm.mark
         })
       }
 
+      const allQuestionsAbsent = m.questionMarks && m.questionMarks.length > 0 && m.questionMarks.every(qm => qm.isAbsent)
+
       marksMap[sId][targetAId] = {
         questionMarks: qMarksObj,
-        totalMark: m.totalMark || 0
+        totalMark: (m.isAbsent || allQuestionsAbsent) && (!m.questionMarks || m.questionMarks.length === 0 || allQuestionsAbsent) ? 'A' : (m.totalMark || 0),
+        isAbsent: !!m.isAbsent || !!allQuestionsAbsent
       }
     })
 
@@ -1127,7 +1144,7 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
 
     // Save marks
     for (const item of marks) {
-      const { studentId, questionMarks = {}, totalMark = 0, isEmpty = false } = item
+      const { studentId, questionMarks = {}, totalMark = 0, isEmpty = false, isAbsent = false } = item
 
       if (isEmpty) {
         // Delete the student marks document if it exists to keep it unentered / blank
@@ -1136,21 +1153,30 @@ router.post('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, asyn
       }
 
       const qMarksArray = []
+      let studentAnyAbsent = isAbsent || totalMark === 'A' || totalMark === 'a' || (typeof totalMark === 'string' && totalMark.trim().toUpperCase() === 'A')
       Object.keys(questionMarks).forEach(qNum => {
         const val = questionMarks[qNum]
         if (val !== null && val !== undefined && val !== '') {
+          const isQAbsent = val === 'A' || val === 'a' || (typeof val === 'string' && val.trim().toUpperCase() === 'A')
+          if (isQAbsent) studentAnyAbsent = true
           qMarksArray.push({
             questionNumber: qNum,
-            mark: Number(val)
+            mark: isQAbsent ? 0 : (Number(val) || 0),
+            isAbsent: !!isQAbsent
           })
         }
       })
+
+      const finalTotal = (totalMark === 'A' || totalMark === 'a' || (typeof totalMark === 'string' && totalMark.trim().toUpperCase() === 'A'))
+        ? 0
+        : (Number(totalMark) || 0)
 
       await StudentMarks.findOneAndUpdate(
         { student: studentId, assessment: assessmentId, courseOffering: offeringId },
         {
           questionMarks: qMarksArray,
-          totalMark: Number(totalMark) || 0
+          totalMark: finalTotal,
+          isAbsent: !!studentAnyAbsent
         },
         { upsert: true, returnDocument: 'after' }
       )

@@ -26,4 +26,9 @@ batchSchema.virtual("name").get(function () {
   this.batchName = val;
 });
 
-export default mongoose.models.Batch || mongoose.model("Batch", batchSchema);
+const Batch = mongoose.models.Batch || mongoose.model("Batch", batchSchema);
+
+// Clean up legacy index if it exists in MongoDB
+Batch.collection.dropIndex("name_1").catch(() => {});
+
+export default Batch;

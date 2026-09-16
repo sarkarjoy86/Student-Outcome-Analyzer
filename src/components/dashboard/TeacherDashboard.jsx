@@ -1213,9 +1213,21 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       const existing = marksMap[sId]?.[assessmentId]
 
       if (questions && questions.length > 0) {
+        let allQAbsent = true
+        let hasAnyQ = false
         questions.forEach(q => {
-          temp[sId][q.questionNumber] = existing?.questionMarks?.[q.questionNumber] ?? ''
+          const val = existing?.questionMarks?.[q.questionNumber] ?? ''
+          temp[sId][q.questionNumber] = val
+          if (val !== '') {
+            hasAnyQ = true
+            if (val !== 'A') allQAbsent = false
+          }
         })
+        if (hasAnyQ && allQAbsent) {
+          temp[sId]['_ctTotal'] = 'A'
+        } else if (existing?.totalMark === 'A') {
+          temp[sId]['_ctTotal'] = 'A'
+        }
       } else {
         temp[sId]['marks'] = existing?.totalMark ?? ''
       }
@@ -1301,51 +1313,79 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         let totalMark = 0
         const questionMarks = {}
         let isEmpty = true
+        let isAbsent = false
 
         if (questions && questions.length > 0) {
           if (isTotalMode) {
             const totalVal = studentTemp['_ctTotal']
             if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
-              const enteredTotal = parseFloat(totalVal) || 0
-              const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
-              questions.forEach(q => {
-                const qMax = parseFloat(q.maxMarks) || 0
-                const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
-                const distributed = Math.round((enteredTotal * proportion) * 2) / 2
-                questionMarks[q.questionNumber] = distributed
-                totalMark += distributed
-              })
-              const diff = enteredTotal - totalMark
-              if (Math.abs(diff) > 0.01 && questions.length > 0) {
-                const lastQ = questions[questions.length - 1].questionNumber
-                questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
-                totalMark = enteredTotal
+              if (String(totalVal).trim().toUpperCase() === 'A') {
+                totalMark = 0
+                isAbsent = true
+                questions.forEach(q => {
+                  questionMarks[q.questionNumber] = 'A'
+                })
+              } else {
+                const enteredTotal = parseFloat(totalVal) || 0
+                const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+                questions.forEach(q => {
+                  const qMax = parseFloat(q.maxMarks) || 0
+                  const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                  const distributed = Math.round((enteredTotal * proportion) * 2) / 2
+                  questionMarks[q.questionNumber] = distributed
+                  totalMark += distributed
+                })
+                const diff = enteredTotal - totalMark
+                if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                  const lastQ = questions[questions.length - 1].questionNumber
+                  questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
+                  totalMark = enteredTotal
+                }
               }
               isEmpty = false
               hasEnteredAnyMark = true
             }
           } else {
+            let anyEntered = false
+            let allAbsent = questions.length > 0
             questions.forEach(q => {
               const val = studentTemp[q.questionNumber]
               if (val !== undefined && val !== null && val !== '') {
-                const markVal = parseFloat(val) || 0
-                questionMarks[q.questionNumber] = markVal
-                totalMark += markVal
-                isEmpty = false
-                hasEnteredAnyMark = true
+                anyEntered = true
+                if (String(val).trim().toUpperCase() === 'A') {
+                  questionMarks[q.questionNumber] = 'A'
+                  isAbsent = true
+                } else {
+                  allAbsent = false
+                  const markVal = parseFloat(val) || 0
+                  questionMarks[q.questionNumber] = markVal
+                  totalMark += markVal
+                }
+              } else {
+                allAbsent = false
               }
             })
+            if (anyEntered) {
+              isEmpty = false
+              hasEnteredAnyMark = true
+              if (allAbsent) isAbsent = true
+            }
           }
         } else {
           const val = studentTemp['marks']
           if (val !== undefined && val !== null && val !== '') {
-            totalMark = parseFloat(val) || 0
+            if (String(val).trim().toUpperCase() === 'A') {
+              totalMark = 0
+              isAbsent = true
+            } else {
+              totalMark = parseFloat(val) || 0
+            }
             isEmpty = false
             hasEnteredAnyMark = true
           }
         }
 
-        return { studentId: sId, questionMarks, totalMark, isEmpty }
+        return { studentId: sId, questionMarks, totalMark, isAbsent, isEmpty }
       })
 
       if (hasEnteredAnyMark) {
@@ -1482,6 +1522,26 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   }, [assessments, activeAssessmentForPaper, activeTab]);
 
   const handleSpreadsheetMarkChange = (studentId, key, val, maxVal, questionsList = []) => {
+    // If teacher inputs 'a' or 'A', treat as Absent
+    const isAbsentInput = typeof val === 'string' && (val.trim().toUpperCase() === 'A' || val.toUpperCase() === 'A')
+    if (isAbsentInput) {
+      setTempMarks(prev => {
+        const studentPrev = prev[studentId] || {}
+        if (key === '_ctTotal') {
+          const newObj = { ...studentPrev, _ctTotal: 'A' }
+          if (questionsList && questionsList.length > 0) {
+            questionsList.forEach(q => { newObj[q.questionNumber] = 'A' })
+          }
+          return { ...prev, [studentId]: newObj }
+        } else {
+          const newObj = { ...studentPrev, [key]: 'A' }
+          delete newObj._ctTotal
+          return { ...prev, [studentId]: newObj }
+        }
+      })
+      return
+    }
+
     if (val !== '' && (isNaN(val) || parseFloat(val) < 0 || parseFloat(val) > maxVal)) {
       return // invalid
     }
@@ -1535,46 +1595,74 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         let totalMark = 0
         const questionMarks = {}
         let isEmpty = true
+        let isAbsent = false
 
         if (questions && questions.length > 0) {
           if (isTotalMode) {
             // Total mode: distribute the entered total proportionally across questions
             const totalVal = studentTemp['_ctTotal']
             if (totalVal !== undefined && totalVal !== null && totalVal !== '') {
-              const enteredTotal = parseFloat(totalVal) || 0
-              const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
-              questions.forEach(q => {
-                const qMax = parseFloat(q.maxMarks) || 0
-                const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
-                const distributed = Math.round((enteredTotal * proportion) * 2) / 2 // round to nearest 0.5
-                questionMarks[q.questionNumber] = distributed
-                totalMark += distributed
-              })
-              // Adjust rounding difference on last question
-              const diff = enteredTotal - totalMark
-              if (Math.abs(diff) > 0.01 && questions.length > 0) {
-                const lastQ = questions[questions.length - 1].questionNumber
-                questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
-                totalMark = enteredTotal
+              if (String(totalVal).trim().toUpperCase() === 'A') {
+                totalMark = 0
+                isAbsent = true
+                questions.forEach(q => {
+                  questionMarks[q.questionNumber] = 'A'
+                })
+              } else {
+                const enteredTotal = parseFloat(totalVal) || 0
+                const totalMaxMarks = questions.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0)
+                questions.forEach(q => {
+                  const qMax = parseFloat(q.maxMarks) || 0
+                  const proportion = totalMaxMarks > 0 ? qMax / totalMaxMarks : 1 / questions.length
+                  const distributed = Math.round((enteredTotal * proportion) * 2) / 2 // round to nearest 0.5
+                  questionMarks[q.questionNumber] = distributed
+                  totalMark += distributed
+                })
+                // Adjust rounding difference on last question
+                const diff = enteredTotal - totalMark
+                if (Math.abs(diff) > 0.01 && questions.length > 0) {
+                  const lastQ = questions[questions.length - 1].questionNumber
+                  questionMarks[lastQ] = (questionMarks[lastQ] || 0) + diff
+                  totalMark = enteredTotal
+                }
               }
               isEmpty = false
             }
           } else {
             // Per-question mode
+            let anyEntered = false
+            let allAbsent = questions.length > 0
             questions.forEach(q => {
               const val = studentTemp[q.questionNumber]
               if (val !== undefined && val !== null && val !== '') {
-                const markVal = parseFloat(val) || 0
-                questionMarks[q.questionNumber] = markVal
-                totalMark += markVal
-                isEmpty = false
+                anyEntered = true
+                if (String(val).trim().toUpperCase() === 'A') {
+                  questionMarks[q.questionNumber] = 'A'
+                  isAbsent = true
+                } else {
+                  allAbsent = false
+                  const markVal = parseFloat(val) || 0
+                  questionMarks[q.questionNumber] = markVal
+                  totalMark += markVal
+                }
+              } else {
+                allAbsent = false
               }
             })
+            if (anyEntered) {
+              isEmpty = false
+              if (allAbsent) isAbsent = true
+            }
           }
         } else {
           const val = studentTemp['marks']
           if (val !== undefined && val !== null && val !== '') {
-            totalMark = parseFloat(val) || 0
+            if (String(val).trim().toUpperCase() === 'A') {
+              totalMark = 0
+              isAbsent = true
+            } else {
+              totalMark = parseFloat(val) || 0
+            }
             isEmpty = false
           }
         }
@@ -1583,6 +1671,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
           studentId: sId,
           questionMarks,
           totalMark,
+          isAbsent,
           isEmpty
         }
       })
@@ -2654,16 +2743,26 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                 const renderTableBody = () => {
                   const sortedStudents = [...students].sort((a, b) => {
-                    const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                    const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                    return numA - numB
+                    return String(a.id || '').localeCompare(String(b.id || ''))
                   })
 
                   if (!hasAssessments || !hasMarks) {
                     return sortedStudents.map(student => (
                       <tr key={student._id || student.id} className="hover:bg-green-50/30 transition-colors">
                         <td className="px-3 py-2 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-green-50/20 z-20 w-[135px] text-xs text-gray-900">{student.id}</td>
-                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 text-xs">{student.name}</td>
+                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <span>{student.name}</span>
+                            {student.enrollmentType === 'retake' && (
+                              <span
+                                title={`Retake Student (Batch ${student.originalBatch || 'N/A'})`}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal bg-red-50/40 text-red-700 border border-red-200/50 tracking-tight select-none shrink-0"
+                              >
+                                Re-B:{String(student.originalBatch || '').trim().replace(/^batch\s*/i, '').replace(/^b/i, '') || 'Retake'}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-2 border border-gray-200 text-center text-gray-400 italic font-medium text-xs">No assessments/marks entered yet.</td>
                       </tr>
                     ))
@@ -2677,7 +2776,19 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                     return (
                       <tr key={student._id || student.id} className="group transition-colors duration-150 hover:bg-emerald-50/40">
                         <td className="px-3 py-2 border border-gray-200 font-bold sticky left-0 bg-white group-hover:bg-[#ecfdf5] transition-colors duration-150 z-20 text-gray-900 text-xs w-[135px] min-w-[135px] whitespace-nowrap">{student.id}</td>
-                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 sticky left-[135px] bg-white group-hover:bg-[#ecfdf5] transition-colors duration-150 z-20 w-[170px] min-w-[170px] truncate shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)] text-xs">{student.name}</td>
+                        <td className="px-3 py-2 border border-gray-200 font-semibold text-gray-800 sticky left-[135px] bg-white group-hover:bg-[#ecfdf5] transition-colors duration-150 z-20 w-[170px] min-w-[170px] shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)] text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate">{student.name}</span>
+                            {student.enrollmentType === 'retake' && (
+                              <span
+                                title={`Retake Student (Batch ${student.originalBatch || 'N/A'})`}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal bg-red-50/40 text-red-700 border border-red-200/50 tracking-tight select-none shrink-0"
+                              >
+                                Re-B:{String(student.originalBatch || '').trim().replace(/^batch\s*/i, '').replace(/^b/i, '') || 'Retake'}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         {cols.map(col => (
                           <td key={col.id} className={`px-2 py-2 border border-gray-200 text-center text-xs transition-colors duration-150 ${col.isBestCTTotal ? 'bg-emerald-50/70 group-hover:bg-emerald-100/90 font-bold text-emerald-950 border-x border-green-300' : 'font-normal text-gray-700 group-hover:bg-emerald-50/30'}`}>
                             {getColMark(student, col)}
@@ -3587,9 +3698,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
             const selectedAssessment = assessments.find(a => a._id === selectedAssessmentId)
             const questions = selectedAssessment ? (marksSpreadsheetData.metadata[selectedAssessmentId] || []) : []
             const studentList = [...(marksSpreadsheetData.students || [])].sort((a, b) => {
-              const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-              const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-              return numA - numB
+              return String(a.id || '').localeCompare(String(b.id || ''))
             })
             const hasQuestions = questions && questions.length > 0
 
@@ -3730,20 +3839,39 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
                                   // Calculate total
                                   let sum = 0
+                                  let isAllAbsent = false
                                   if (isTotalMode) {
-                                    sum = parseFloat(sMarks['_ctTotal']) || 0
+                                    isAllAbsent = sMarks['_ctTotal'] === 'A'
+                                    sum = isAllAbsent ? 0 : (parseFloat(sMarks['_ctTotal']) || 0)
                                   } else if (hasQuestions) {
+                                    const enteredQs = questions.filter(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
+                                    isAllAbsent = enteredQs.length > 0 && enteredQs.every(q => sMarks[q.questionNumber] === 'A')
                                     questions.forEach(q => {
-                                      sum += parseFloat(sMarks[q.questionNumber]) || 0
+                                      if (sMarks[q.questionNumber] !== 'A') {
+                                        sum += parseFloat(sMarks[q.questionNumber]) || 0
+                                      }
                                     })
                                   } else {
-                                    sum = parseFloat(sMarks['marks']) || 0
+                                    isAllAbsent = sMarks['marks'] === 'A'
+                                    sum = isAllAbsent ? 0 : (parseFloat(sMarks['marks']) || 0)
                                   }
 
                                   return (
                                     <tr key={sId} className="hover:bg-green-50/10">
                                       <td className="px-4 py-2 border-r font-bold text-gray-900 bg-white">{s.id}</td>
-                                      <td className="px-4 py-2 border-r bg-white">{s.name}</td>
+                                      <td className="px-4 py-2 border-r bg-white">
+                                        <div className="flex items-center gap-1.5">
+                                          <span>{s.name}</span>
+                                          {s.enrollmentType === 'retake' && (
+                                            <span
+                                              title={`Retake Student (Batch ${s.originalBatch || 'N/A'})`}
+                                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal bg-red-50/40 text-red-700 border border-red-200/50 tracking-tight select-none shrink-0"
+                                            >
+                                              Re-B:{String(s.originalBatch || '').trim().replace(/^batch\s*/i, '').replace(/^b/i, '') || 'Retake'}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
                                       {isTotalMode ? (
                                         <td className="px-2 py-1.5 border-r text-center">
                                           {(() => {
@@ -3751,21 +3879,29 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                             if (displayTotal === undefined || displayTotal === '') {
                                               const hasAnyQ = questions.some(q => sMarks[q.questionNumber] !== undefined && sMarks[q.questionNumber] !== '')
                                               if (hasAnyQ) {
-                                                displayTotal = questions.reduce((acc, q) => acc + (parseFloat(sMarks[q.questionNumber]) || 0), 0)
+                                                const allQAbsent = questions.length > 0 && questions.every(q => sMarks[q.questionNumber] === 'A')
+                                                if (allQAbsent) {
+                                                  displayTotal = 'A'
+                                                } else {
+                                                  displayTotal = questions.reduce((acc, q) => acc + (sMarks[q.questionNumber] === 'A' ? 0 : (parseFloat(sMarks[q.questionNumber]) || 0)), 0)
+                                                }
                                               } else {
                                                 displayTotal = ''
                                               }
                                             }
+                                            const isAbsent = displayTotal === 'A'
                                             return (
                                               <input
-                                                type="number"
-                                                step="0.5"
-                                                min="0"
-                                                max={selectedAssessment.maxMarks}
+                                                type="text"
+                                                inputMode="decimal"
                                                 value={displayTotal}
                                                 onChange={(e) => handleSpreadsheetMarkChange(sId, '_ctTotal', e.target.value, parseFloat(selectedAssessment.maxMarks), questions)}
                                                 onWheel={(e) => e.target.blur()}
-                                                className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
+                                                className={`w-16 border rounded px-1.5 py-1 text-center font-bold outline-none text-xs transition-all ${
+                                                  isAbsent
+                                                    ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
+                                                    : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
+                                                }`}
                                                 placeholder="0"
                                               />
                                             )
@@ -3774,17 +3910,20 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                       ) : hasQuestions ? (
                                         questions.map(q => {
                                           const val = sMarks[q.questionNumber] ?? ''
+                                          const isAbsent = val === 'A'
                                           return (
                                             <td key={q.questionNumber} className="px-2 py-1.5 border-r text-center">
                                               <input
-                                                type="number"
-                                                step="0.5"
-                                                min="0"
-                                                max={q.maxMarks}
+                                                type="text"
+                                                inputMode="decimal"
                                                 value={val}
                                                 onChange={(e) => handleSpreadsheetMarkChange(sId, q.questionNumber, e.target.value, q.maxMarks)}
                                                 onWheel={(e) => e.target.blur()}
-                                                className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
+                                                className={`w-16 border rounded px-1.5 py-1 text-center font-bold outline-none text-xs transition-all ${
+                                                  isAbsent
+                                                    ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
+                                                    : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
+                                                }`}
                                                 placeholder="0"
                                               />
                                             </td>
@@ -3792,21 +3931,36 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                         })
                                       ) : (
                                         <td className="px-2 py-1.5 border-r text-center">
-                                          <input
-                                            type="number"
-                                            step="0.5"
-                                            min="0"
-                                            max={selectedAssessment.maxMarks}
-                                            value={sMarks['marks'] ?? ''}
-                                            onChange={(e) => handleSpreadsheetMarkChange(sId, 'marks', e.target.value, selectedAssessment.maxMarks)}
-                                            onWheel={(e) => e.target.blur()}
-                                            className="w-16 border rounded px-1.5 py-1 text-center font-bold focus:ring-1 focus:ring-green-500 outline-none text-xs"
-                                            placeholder="0"
-                                          />
+                                          {(() => {
+                                            const val = sMarks['marks'] ?? ''
+                                            const isAbsent = val === 'A'
+                                            return (
+                                              <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={val}
+                                                onChange={(e) => handleSpreadsheetMarkChange(sId, 'marks', e.target.value, selectedAssessment.maxMarks)}
+                                                onWheel={(e) => e.target.blur()}
+                                                className={`w-16 border rounded px-1.5 py-1 text-center font-bold outline-none text-xs transition-all ${
+                                                  isAbsent
+                                                    ? 'border-red-500 bg-red-50 text-red-600 font-black focus:ring-1 focus:ring-red-500 ring-1 ring-red-300'
+                                                    : 'border-gray-300 text-gray-800 focus:ring-1 focus:ring-green-500'
+                                                }`}
+                                                placeholder="0"
+                                              />
+                                            )
+                                          })()}
                                         </td>
                                       )}
-                                      <td className="px-4 py-2 text-center text-gray-800 font-extrabold bg-gray-50/50">
-                                        {sum.toFixed(1)} / {selectedAssessment.maxMarks}
+                                      <td className={`px-4 py-2 text-center font-extrabold ${isAllAbsent ? 'bg-red-50/60 text-red-600' : 'bg-gray-50/50 text-gray-800'}`}>
+                                        {isAllAbsent ? (
+                                          <span className="inline-flex items-center justify-center gap-1 text-red-600 font-extrabold">
+                                            <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[11px] font-black border border-red-200">A</span>
+                                            <span className="text-[11px] text-gray-500 font-medium">({sum.toFixed(1)} / {selectedAssessment.maxMarks})</span>
+                                          </span>
+                                        ) : (
+                                          `${sum.toFixed(1)} / ${selectedAssessment.maxMarks}`
+                                        )}
                                       </td>
                                     </tr>
                                   )

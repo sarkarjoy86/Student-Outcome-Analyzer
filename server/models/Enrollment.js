@@ -11,6 +11,11 @@ const enrollmentSchema = new mongoose.Schema({
     ref: 'CourseOffering',
     required: true
   },
+  enrollmentType: {
+    type: String,
+    enum: ['regular', 'retake'],
+    default: 'regular'
+  },
   createdAt: {
     type: Date,
     default: Date.now

@@ -16,9 +16,10 @@ import QuestionMetadata from "../models/QuestionMetadata.js";
 import QuestionPaper from "../models/QuestionPaper.js";
 import COAttainment from "../models/COAttainment.js";
 import POAttainment from "../models/POAttainment.js";
+import COPORequest from "../models/COPORequest.js";
 import { syncAllStudentsLongitudinalPO } from "./poRecommendationRoutes.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { recalculateAttainments } from "./teacherRoutes.js";
+import { recalculateAttainments, isStudentInSection } from "./teacherRoutes.js";
 
 const router = express.Router();
 
@@ -614,14 +615,19 @@ router.get("/batches", requireAuth, async (req, res) => {
 
 router.post("/batches", requireAuth, async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
+    const { name, batchName } = req.body;
+    const finalName = (name || batchName || "").trim();
+    if (!finalName) {
       return res.status(400).json({ message: "Batch name is required." });
     }
 
-    const batch = await Batch.create({ batchName: name.trim() });
+    const batch = await Batch.create({ batchName: finalName });
     res.status(201).json({ message: "Batch created successfully.", batch });
   } catch (error) {
+    console.error("Error creating batch:", error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "A batch with this name already exists.", error: error.message });
+    }
     res
       .status(500)
       .json({ message: "Error creating batch", error: error.message });
@@ -1249,18 +1255,10 @@ router.put("/course-offerings/:id", requireAuth, async (req, res) => {
 
     if (req.user.role === "admin") {
       const selectedBatch = batchId || batch || offering.batch;
-      const selectedTeacher = teacherId || teacher || offering.teacher;
+      const selectedTeacher = teacherId || teacher;
 
       if (!selectedBatch) {
         return res.status(400).json({ message: "Batch is required." });
-      }
-      if (!selectedTeacher) {
-        return res.status(400).json({ message: "Teacher is required." });
-      }
-
-      const teacherDoc = await User.findById(selectedTeacher);
-      if (!teacherDoc) {
-        return res.status(404).json({ message: "Teacher not found." });
       }
 
       const batchDoc = await Batch.findById(selectedBatch);
@@ -1268,8 +1266,16 @@ router.put("/course-offerings/:id", requireAuth, async (req, res) => {
         return res.status(404).json({ message: "Batch not found." });
       }
 
+      // Check if trying to change the assigned instructor via general edit
+      const currentTeacherId = (offering.teacher?._id || offering.teacher)?.toString();
+      if (selectedTeacher && currentTeacherId && selectedTeacher.toString() !== currentTeacherId) {
+        return res.status(400).json({
+          message:
+            "Changing the assigned instructor is not permitted via general edit. Please use the dedicated 'Replace Instructor' feature to safely transfer course ownership.",
+        });
+      }
+
       offering.batch = selectedBatch;
-      offering.teacher = selectedTeacher;
     }
 
     const duplicateCheck = await CourseOffering.findOne({
@@ -1307,6 +1313,102 @@ router.put("/course-offerings/:id", requireAuth, async (req, res) => {
     console.error("Error in PUT /course-offerings/:id:", error);
     res.status(500).json({
       message: "Error updating course offering",
+      error: error.message,
+    });
+  }
+});
+
+// Replace / Reassign instructor for an existing course offering
+router.put("/course-offerings/:id/replace-teacher", requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only administrators can replace course offering instructors." });
+    }
+
+    const { newTeacherId, reason } = req.body || {};
+    if (!newTeacherId) {
+      return res.status(400).json({ message: "New instructor selection is required." });
+    }
+
+    const offering = await CourseOffering.findById(req.params.id)
+      .populate("course")
+      .populate("batch")
+      .populate("semester")
+      .populate("teacher", "fullName email");
+
+    if (!offering) {
+      return res.status(404).json({ message: "Course offering not found." });
+    }
+
+    if (offering.semester && offering.semester.status !== "active") {
+      return res.status(400).json({
+        message: "Cannot replace instructor for a course offering in a completed or inactive academic session.",
+      });
+    }
+
+    const currentTeacherId = offering.teacher?._id?.toString() || offering.teacher?.toString();
+    if (currentTeacherId && currentTeacherId === newTeacherId.toString()) {
+      return res.status(400).json({
+        message: "The selected instructor is already the assigned teacher for this course offering.",
+      });
+    }
+
+    const newTeacherDoc = await User.findById(newTeacherId);
+    if (!newTeacherDoc) {
+      return res.status(404).json({ message: "Selected new instructor was not found in the system." });
+    }
+
+    const oldTeacherName = offering.teacher?.fullName || "Unassigned";
+    const oldTeacherId = offering.teacher?._id;
+
+    // Update the assigned teacher on the course offering
+    offering.teacher = newTeacherId;
+    await offering.save();
+
+    // Log this important transfer event in RecentActivity
+    try {
+      await logActivity(
+        offering._id,
+        newTeacherId,
+        "INSTRUCTOR_REPLACED",
+        `Instructor reassigned from ${oldTeacherName} to ${newTeacherDoc.fullName}${reason ? ` (Reason: ${reason.trim()})` : ""}. All student marks and assessment records preserved.`
+      );
+    } catch (logErr) {
+      console.warn("Failed to log activity for instructor replacement:", logErr);
+    }
+
+    // If there are pending CO-PO requests for this teacher & course, transfer ownership to new teacher
+    if (oldTeacherId && offering.course?._id) {
+      try {
+        await COPORequest.updateMany(
+          {
+            course: offering.course._id,
+            teacher: oldTeacherId,
+            status: "pending",
+          },
+          {
+            $set: { teacher: newTeacherId },
+          }
+        );
+      } catch (reqErr) {
+        console.warn("Failed to transfer pending CO-PO requests:", reqErr);
+      }
+    }
+
+    const populated = await CourseOffering.findById(offering._id)
+      .populate("course")
+      .populate("batch")
+      .populate("semester")
+      .populate("teacher", "fullName email");
+
+    res.status(200).json({
+      message: `Course offering successfully transferred to ${newTeacherDoc.fullName}. All assessment records, marks, and student data are preserved.`,
+      offering: populated,
+    });
+  } catch (error) {
+    console.error("Error in PUT /course-offerings/:id/replace-teacher:", error);
+    res.status(500).json({
+      message: "Error replacing instructor for course offering",
       error: error.message,
     });
   }
@@ -1416,19 +1518,21 @@ router.get("/course-offerings/:id/students", requireAuth, async (req, res) => {
   try {
     const offering = await CourseOffering.findById(req.params.id);
     const sectionDoc = offering && offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null;
     const sectionId = sectionDoc ? sectionDoc._id : null;
 
     const enrollments = await Enrollment.find({
       courseOffering: req.params.id,
-    }).populate("student");
+    }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] });
     const students = enrollments
-      .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+      .filter((e) => isStudentInSection(e, sectionId))
       .map((e) => ({
         _id: e.student._id,
         id: e.student.studentId,
         name: e.student.name,
+        enrollmentType: e.enrollmentType || 'regular',
+        originalBatch: e.enrollmentType === 'retake' ? (e.student.batchId?.name || '') : '',
       }));
     res.status(200).json({ students });
   } catch (error) {
@@ -1496,6 +1600,152 @@ router.post("/course-offerings/:id/students", requireAuth, async (req, res) => {
     res
       .status(500)
       .json({ message: "Error enrolling student", error: error.message });
+  }
+});
+
+// ======================== RETAKE STUDENT MANAGEMENT ========================
+
+// List retake students for an offering
+router.get("/offerings/:offeringId/retake-students", requireAuth, async (req, res) => {
+  try {
+    const enrollments = await Enrollment.find({
+      courseOffering: req.params.offeringId,
+      enrollmentType: 'retake'
+    }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] });
+
+    const students = enrollments
+      .filter(e => e.student)
+      .map(e => ({
+        _id: e.student._id,
+        studentId: e.student.studentId,
+        name: e.student.name,
+        originalBatch: e.student.batchId?.name || '',
+        originalSection: e.student.sectionId?.sectionName || '',
+        enrolledAt: e.createdAt
+      }))
+      .sort((a, b) => {
+        return String(a.studentId || '').localeCompare(String(b.studentId || ''));
+      });
+
+    res.status(200).json({ students });
+  } catch (error) {
+    console.error('Error fetching retake students:', error.message);
+    res.status(500).json({ message: 'Error fetching retake students', error: error.message });
+  }
+});
+
+// Enroll a student as retake
+router.post("/offerings/:offeringId/retake-students", requireAuth, async (req, res) => {
+  try {
+    const { studentId } = req.body; // Student ObjectId
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+
+    const offering = await CourseOffering.findById(req.params.offeringId).populate('course').populate('batch');
+    if (!offering) {
+      return res.status(404).json({ message: 'Course offering not found.' });
+    }
+
+    const student = await Student.findById(studentId).populate('batchId');
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found.' });
+    }
+
+    // Check if already enrolled
+    const existing = await Enrollment.findOne({
+      student: studentId,
+      courseOffering: req.params.offeringId
+    });
+    if (existing) {
+      return res.status(409).json({ message: 'Student is already enrolled in this course offering.' });
+    }
+
+    const enrollment = await Enrollment.create({
+      student: studentId,
+      courseOffering: req.params.offeringId,
+      enrollmentType: 'retake'
+    });
+
+    // Log activity
+    try {
+      await logActivity({
+        type: 'retake_enrollment',
+        title: 'Retake Student Enrolled',
+        description: `${student.studentId} (${student.studentName}) enrolled as retake in ${offering.course?.courseCode || 'N/A'}`,
+        courseOffering: req.params.offeringId,
+        user: req.user._id
+      });
+    } catch (logErr) {
+      console.error('Activity log error:', logErr.message);
+    }
+
+    res.status(201).json({
+      message: 'Retake student enrolled successfully.',
+      enrollment: {
+        _id: enrollment._id,
+        studentId: student.studentId,
+        name: student.studentName,
+        originalBatch: student.batchId?.name || ''
+      }
+    });
+  } catch (error) {
+    console.error('Error enrolling retake student:', error.message);
+    res.status(500).json({ message: 'Error enrolling retake student', error: error.message });
+  }
+});
+
+// Remove a retake enrollment
+router.delete("/offerings/:offeringId/retake-students/:studentId", requireAuth, async (req, res) => {
+  try {
+    const result = await Enrollment.deleteOne({
+      student: req.params.studentId,
+      courseOffering: req.params.offeringId,
+      enrollmentType: 'retake'
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: 'Retake enrollment not found.' });
+    }
+
+    res.status(200).json({ message: 'Retake enrollment removed successfully.' });
+  } catch (error) {
+    console.error('Error removing retake student:', error.message);
+    res.status(500).json({ message: 'Error removing retake student', error: error.message });
+  }
+});
+
+// Get retake candidates (students from a batch/section NOT yet enrolled)
+router.get("/offerings/:offeringId/retake-candidates", requireAuth, async (req, res) => {
+  try {
+    const { batchId, sectionId } = req.query;
+    if (!batchId) {
+      return res.status(400).json({ message: 'batchId query parameter is required.' });
+    }
+
+    const query = { batchId };
+    if (sectionId) {
+      query.sectionId = sectionId;
+    }
+
+    const studentsInBatch = await Student.find(query).sort({ studentId: 1 });
+
+    // Get already enrolled student IDs
+    const existingEnrollments = await Enrollment.find({ courseOffering: req.params.offeringId });
+    const enrolledStudentIds = new Set(existingEnrollments.map(e => e.student.toString()));
+
+    const candidates = studentsInBatch
+      .filter(s => !enrolledStudentIds.has(s._id.toString()))
+      .map(s => ({
+        _id: s._id,
+        studentId: s.studentId,
+        name: s.studentName
+      }));
+
+    res.status(200).json({ candidates });
+  } catch (error) {
+    console.error('Error fetching retake candidates:', error.message);
+    res.status(500).json({ message: 'Error fetching retake candidates', error: error.message });
   }
 });
 
@@ -1819,16 +2069,16 @@ router.get("/course-offerings/:id/marks", requireAuth, async (req, res) => {
 
     const offering = await CourseOffering.findById(courseOfferingId);
     const sectionDoc = offering && offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null;
     const sectionId = sectionDoc ? sectionDoc._id : null;
 
     // Fetch all enrollments to get student list
     const enrollments = await Enrollment.find({
       courseOffering: courseOfferingId,
-    }).populate("student");
+    }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] });
     const validEnrollments = enrollments.filter(
-      (e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString()))
+      (e) => isStudentInSection(e, sectionId)
     );
 
     const studentMap = new Map(
@@ -1904,17 +2154,17 @@ router.post("/course-offerings/:id/marks", requireAuth, async (req, res) => {
 
     const offering = await CourseOffering.findById(courseOfferingId);
     const sectionDoc = offering && offering.batch
-      ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+      ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
       : null;
     const sectionId = sectionDoc ? sectionDoc._id : null;
 
     const enrollments = await Enrollment.find({
       courseOffering: courseOfferingId,
-    }).populate("student");
+    }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] });
 
     // Filter out null student references
     const validEnrollments = enrollments.filter(
-      (e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString()))
+      (e) => isStudentInSection(e, sectionId)
     );
     if (validEnrollments.length === 0) {
       return res
@@ -2038,16 +2288,16 @@ router.get(
       };
 
       const sectionDoc = offering.batch
-        ? await Section.findOne({ batchId: offering.batch, sectionName: offering.section })
+        ? await Section.findOne({ batchId: offering.batch._id || offering.batch, sectionName: offering.section })
         : null;
       const sectionId = sectionDoc ? sectionDoc._id : null;
 
       // 3. Fetch students
       const enrollments = await Enrollment.find({
         courseOffering: courseOfferingId,
-      }).populate("student");
+      }).populate({ path: 'student', populate: [{ path: 'batchId' }, { path: 'sectionId' }] });
       const students = enrollments
-        .filter((e) => e.student && (!sectionId || (e.student.sectionId && e.student.sectionId.toString() === sectionId.toString())))
+        .filter((e) => isStudentInSection(e, sectionId))
         .map((e) => ({
           _id: e.student._id,
           id: e.student.studentId,

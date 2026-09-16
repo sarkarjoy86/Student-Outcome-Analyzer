@@ -362,8 +362,8 @@ async function checkStudentSurveyAccess(student, primaryOffering) {
   if (student.batchId && student.batchId.toString() === (primaryOffering.batch._id || primaryOffering.batch).toString()) {
     for (const off of sameTeacherOfferings) {
       const sectionDoc = await SectionModel.findOne({ batchId: off.batch, sectionName: off.section });
-      const sectionId = sectionDoc ? sectionDoc._id : null;
-      if (!sectionId || (student.sectionId && student.sectionId.toString() === sectionId.toString())) {
+      const studentSecId = (student.sectionId?._id || student.sectionId);
+      if (!sectionId || (studentSecId && studentSecId.toString() === sectionId.toString())) {
         return true;
       }
     }

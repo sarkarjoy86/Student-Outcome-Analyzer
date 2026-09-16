@@ -116,7 +116,10 @@ async function fetchWithDefaults(url, options = {}) {
 async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `API request failed (HTTP ${response.status}).`;
+    const errorMsg =
+      data.message && data.error && data.message !== data.error
+        ? `${data.message}: ${data.error}`
+        : (data.message || data.error || (typeof data === 'string' ? data : null) || `API request failed (HTTP ${response.status}).`);
     const error = new Error(errorMsg);
     error.response = data;
     error.status = response.status;
@@ -280,7 +283,7 @@ export const apiService = {
   },
 
   async getBatches() {
-    const res = await fetchWithDefaults(`${API_BASE}/api/batches`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches`, { skipCache: true });
     return handleResponse(res);
   },
 
@@ -310,6 +313,7 @@ export const apiService = {
   async getBatchStudents(batchId) {
     const res = await fetchWithDefaults(
       `${API_BASE}/api/batches/${batchId}/students`,
+      { skipCache: true }
     );
     return handleResponse(res);
   },
@@ -347,8 +351,11 @@ export const apiService = {
   },
 
   // Course Offerings
-  async getCourseOfferings() {
-    const res = await fetchWithDefaults(`${API_BASE}/api/course-offerings`);
+  async getCourseOfferings(options = {}) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/course-offerings`, {
+      skipCache: true,
+      ...options,
+    });
     return handleResponse(res);
   },
 
@@ -369,6 +376,14 @@ export const apiService = {
 
   async updateCourseOffering(id, payload) {
     const res = await fetchWithDefaults(`${API_BASE}/api/course-offerings/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async replaceCourseOfferingTeacher(id, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/course-offerings/${id}/replace-teacher`, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -491,6 +506,34 @@ export const apiService = {
     return handleResponse(res);
   },
 
+  // Retake Student Management
+  async getRetakeStudents(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/offerings/${offeringId}/retake-students`);
+    return handleResponse(res);
+  },
+
+  async addRetakeStudent(offeringId, studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/offerings/${offeringId}/retake-students`, {
+      method: "POST",
+      body: JSON.stringify({ studentId }),
+    });
+    return handleResponse(res);
+  },
+
+  async removeRetakeStudent(offeringId, studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/offerings/${offeringId}/retake-students/${studentId}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  async getRetakeCandidates(offeringId, batchId, sectionId) {
+    let url = `${API_BASE}/api/offerings/${offeringId}/retake-candidates?batchId=${batchId}`;
+    if (sectionId) url += `&sectionId=${sectionId}`;
+    const res = await fetchWithDefaults(url);
+    return handleResponse(res);
+  },
+
   async createAssessment(offeringId, payload) {
     const res = await fetchWithDefaults(`${API_BASE}/api/teacher/course-offerings/${offeringId}/assessments`, {
       method: "POST",
@@ -575,7 +618,7 @@ export const apiService = {
   },
 
   async getSections(batchId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections`, { skipCache: true });
     return handleResponse(res);
   },
 
@@ -595,7 +638,7 @@ export const apiService = {
   },
 
   async getSectionStudents(batchId, sectionId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students`);
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students`, { skipCache: true });
     return handleResponse(res);
   },
 

@@ -385,6 +385,71 @@ router.delete("/admin/users/:id", async (req, res) => {
   }
 });
 
+router.put("/admin/users/:id", async (req, res) => {
+  const dbReady = await ensureDatabase(res);
+  if (!dbReady) return;
+  if (!requireAdminRequest(req, res)) return;
+  try {
+    const userId = req.params.id;
+    const { fullName = "", email = "" } = req.body || {};
+
+    if (!fullName.trim()) {
+      return res.status(400).json({ message: "Full name is required." });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+
+    if (!isValidEmailFormat(normalizedEmail)) {
+      return res.status(400).json({ message: "Please enter a valid email address format." });
+    }
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    if (targetUser.role === "admin") {
+      return res.status(403).json({ message: "Cannot edit admin accounts." });
+    }
+
+    // Check if another user is already using this email
+    const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: userId } });
+    if (existing) {
+      return res.status(409).json({ message: "This email address is already registered to another faculty member." });
+    }
+
+    targetUser.fullName = fullName.trim();
+    targetUser.email = normalizedEmail;
+    await targetUser.save();
+
+    // Consistently update COPORequest records for this teacher
+    try {
+      const COPORequest = (await import("../models/COPORequest.js")).default;
+      await COPORequest.updateMany(
+        { teacher: userId },
+        { teacherName: targetUser.fullName, teacherEmail: targetUser.email }
+      );
+    } catch (e) {
+      console.warn("Could not update COPORequest records:", e);
+    }
+
+    return res.status(200).json({
+      message: "Faculty member updated successfully.",
+      user: {
+        id: targetUser._id,
+        fullName: targetUser.fullName,
+        email: targetUser.email,
+        role: targetUser.role || "user",
+      },
+    });
+  } catch (error) {
+    console.error("Error updating user:", error);
+    return res.status(500).json({ message: "Server error. Please try again." });
+  }
+});
+
 router.post("/admin/users/reset-password", async (req, res) => {
   const dbReady = await ensureDatabase(res);
   if (!dbReady) return;

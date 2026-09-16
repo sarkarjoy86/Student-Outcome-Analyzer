@@ -407,9 +407,7 @@ export default function StudentManagement({ offering, onComplete }) {
                   <tbody className="divide-y divide-gray-200">
                     {[...students]
                       .sort((a, b) => {
-                        const numA = parseInt((a.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                        const numB = parseInt((b.id || '').toString().replace(/^\D+/g, ''), 10) || 0
-                        return numA - numB
+                        return String(a.id || '').localeCompare(String(b.id || ''))
                       })
                       .map((student) => (
                         <tr key={student.id} className="hover:bg-gray-50/50">
