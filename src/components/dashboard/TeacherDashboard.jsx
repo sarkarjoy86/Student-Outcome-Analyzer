@@ -623,7 +623,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showPreviewPaper, setShowPreviewPaper] = useState(null) // holds paper doc
   const [isTableFullscreen, setIsTableFullscreen] = useState(false)
-  const [marksEntryMode, setMarksEntryMode] = useState('perQuestion') // 'perQuestion' or 'total'
+  const [marksEntryMode, setMarksEntryMode] = useState('total') // 'total' or 'perQuestion'
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -3881,8 +3881,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                                       : 'border-green-400 bg-white text-green-900 focus:ring-2 focus:ring-green-500 cursor-pointer'
                                   }`}
                                 >
-                                  <option value="perQuestion">Per Question (Q1, Q2...)</option>
                                   <option value="total" disabled={hasDifferentCOs}>Total Marks (Single Entry)</option>
+                                  <option value="perQuestion">Per Question (Q1, Q2...)</option>
                                 </select>
                               </div>
                               {hasDifferentCOs && (
