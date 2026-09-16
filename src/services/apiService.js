@@ -131,6 +131,137 @@ async function handleResponse(response) {
   return data;
 }
 
+/**
+ * Executes a fetch request with automatic retries for cold starts and transient errors.
+ * Specifically mitigates serverless/Render container cold-start spin-up latency.
+ */
+export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
+  const {
+    maxRetries = 5,
+    backoff = [2000, 3000, 5000, 8000, 12000],
+    maxTotalTimeMs = 90000,
+    onProgress = null,
+    signal = null
+  } = retryConfig;
+
+  const startTime = Date.now();
+  let attempt = 0;
+
+  while (attempt <= maxRetries) {
+    if (signal && signal.aborted) {
+      const abortErr = new Error('Request cancelled by user.');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+
+    const elapsedMs = Date.now() - startTime;
+    if (elapsedMs >= maxTotalTimeMs) {
+      throw new Error(`AI operation timed out after ${Math.round(elapsedMs / 1000)}s while waiting for service to wake up.`);
+    }
+
+    try {
+      if (attempt > 0 && onProgress) {
+        onProgress({
+          attempt,
+          maxAttempts: maxRetries,
+          elapsedSec: Math.round(elapsedMs / 1000),
+          statusMsg: `Waking up AI microservice (Attempt ${attempt}/${maxRetries})...`
+        });
+      }
+
+      const res = await fetchWithDefaults(url, {
+        ...options,
+        signal: signal || options.signal
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      // Check if response indicates cold start / warming up
+      const isColdStart =
+        res.status === 502 ||
+        res.status === 503 ||
+        res.status === 504 ||
+        data.status === 'warming' ||
+        (typeof data.message === 'string' && data.message.toLowerCase().includes('warming'));
+
+      if (!res.ok || data.success === false) {
+        if (isColdStart && attempt < maxRetries) {
+          attempt++;
+          const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 5000;
+          if (onProgress) {
+            onProgress({
+              attempt,
+              maxAttempts: maxRetries,
+              elapsedSec: Math.round((Date.now() - startTime) / 1000),
+              statusMsg: `AI service is waking up from standby... retrying in ${Math.round(waitTime / 1000)}s`
+            });
+          }
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, waitTime);
+            if (signal) {
+              signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                const abortErr = new Error('Request cancelled by user.');
+                abortErr.name = 'AbortError';
+                reject(abortErr);
+              }, { once: true });
+            }
+          });
+          continue;
+        }
+
+        const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `Request failed with status ${res.status}`;
+        const error = new Error(errorMsg);
+        error.response = data;
+        error.status = res.status;
+        throw error;
+      }
+
+      return data;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw err;
+      }
+
+      const isNetworkError = err.message && (
+        err.message.includes('Failed to fetch') ||
+        err.message.includes('NetworkError') ||
+        err.message.includes('ECONNREFUSED') ||
+        err.message.includes('timeout')
+      );
+
+      if (isNetworkError && attempt < maxRetries) {
+        attempt++;
+        const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 5000;
+        if (onProgress) {
+          onProgress({
+            attempt,
+            maxAttempts: maxRetries,
+            elapsedSec: Math.round((Date.now() - startTime) / 1000),
+            statusMsg: `Connecting to AI service... attempt ${attempt}/${maxRetries}`
+          });
+        }
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, waitTime);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              const abortErr = new Error('Request cancelled by user.');
+              abortErr.name = 'AbortError';
+              reject(abortErr);
+            }, { once: true });
+          }
+        });
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw new Error('AI microservice request failed after maximum retries.');
+}
+
 export const apiService = {
   clearCache: clearApiCache,
   // Academic Sessions
@@ -586,12 +717,73 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  async checkQuestionSimilarity(payload) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/ai/similarity-check`, {
+  // =============================================
+  // AI Microservice Resilience & Cold-Start APIs
+  // =============================================
+  async getMLStatus(timeout = 6000) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/ai/ml-status?timeout=${timeout}`, { skipCache: true });
+    return handleResponse(res);
+  },
+
+  async wakeMLService(options = {}) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/ai/ml-wake`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(options),
+      skipCache: true
     });
     return handleResponse(res);
+  },
+
+  async sendMLHeartbeat() {
+    const res = await fetchWithDefaults(`${API_BASE}/api/ai/ml-heartbeat`, {
+      method: "POST",
+      skipCache: true
+    });
+    return handleResponse(res);
+  },
+
+  async suggestMetadata(payload, options = {}) {
+    return fetchWithRetry(
+      `${API_BASE}/api/ai/suggest-metadata`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      options
+    );
+  },
+
+  async checkQuestionSimilarity(payload, options = {}) {
+    return fetchWithRetry(
+      `${API_BASE}/api/ai/similarity-check`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      options
+    );
+  },
+
+  async rteAssist(payload, options = {}) {
+    return fetchWithRetry(
+      `${API_BASE}/api/ai/rte-assist`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      options
+    );
+  },
+
+  async smartCodeOutput(payload, options = {}) {
+    return fetchWithRetry(
+      `${API_BASE}/api/ai/smart-code-output`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      options
+    );
   },
 
   async getMarksSpreadsheet(offeringId) {

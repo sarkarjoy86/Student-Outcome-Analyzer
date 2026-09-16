@@ -51,6 +51,7 @@ const PORecommendationMatrix = lazy(() => import('../reports/PORecommendationMat
 import { calculateAllAttainments } from '../../utils/comprehensiveCalculations'
 import ReferenceNotesModal from './ReferenceNotesModal'
 import { getNotesStatus, getNormalizedCourseKey, getCachedNotesStatus } from '../../services/notesApi'
+import { useMLServiceWakeup } from '../../hooks/useMLServiceWakeup'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -146,6 +147,15 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const activeCourseId = getNormalizedCourseKey(offering)
   const [showNotesModal, setShowNotesModal] = useState(false)
   const [notesStatus, setNotesStatus] = useState(() => getCachedNotesStatus(activeCourseId))
+
+  // JIT Silent Background Pre-Warming Engine for ML Microservice
+  const { wakeUp: wakeUpMLService } = useMLServiceWakeup({ autoWarm: false })
+
+  useEffect(() => {
+    if (activeTab === 'assessments') {
+      wakeUpMLService({ silent: true })
+    }
+  }, [activeTab, wakeUpMLService])
 
   const fetchNotesStatus = useCallback(async () => {
     if (!activeCourseId) return
@@ -1455,6 +1465,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       alert('This assessment is for direct marks entry only and does not require a question paper. Please enter marks in the Marks Entry tab.');
       return;
     }
+    wakeUpMLService({ silent: true });
     setActiveAssessmentForPaper(assessment);
     if (pushHistory && offering?._id && assessment?._id) {
       const url = new URL(window.location.href);
@@ -3069,6 +3080,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           {!isDirectMarksType ? (
                             <button
                               onClick={() => handleOpenQuestionPaper(a)}
+                              onMouseEnter={() => wakeUpMLService({ silent: true })}
+                              onFocus={() => wakeUpMLService({ silent: true })}
                               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all cursor-pointer"
                             >
                               <Edit size={14} />

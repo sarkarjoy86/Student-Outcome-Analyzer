@@ -3,8 +3,8 @@ import multer from 'multer';
 
 const router = express.Router();
 
-const ML_SERVICE_BASE = (process.env.ML_SERVICE_URL || process.env.NLP_SERVICE_URL || 'http://127.0.0.1:8000').replace('localhost', '127.0.0.1');
-const ML_TIMEOUT_MS = 60_000;
+const ML_SERVICE_BASE = (process.env.ML_SERVICE_URL || process.env.NLP_SERVICE_URL || 'http://127.0.0.1:8000').replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+const ML_TIMEOUT_MS = 90_000; // 90-second timeout for Render cold-starts
 
 // Configure Multer for in-memory file uploads (up to 20MB)
 const storage = multer.memoryStorage();

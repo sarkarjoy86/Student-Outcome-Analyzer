@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { apiService } from '../../services/apiService'
 import { useAuth } from '../../context/AuthContext'
+import { useMLServiceWakeup } from '../../hooks/useMLServiceWakeup'
 import {
   HtmlEditor,
   Image,
@@ -1940,8 +1941,30 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [coDetails, setCoDetails] = useState([]) // Full CO objects with code + description
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadingCount, setUploadingCount] = useState(0)
-  const [showBlobWarning, setShowBlobWarning] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Strictly Scoped Keep-Alive Heartbeat for ML Service (Render Cold-Start Mitigation)
+  const { status: mlStatus, isWarming: isMlWarming } = useMLServiceWakeup({ isEditingSession: true })
+
+  // Non-blocking Toast Notification State
+  const [notifications, setNotifications] = useState([])
+
+  const showNotification = useCallback((message, type = 'info', duration = 4500) => {
+    const id = Date.now() + Math.random().toString(36).substring(2, 7)
+    setNotifications(prev => [...prev, { id, message, type }])
+    if (duration > 0) {
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id))
+      }, duration)
+    }
+  }, [])
+
+  const dismissNotification = useCallback((id) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+  }, [])
+
+  // Non-blocking AI Cold-Start Warming Indicator Overlay
+  const [aiWarmingInfo, setAiWarmingInfo] = useState(null)
 
   // Handle Fullscreen Toggle with 100% Content Preservation
   const handleToggleFullscreen = useCallback(() => {
@@ -2262,10 +2285,15 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         }
       })
 
-      const res = await apiService.checkQuestionSimilarity({
-        currentPaperText: currentPlainText,
-        archivedPapers: archivedPayload
-      })
+      const res = await apiService.checkQuestionSimilarity(
+        {
+          currentPaperText: currentPlainText,
+          archivedPapers: archivedPayload
+        },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
 
       if (res.success) {
         setSimilarityResults(res)
@@ -2277,6 +2305,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       setSimilarityError(err.message || 'Error occurred while running similarity check.')
     } finally {
       setSimilarityLoading(false)
+      setAiWarmingInfo(null)
     }
   }
 
@@ -2818,7 +2847,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   // AI Equation Creator Handlers
   const handleGenerateEquationWithAi = async () => {
     if (!aiEquationPrompt.trim()) {
-      alert('Please describe the equation you want to create.')
+      showNotification('Please describe the equation you want to create.', 'warning')
       return
     }
     setAiEquationGenerating(true)
@@ -2836,14 +2865,13 @@ IMPORTANT RULES:
 Equation description: "${aiEquationPrompt}"`
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
-      const response = await fetch(`${API_BASE}/api/ai/rte-assist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ prompt })
-      })
-      const data = await response.json()
-      if (data.success && data.content) {
+      const data = await apiService.rteAssist(
+        { prompt },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
+      if (data && data.success && data.content) {
         // Clean the AI response - strip any markdown code fences, dollar signs, or whitespace wrappers
         let cleanLatex = data.content.trim()
         cleanLatex = cleanLatex.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '')
@@ -2851,19 +2879,21 @@ Equation description: "${aiEquationPrompt}"`
         cleanLatex = cleanLatex.replace(/^\\\[\s*/, '').replace(/\s*\\\]$/, '')
         cleanLatex = cleanLatex.trim()
         setAiEquationLatex(cleanLatex)
+        showNotification('LaTeX equation generated successfully!', 'success')
       } else {
-        alert(data.message || 'AI equation generation failed.')
+        showNotification(data?.message || 'AI equation generation failed.', 'error')
       }
     } catch (err) {
-      alert('Error generating equation: ' + err.message)
+      showNotification('Error generating equation: ' + err.message, 'error')
     } finally {
       setAiEquationGenerating(false)
+      setAiWarmingInfo(null)
     }
   }
 
   const handleInsertAiEquation = () => {
     if (!aiEquationLatex.trim()) {
-      alert('Please enter or generate a LaTeX equation first.')
+      showNotification('Please enter or generate a LaTeX equation first.', 'warning')
       return
     }
     const editor = rteRef.current
@@ -5336,7 +5366,7 @@ Equation description: "${aiEquationPrompt}"`
     }
 
     if (!selText) {
-      alert('Please select a question or line of text first to verify its CO & Bloom level.')
+      showNotification('Please select a question or line of text first to verify its CO & Bloom level.', 'warning')
       return
     }
 
@@ -5353,41 +5383,38 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifySuccessMsg('')
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
       const outcomesPayload = (coDetails && coDetails.length > 0)
         ? coDetails
         : availableCOs.map(c => ({ code: c, description: `Course Outcome description for ${offering?.course?.title || c}` }))
 
-      const res = await fetch(`${API_BASE}/api/ai/suggest-metadata`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          questionText: aiVerifySelection.selectedText,
+      const data = await apiService.suggestMetadata(
+        {
+          questionText: aiVerifySelection?.selectedText || selText,
           courseOutcomes: outcomesPayload
-        })
-      })
+        },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
 
-      const data = await res.json()
       if (data && data.success) {
         setAiVerifyResult({
           bloom: data.bloom,
           co: data.co
         })
       } else {
-        alert(data?.message || 'Failed to analyze question with OBE AI Engine.')
+        showNotification(data?.message || 'Failed to analyze question with OBE AI Engine.', 'error')
         setShowAiVerifyPopover(false)
       }
     } catch (err) {
       console.error('AI Verify error:', err)
-      alert('Failed to connect to AI metadata verification service: ' + err.message)
+      showNotification('Failed to connect to AI metadata verification service: ' + err.message, 'error')
       setShowAiVerifyPopover(false)
     } finally {
       setAiVerifyLoading(false)
+      setAiWarmingInfo(null)
     }
-  }, [aiVerifySelection, calculateClampedPosition, coDetails, availableCOs, offering])
+  }, [aiVerifySelection, calculateClampedPosition, coDetails, availableCOs, offering, showNotification])
 
   // Helper: Trigger AI Tag Verifier for newly inserted suggested question text
   const triggerAiVerifyForText = useCallback(async (text, rect = null) => {
@@ -5413,24 +5440,20 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifySuccessMsg('')
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
       const outcomesPayload = (coDetails && coDetails.length > 0)
         ? coDetails
         : availableCOs.map(c => ({ code: c, description: `Course Outcome description for ${offering?.course?.title || c}` }))
 
-      const res = await fetch(`${API_BASE}/api/ai/suggest-metadata`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
+      const data = await apiService.suggestMetadata(
+        {
           questionText: text,
           courseOutcomes: outcomesPayload
-        })
-      })
+        },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
 
-      const data = await res.json()
       if (data && data.success) {
         setAiVerifyResult({
           bloom: data.bloom,
@@ -5441,6 +5464,7 @@ Equation description: "${aiEquationPrompt}"`
       console.warn('Auto AI Verify error on note insert:', err)
     } finally {
       setAiVerifyLoading(false)
+      setAiWarmingInfo(null)
     }
   }, [calculateClampedPosition, coDetails, availableCOs, offering])
 
@@ -6361,10 +6385,10 @@ Equation description: "${aiEquationPrompt}"`
       }
       setRestoredPaperDraftInfo(null)
 
-      alert('Question paper, metadata, and assessment settings saved successfully!')
+      showNotification('Question paper, metadata, and assessment settings saved successfully!', 'success')
       loadPaperData()
     } catch (err) {
-      alert('Failed to save question paper: ' + err.message)
+      showNotification('Failed to save question paper: ' + err.message, 'error')
     } finally {
       setSaving(false)
     }
@@ -8540,7 +8564,7 @@ Equation description: "${aiEquationPrompt}"`
           }
         } catch (err) {
           console.error('Error converting file:', err)
-          alert('Failed to convert Word file: ' + err.message)
+          showNotification('Failed to convert Word file: ' + err.message, 'error')
         }
       }
       reader.readAsArrayBuffer(file)
@@ -8652,7 +8676,7 @@ Equation description: "${aiEquationPrompt}"`
     if (imgCount + uploadingCountRef.current >= 10) {
       args.cancel = true;
       setUploadStatus('❌ Upload failed: A maximum of 10 images are allowed per question paper.');
-      alert('A maximum of 10 images are allowed per question paper.');
+      showNotification('A maximum of 10 images are allowed per question paper.', 'warning');
       return;
     }
 
@@ -8755,7 +8779,7 @@ Equation description: "${aiEquationPrompt}"`
           const newFilesCount = selectArgs.filesData.length;
           if (imgCount + uploadingCountRef.current + newFilesCount > 10) {
             selectArgs.cancel = true;
-            alert('A maximum of 10 images are allowed per question paper.');
+            showNotification('A maximum of 10 images are allowed per question paper.', 'warning');
           }
         };
       }
@@ -8784,7 +8808,7 @@ Equation description: "${aiEquationPrompt}"`
     const sel = editorDoc ? editorDoc.getSelection() : window.getSelection()
     const selectedText = sel ? sel.toString().trim() : ''
     if (!selectedText) {
-      alert('Please select some text first, then use AI commands.')
+      showNotification('Please select some text first, then use AI commands.', 'warning')
       return
     }
 
@@ -8814,14 +8838,13 @@ Equation description: "${aiEquationPrompt}"`
 
     setAiProcessing(true)
     try {
-      const token = localStorage.getItem('obe-auth-token')
-      const response = await fetch(`${API_BASE}/api/ai/rte-assist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ prompt, selectedText })
-      })
-      const data = await response.json()
-      if (data.success && data.content) {
+      const data = await apiService.rteAssist(
+        { prompt, selectedText },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
+      if (data && data.success && data.content) {
         setAiPreview({
           originalText: selectedText,
           suggestedText: data.content,
@@ -8829,13 +8852,14 @@ Equation description: "${aiEquationPrompt}"`
           commandLabel
         })
       } else {
-        alert(data.message || 'AI processing failed. Please try again.')
+        showNotification(data?.message || 'AI processing failed. Please try again.', 'error')
       }
     } catch (err) {
       console.error('AI command error:', err)
-      alert('Failed to process AI command: ' + err.message)
+      showNotification('Failed to process AI command: ' + err.message, 'error')
     } finally {
       setAiProcessing(false)
+      setAiWarmingInfo(null)
     }
   }
 
@@ -8914,7 +8938,7 @@ Equation description: "${aiEquationPrompt}"`
 
   const handleGenerateQuestion = async () => {
     if (!questionGenParams.topic) {
-      alert('Please enter a topic or syllabus description.')
+      showNotification('Please enter a topic or syllabus description.', 'warning')
       return
     }
     setIsGeneratingQuestion(true)
@@ -8980,14 +9004,13 @@ EXAMINATION STRUCTURE & OBE TAGGING:
 5. Output ONLY the finalized exam questions ready for the question paper. Do NOT include conversational preambles or code fences.`
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
-      const response = await fetch(`${API_BASE}/api/ai/rte-assist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ prompt })
-      })
-      const data = await response.json()
-      if (data.success && data.content) {
+      const data = await apiService.rteAssist(
+        { prompt },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
+      if (data && data.success && data.content) {
         let questionsArray = data.content
           .split(/===QUESTION_BREAK===/i)
           .map(q => q.trim())
@@ -9008,13 +9031,15 @@ EXAMINATION STRUCTURE & OBE TAGGING:
         setSelectedQuestionIndex(0)
         // Select all generated questions by default so user can easily insert both/all or toggle
         setSelectedQuestionIndices(finalQuestions.map((_, i) => i))
+        showNotification(`Successfully generated ${finalQuestions.length} OBE exam question(s)!`, 'success')
       } else {
-        alert(data.message || 'Question generation failed.')
+        showNotification(data?.message || 'Question generation failed.', 'error')
       }
     } catch (err) {
-      alert('Error generating question: ' + err.message)
+      showNotification('Error generating question: ' + err.message, 'error')
     } finally {
       setIsGeneratingQuestion(false)
+      setAiWarmingInfo(null)
     }
   }
 
@@ -9210,7 +9235,7 @@ EXAMINATION STRUCTURE & OBE TAGGING:
 
   const handleGenerateTableWithAi = async () => {
     if (!tableAiPrompt) {
-      alert('Please enter a table topic or description.')
+      showNotification('Please enter a table topic or description.', 'warning')
       return
     }
     setIsGeneratingTable(true)
@@ -9218,35 +9243,36 @@ EXAMINATION STRUCTURE & OBE TAGGING:
 Return ONLY comma-separated lines. The first line MUST be headers. The following lines MUST be row values. Do not include markdown code block syntax or preambles.`
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
-      const response = await fetch(`${API_BASE}/api/ai/rte-assist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ prompt })
-      })
-      const data = await response.json()
-      if (data.success && data.content) {
+      const data = await apiService.rteAssist(
+        { prompt },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
+      if (data && data.success && data.content) {
         const lines = data.content.trim().split('\n').filter(Boolean)
         if (lines.length > 0) {
           const parsedHeaders = lines[0].split(',').map(h => h.trim())
           const parsedRows = lines.slice(1).map(l => l.split(',').map(c => c.trim()))
           setTableGridHeaders(parsedHeaders)
           setTableGridRows(parsedRows)
+          showNotification('Table generated successfully!', 'success')
         }
       } else {
-        alert(data.message || 'Table generation failed.')
+        showNotification(data?.message || 'Table generation failed.', 'error')
       }
     } catch (err) {
-      alert('Error generating table: ' + err.message)
+      showNotification('Error generating table: ' + err.message, 'error')
     } finally {
       setIsGeneratingTable(false)
+      setAiWarmingInfo(null)
     }
   }
 
   const handleInsertTable = () => {
     if (!rteRef.current) return
     if (tableGridHeaders.length === 0) {
-      alert('Please specify table headers.')
+      showNotification('Please specify table headers.', 'warning')
       return
     }
 
@@ -9965,7 +9991,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     const codeToRun = (overrideCode !== null ? overrideCode : codeContent || '').trim()
     const langToRun = overrideLang || codeLanguage || 'cpp'
     if (!codeToRun) {
-      alert('Please enter or paste code first to analyze its execution output.')
+      showNotification('Please enter or paste code first to analyze its execution output.', 'warning')
       return
     }
 
@@ -9974,20 +10000,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     setSmartOutputResult(null)
 
     try {
-      const token = localStorage.getItem('obe-auth-token')
-      const res = await fetch(`${API_BASE}/api/ai/smart-code-output`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
+      const data = await apiService.smartCodeOutput(
+        {
           code: codeToRun,
           language: langToRun
-        })
-      })
+        },
+        {
+          onProgress: (info) => setAiWarmingInfo(info)
+        }
+      )
 
-      const data = await res.json()
       if (data && data.success && data.data) {
         setSmartOutputResult(data.data)
       } else {
@@ -9998,6 +10020,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       setSmartOutputError('Failed to connect to smart output service: ' + err.message)
     } finally {
       setSmartOutputLoading(false)
+      setAiWarmingInfo(null)
     }
   }
 
@@ -10135,7 +10158,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
   const handleInsertCodeSnippet = () => {
     if (!codeContent.trim()) {
-      alert('Please enter or select code first.')
+      showNotification('Please enter or select code first.', 'warning')
       return
     }
 
@@ -10625,7 +10648,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     if (!editor) return
     const sel = window.getSelection()
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      alert('Please highlight/select lines or list items first to sort them alphabetically.')
+      showNotification('Please highlight/select lines or list items first to sort them alphabetically.', 'warning')
       return
     }
     const text = sel.toString()
@@ -17120,7 +17143,75 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           }
         }}
       />
+
+      {/* Non-Blocking Toast Notifications Container */}
+      <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
+        {notifications.map(n => {
+          let bg = 'bg-slate-900/90 text-white border-slate-700'
+          let IconComp = Sparkles
+          let iconColor = 'text-blue-400'
+
+          if (n.type === 'success') {
+            bg = 'bg-emerald-950/90 text-emerald-100 border-emerald-600/50'
+            IconComp = CheckCircle2
+            iconColor = 'text-emerald-400'
+          } else if (n.type === 'error') {
+            bg = 'bg-rose-950/90 text-rose-100 border-rose-600/50'
+            IconComp = AlertCircle
+            iconColor = 'text-rose-400'
+          } else if (n.type === 'warning') {
+            bg = 'bg-amber-950/90 text-amber-100 border-amber-600/50'
+            IconComp = AlertTriangle
+            iconColor = 'text-amber-400'
+          }
+
+          return (
+            <div
+              key={n.id}
+              className={`pointer-events-auto px-4 py-3 rounded-xl border shadow-xl flex items-start gap-3 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold ${bg}`}
+            >
+              <IconComp size={16} className={`shrink-0 mt-0.5 ${iconColor}`} />
+              <div className="flex-1 leading-relaxed break-words">{n.message}</div>
+              <button
+                onClick={() => dismissNotification(n.id)}
+                className="shrink-0 text-white/60 hover:text-white p-0.5 rounded transition cursor-pointer"
+                title="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Non-Blocking AI Cold-Start Warming Overlay */}
+      {aiWarmingInfo && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[99998] bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-500/40 flex items-center gap-3.5 text-xs font-semibold backdrop-blur-md no-print animate-in fade-in slide-in-from-top-3">
+          <div className="relative flex items-center justify-center shrink-0">
+            <Sparkles size={16} className="text-amber-400 animate-pulse" />
+            <span className="absolute -top-1 -right-1 flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+          </div>
+          <div className="flex flex-col text-left">
+            <span className="text-white font-bold tracking-wide">
+              {aiWarmingInfo.statusMsg || 'Connecting to AI Engine (Cold-Start Mitigation)...'}
+            </span>
+            <span className="text-[11px] text-slate-300 font-normal">
+              {aiWarmingInfo.attempt > 1 ? `Attempt ${aiWarmingInfo.attempt}/${aiWarmingInfo.maxAttempts || 5} • Elapsed: ${aiWarmingInfo.elapsedSec || 0}s (Microservice waking from sleep)` : 'Waking up ML container... You can keep editing without interruption.'}
+            </span>
+          </div>
+          {aiWarmingInfo.onCancel && (
+            <button
+              onClick={aiWarmingInfo.onCancel}
+              className="ml-2 px-2.5 py-1 bg-white/15 hover:bg-white/25 text-white rounded-lg text-[11px] font-bold transition border border-white/20 cursor-pointer"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
-

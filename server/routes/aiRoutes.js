@@ -6,28 +6,111 @@ const router = express.Router()
 // ---------------------------------------------------------------------------
 // Local NLP Microservice Configuration (Python FastAPI @ localhost:8000)
 // ---------------------------------------------------------------------------
-const NLP_SERVICE_BASE = process.env.NLP_SERVICE_URL || 'http://localhost:8000'
-const NLP_FETCH_TIMEOUT_MS = 120_000 // 2 minute timeout for heavy SBERT inference
+const NLP_SERVICE_BASE = (process.env.ML_SERVICE_URL || process.env.NLP_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '')
+const NLP_FETCH_TIMEOUT_MS = 90_000 // 90-second timeout for Render cold-starts & SBERT inference
 
 /**
- * Checks whether the local NLP microservice is reachable.
- * Returns { online: true, device, gpu_name } or { online: false }.
+ * Checks whether the local/remote NLP microservice is reachable.
+ * Returns { online: true, status: 'ready', device, gpu_name } or { online: false, status: 'warming' | 'offline' }.
  */
-async function checkNlpServiceHealth() {
+async function checkNlpServiceHealth(timeoutMs = 6000) {
   try {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 5000)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     const response = await fetch(`${NLP_SERVICE_BASE}/health`, { signal: controller.signal })
     clearTimeout(timer)
     if (response.ok) {
-      const data = await response.json()
-      return { online: true, device: data.device, gpu_name: data.gpu_name }
+      const data = await response.json().catch(() => ({}))
+      return {
+        online: true,
+        status: data.status === 'online' ? 'ready' : (data.status || 'ready'),
+        device: data.device || 'cpu',
+        gpu_name: data.gpu_name || null,
+        models: data.models || null
+      }
     }
-    return { online: false }
-  } catch {
-    return { online: false }
+    return { online: false, status: 'warming', httpStatus: response.status }
+  } catch (err) {
+    const isTimeout = err.name === 'AbortError'
+    return { online: false, status: isTimeout ? 'warming' : 'offline', error: err.message }
   }
 }
+
+/**
+ * GET /api/ai/ml-status
+ * Health & readiness probe for frontend JIT pre-warming engine
+ */
+router.get('/ml-status', async (req, res) => {
+  try {
+    const timeout = req.query.timeout ? Math.min(30000, Math.max(1000, Number(req.query.timeout))) : 6000
+    const health = await checkNlpServiceHealth(timeout)
+    return res.json({
+      success: true,
+      serviceUrl: NLP_SERVICE_BASE,
+      ...health
+    })
+  } catch (err) {
+    return res.json({
+      success: true,
+      online: false,
+      status: 'offline',
+      error: err.message
+    })
+  }
+})
+
+/**
+ * POST /api/ai/ml-wake
+ * Silent JIT pre-warming ping to eliminate cold-start latency before user interactions
+ */
+router.post('/ml-wake', async (req, res) => {
+  try {
+    const waitForReady = req.body?.waitForReady === true
+    const timeoutMs = waitForReady ? 25_000 : 8_000
+    const health = await checkNlpServiceHealth(timeoutMs)
+    return res.json({
+      success: true,
+      waking: true,
+      online: health.online,
+      status: health.status || (health.online ? 'ready' : 'warming'),
+      timestamp: Date.now()
+    })
+  } catch (err) {
+    return res.json({
+      success: true,
+      waking: true,
+      online: false,
+      status: 'warming',
+      error: err.message,
+      timestamp: Date.now()
+    })
+  }
+})
+
+/**
+ * POST /api/ai/ml-heartbeat
+ * Keep-alive heartbeat strictly scoped to active Question Paper Editor sessions
+ */
+router.post('/ml-heartbeat', async (req, res) => {
+  try {
+    const health = await checkNlpServiceHealth(5000)
+    return res.json({
+      success: true,
+      heartbeat: true,
+      online: health.online,
+      status: health.status || (health.online ? 'ready' : 'warming'),
+      timestamp: Date.now()
+    })
+  } catch (err) {
+    return res.json({
+      success: true,
+      heartbeat: true,
+      online: false,
+      status: 'warming',
+      timestamp: Date.now()
+    })
+  }
+})
 
 // Local smart semantic similarity fallback analyzer (keyword-based, no ML)
 function computeLocalSimilarityFallback(currentPaperText, archiveText) {
@@ -325,17 +408,9 @@ router.post('/suggest-metadata', async (req, res) => {
       return res.status(400).json({ success: false, message: 'No question text provided.' })
     }
 
-    // Health check: is the NLP service reachable?
-    const health = await checkNlpServiceHealth()
-    if (!health.online) {
-      console.warn('[Suggest-Metadata] ⚠ Local NLP microservice is offline (http://localhost:8000). Cannot classify Bloom/CO.')
-      return res.status(503).json({
-        success: false,
-        message: 'NLP microservice is not running. Please start it with: cd ml-service && uvicorn main:app --port 8000'
-      })
-    }
-
-    console.log(`[Suggest-Metadata] Routing to local NLP service (${health.device}${health.gpu_name ? ' — ' + health.gpu_name : ''})`)
+    // Fast probe: check if NLP service is already ready or in warming state
+    const health = await checkNlpServiceHealth(4000)
+    console.log(`[Suggest-Metadata] Health check status: online=${health.online}, status=${health.status}`)
 
     // Normalize course outcomes to guarantee required FastAPI keys (code, description)
     const normalizedOutcomes = (Array.isArray(rawOutcomes) ? rawOutcomes : []).map(item => ({
@@ -347,33 +422,53 @@ router.post('/suggest-metadata', async (req, res) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
 
-    const response = await fetch(`${NLP_SERVICE_BASE}/suggest-metadata`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        questionText,
-        courseOutcomes: normalizedOutcomes
-      }),
-      signal: controller.signal
-    })
-    clearTimeout(timer)
+    try {
+      const response = await fetch(`${NLP_SERVICE_BASE}/suggest-metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionText,
+          courseOutcomes: normalizedOutcomes
+        }),
+        signal: controller.signal
+      })
+      clearTimeout(timer)
 
-    const data = await response.json()
+      const data = await response.json().catch(() => ({}))
 
-    if (!response.ok) {
-      console.error(`[Suggest-Metadata] NLP service returned ${response.status}:`, data)
-      return res.status(response.status).json({
+      if (!response.ok) {
+        console.error(`[Suggest-Metadata] NLP service returned ${response.status}:`, data)
+        const isColdStart = response.status === 502 || response.status === 503 || response.status === 504
+        return res.status(response.status).json({
+          success: false,
+          status: isColdStart ? 'warming' : 'error',
+          retryAfter: isColdStart ? 4 : undefined,
+          message: data?.detail || data?.message || (isColdStart ? 'ML microservice is warming up.' : 'NLP metadata suggestion failed.')
+        })
+      }
+
+      return res.json({ success: true, ...data })
+    } catch (fetchErr) {
+      clearTimeout(timer)
+      if (fetchErr.name === 'AbortError') {
+        console.error('[Suggest-Metadata] NLP service request timed out (90s limit).')
+        return res.status(504).json({
+          success: false,
+          status: 'warming',
+          retryAfter: 5,
+          message: 'ML service cold-start timed out. The container is warming up, please retry shortly.'
+        })
+      }
+
+      console.warn('[Suggest-Metadata] Direct fetch to ML service failed:', fetchErr.message)
+      return res.status(503).json({
         success: false,
-        message: data?.detail || data?.message || 'NLP metadata suggestion failed.'
+        status: 'warming',
+        retryAfter: 5,
+        message: 'ML microservice is starting up or temporarily offline. Retrying automatically...'
       })
     }
-
-    return res.json(data)
   } catch (error) {
-    if (error.name === 'AbortError') {
-      console.error('[Suggest-Metadata] NLP service request timed out.')
-      return res.status(504).json({ success: false, message: 'NLP metadata suggestion timed out. The model may still be loading.' })
-    }
     console.error('[Suggest-Metadata] handler error:', error)
     return res.status(500).json({ success: false, message: `Server error: ${error.message}` })
   }
@@ -398,11 +493,15 @@ router.post('/similarity-check', requireAuth, async (req, res) => {
       return res.status(200).json({ success: true, results: [], maxSimilarity: 0, totalArchivesCompared: 0, message: 'No archived papers to compare against.' })
     }
 
-    // Attempt to route through the local NLP microservice first
-    const health = await checkNlpServiceHealth()
+    // Health probe: if online or warming, attempt ML service
+    const health = await checkNlpServiceHealth(4000)
 
-    if (health.online) {
-      console.log(`[Similarity Check] ✓ Routing to local NLP microservice (${health.device}${health.gpu_name ? ' — ' + health.gpu_name : ''}) for ${archivedPapers.length} archive(s)`)
+    let mlAttemptSuccess = false
+    let nlpData = null
+
+    // Attempt ML microservice whenever it is online OR if not explicitly known to be completely dead
+    if (health.online || health.status === 'warming') {
+      console.log(`[Similarity Check] Routing to NLP service (${health.device || 'remote'}) for ${archivedPapers.length} archive(s)`)
       try {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), NLP_FETCH_TIMEOUT_MS)
@@ -415,25 +514,21 @@ router.post('/similarity-check', requireAuth, async (req, res) => {
         })
         clearTimeout(timer)
 
-        const nlpData = await nlpResponse.json()
-
-        if (nlpResponse.ok && nlpData.success) {
-          console.log(`[Similarity Check] ✓ NLP service returned results — maxSimilarity=${nlpData.maxSimilarity}%`)
-          return res.json(nlpData)
-        }
-
-        console.warn(`[Similarity Check] NLP service responded with error (${nlpResponse.status}):`, nlpData?.message || nlpData?.detail)
-        // Fall through to keyword-based fallback below
-      } catch (nlpErr) {
-        if (nlpErr.name === 'AbortError') {
-          console.warn('[Similarity Check] ⚠ NLP service request timed out. Falling back to keyword analysis.')
+        if (nlpResponse.ok) {
+          nlpData = await nlpResponse.json().catch(() => ({}))
+          if (nlpData && nlpData.success) {
+            console.log(`[Similarity Check] ✓ NLP service returned results — maxSimilarity=${nlpData.maxSimilarity}%`)
+            mlAttemptSuccess = true
+            return res.json(nlpData)
+          }
         } else {
-          console.warn('[Similarity Check] ⚠ NLP service fetch failed:', nlpErr.message, '— falling back to keyword analysis.')
+          console.warn(`[Similarity Check] NLP service responded with HTTP ${nlpResponse.status}`)
         }
-        // Fall through to keyword-based fallback below
+      } catch (nlpErr) {
+        console.warn(`[Similarity Check] ML service fetch failed (${nlpErr.message}), falling back to keyword analysis.`)
       }
     } else {
-      console.warn('[Similarity Check] ⚠ Local NLP microservice is offline. Using keyword-based fallback.')
+      console.warn('[Similarity Check] ML microservice is currently offline. Using keyword-based fallback.')
     }
 
     // -----------------------------------------------------------------------
