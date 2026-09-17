@@ -1954,6 +1954,10 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [notifications, setNotifications] = useState([])
 
   const showNotification = useCallback((message, type = 'info', duration = 4500) => {
+    // Guard against duplicate connection toasts during AI warming
+    if (typeof message === 'string' && message.toLowerCase().includes('connecting to ai')) {
+      return
+    }
     const id = Date.now() + Math.random().toString(36).substring(2, 7)
     setNotifications(prev => [...prev, { id, message, type }])
     if (duration > 0) {
@@ -2055,7 +2059,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         // Teacher toggled Live ON: Ensure ML microservice begins waking up if not yet ready
         if (mlStatus !== 'ready') {
           wakeUpMLService({ silent: false, waitForReady: false })
-          showNotification('Connecting to AI service for real-time question suggestions...', 'info', 4000)
         } else {
           showNotification('Live question suggestions active.', 'success', 2500)
         }
@@ -2321,7 +2324,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       })
 
       if (mlStatus !== 'ready') {
-        showNotification('Connecting to AI service for question similarity analysis (~30s)...', 'info', 4000)
         try {
           await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
         } catch (wakeErr) {
@@ -5615,7 +5617,6 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifySuccessMsg('')
 
     if (mlStatus !== 'ready') {
-      showNotification('Connecting to AI service for Bloom & CO analysis (~20-30s on first run)...', 'info', 6000)
       try {
         await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
@@ -17495,9 +17496,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
         {/* Real-Time AI Cold-Start Warming Card - Stays visible continuously while warming */}
         {(aiWarmingInfo || mlStatus === 'warming' || isMlWarming) && mlStatus !== 'ready' && (
-          <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-2xl flex items-start gap-3.5 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-50 border-emerald-500/50 ring-1 ring-emerald-400/20">
+          <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-xl flex items-start gap-3.5 backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-100 border-emerald-400/60 ring-1 ring-emerald-400/25">
             <div className="relative flex items-center justify-center shrink-0 mt-0.5">
-              <Sparkles size={17} className="text-amber-400 animate-pulse" />
+              <Sparkles size={17} className="text-emerald-400 animate-pulse" />
               <span className="absolute -top-1 -right-1 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -17519,17 +17520,17 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 if (aiWarmingInfo?.onCancel) aiWarmingInfo.onCancel()
                 setAiWarmingInfo(null)
               }}
-              className="shrink-0 text-emerald-300/80 hover:text-white hover:bg-white/15 p-1 rounded-lg transition cursor-pointer"
+              className="shrink-0 text-white/60 hover:text-white hover:bg-white/10 p-1 rounded-lg transition cursor-pointer"
               title="Dismiss"
             >
-              <X size={15} />
+              <X size={14} />
             </button>
           </div>
         )}
 
         {/* Regular Toast Notifications */}
         {notifications.map(n => {
-          let bg = 'bg-emerald-950/90 text-emerald-50 border-emerald-500/40 ring-1 ring-emerald-400/15'
+          let bg = 'bg-emerald-950/95 text-emerald-100 border-emerald-400/60 ring-1 ring-emerald-400/25'
           let IconComp = Sparkles
           let iconColor = 'text-emerald-400'
 
