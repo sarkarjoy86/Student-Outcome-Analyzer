@@ -93,50 +93,44 @@ graph TB
 
 ## 👨‍🏫 1. Teacher Dashboard & Course Workspaces
 
-The **Teacher Dashboard** guides instructors through four sequential academic phases, streamlining everything from course setup to graduation outcome verification.
+The **Teacher Dashboard** guides instructors through four sequential academic phases, matching the modular structure of institutional accreditation workflows.
 
 ```mermaid
-flowchart TD
-    subgraph Phase1 ["Phase 1: Curriculum & Roster Setup"]
-        Overview["📋 Course Overview\nCourse Specifications, Reminders & Audit Feed"]
-        COPO["🎯 12x12 CO-PO Matrix\nWashington Accord Alignment & Dean Review Workflow"]
-        Roster["👥 Student Table & Roster\nContinuous Assessment & Automated Best-3 CTs"]
+graph TB
+    subgraph Phase1 ["1. Curriculum & Roster Setup"]
+        Overview["Course Overview\n(Specifications, Reminders & Audit Feed)"]
+        COPO["12x12 CO-PO Matrix\n(Washington Accord Alignment & Proposals)"]
+        Roster["Student Table & Roster\n(Continuous Marks & Best-3 CTs)"]
     end
 
-    subgraph Phase2 ["Phase 2: Exam Engineering & AI Authoring"]
-        Assessments["📦 Assessment Management\n10 Evaluation Cards & Extra-CT Target Mapping"]
-        Archives["📂 Question Archives\nHistorical Exam Paper Bank & Reuse Folders"]
-        Editor["⚡ Question Paper Editor\nKaTeX Math, CS Diagram Studio & Code Analyzer"]
+    subgraph Phase2 ["2. Exam Engineering & AI Authoring"]
+        Assessments["Assessment Management\n(10 Module Cards & Extra-CT Mapping)"]
+        Archives["Question Archives\n(Historical Paper Bank & Reuse Folders)"]
+        Editor["Question Paper Editor\n(Neural AI, KaTeX, CS Diagrams & Code)"]
     end
 
-    subgraph Phase3 ["Phase 3: Grading & Attainment Analytics"]
-        Marks["📊 Dynamic Marks Spreadsheet\nSingle/Question Entry & Draft Auto-Restore"]
-        Attainment["🧮 Attainment Engine\nInteractive Sliders (Pass %, KPI %) & Live Status"]
+    subgraph Phase3 ["3. Grading & Attainment Engine"]
+        Marks["Dynamic Marks Spreadsheet\n(Dynamic Sums & Draft Auto-Restore)"]
+        Attainment["Attainment Engine\n(Pass % & Target KPI Threshold Sliders)"]
     end
 
-    subgraph Phase4 ["Phase 4: Continuous Quality Improvement (CQI)"]
-        Reports["📈 Automated OBE Reports\nSWOT Analysis, Heatmaps & Comparative Stats"]
-        PORec["🎯 PO Recommendation System\nLongitudinal Competency & Gap Deficit Alerts"]
-        Surveys["📝 Washington Accord Surveys\nLikert-Scale Indirect Feedback Portal"]
+    subgraph Phase4 ["4. Accreditation CQI & Outcomes"]
+        Reports["Automated OBE Reports\n(BAETE/WA Reports, Heatmaps & SWOT)"]
+        PORec["PO Recommendation System\n(Longitudinal Competency & Gap Deficits)"]
+        Surveys["Student Course Surveys\n(26-Item Likert Indirect Attainment)"]
     end
 
-    Overview --> COPO --> Roster --> Assessments
+    Overview --> COPO
+    COPO --> Roster
+    Roster --> Assessments
     Assessments --> Editor
     Archives -.->|Clone & Reuse Past Qs| Editor
-    Editor --> Marks --> Attainment --> Reports
+    Editor --> Marks
+    Marks --> Attainment
+    Attainment --> Reports
     Attainment --> PORec
-    Surveys -.->|Indirect Attainment Aggregation| Attainment
+    Surveys -.->|Indirect CO Scores| Attainment
     Reports --> PORec
-
-    classDef phase1 fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#064e3b;
-    classDef phase2 fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a;
-    classDef phase3 fill:#fefce8,stroke:#ca8a04,stroke-width:2px,color:#713f12;
-    classDef phase4 fill:#faf5ff,stroke:#9333ea,stroke-width:2px,color:#581c87;
-
-    class Overview,COPO,Roster phase1;
-    class Assessments,Archives,Editor phase2;
-    class Marks,Attainment phase3;
-    class Reports,PORec,Surveys phase4;
 ```
 
 ### 1.1 Course Overview & Live Activity Monitor
@@ -204,7 +198,7 @@ flowchart TD
 
 ## 🤖 2. Flagship AI Question Paper Engineering Suite
 
-The **Question Paper Editor** is an end-to-end academic authoring environment that replaces Microsoft Word with neural NLP and generative AI tools built directly into the rich text canvas.
+The **Question Paper Editor** is an end-to-end academic authoring environment that replaces Microsoft Word with specialized deep-learning NLP models and generative design tools built directly into the rich text canvas.
 
 ```mermaid
 sequenceDiagram
@@ -212,7 +206,7 @@ sequenceDiagram
     actor Teacher as Educator / Teacher
     participant Editor as Question Paper Editor (Client)
     participant WakeHook as JIT Activity & Wake-up Hook
-    participant LocalML as FastAPI ML Microservice (S-BERT / DistilBART)
+    participant LocalML as FastAPI ML Microservice (Fine-Tuned S-BERT)
     participant CloudAI as Google Gemini Generative AI
 
     Teacher->>Editor: Opens Question Paper Editor
@@ -220,44 +214,99 @@ sequenceDiagram
     WakeHook->>LocalML: Send JIT Wake-up Request (/health)
     LocalML-->>WakeHook: Microservice Online (CUDA/CPU Ready)
     
-    Note over Editor,LocalML: Real-Time Typing & Semantic Suggestions
+    Note over Editor,LocalML: 1. Real-Time Typing & Semantic Suggestions
     Teacher->>Editor: Types question (e.g., "Explain polymorphism...")
     Editor->>Editor: Debounce Text Block (300ms)
     Editor->>LocalML: Query Reference Vector Index
     LocalML-->>Editor: Matched Reference Questions (Cosine Similarity %)
     Editor-->>Teacher: Live Suggestion Card in Sidebar
 
-    Note over Editor,LocalML: Bloom's Taxonomy & CO Verification
+    Note over Editor,LocalML: 2. Fine-Tuned S-BERT & Bloom Verification
     Teacher->>Editor: Selects text & clicks "Verify AI Tag"
     Editor->>LocalML: POST /suggest-metadata (Text + Syllabus COs)
-    LocalML->>LocalML: Zero-Shot DistilBART (C1-C6) + S-BERT (CO Mapping)
+    LocalML->>LocalML: Zero-Shot DistilBART (C1-C6) + Fine-Tuned S-BERT (CO Mapping)
     LocalML-->>Editor: Suggested Level (e.g., C2: Understand) & Target CO (e.g., CO1)
     Editor-->>Teacher: Displays AI Tag Card with One-Click Inline Injection
 
-    Note over Editor,CloudAI: Generative Assistants & CS Diagrams
+    Note over Editor,CloudAI: 3. Generative Assistants & CS Diagrams
     Teacher->>Editor: Opens "AI Assistant (OBE Tools)" Drawer
     Teacher->>CloudAI: Generate CS Diagram / Code Snippet / Table
     CloudAI-->>Editor: Renders Native KaTeX Math / Monospace Code / Vector Tree
     Editor-->>Teacher: Formatted Block Inserted Without Word Formatting Loss
 ```
 
-### 2.1 AI Creation Tools (OBE Tools Drawer)
-- 🎯 **AI Verify [CO / Bloom Level]** *(OBE Tagged)*: Uses local Hugging Face Zero-Shot Classification (`DistilBART-MNLI`) to classify questions into cognitive domains (**C1: Remember, C2: Understand, C3: Apply, C4: Analyze, C5: Evaluate, C6: Create**) and Sentence-BERT (`all-MiniLM-L6-v2`) to map to the target Course Outcome (**CO1–CO12**). Injects non-destructive `[COx→Cy]` badges directly into the active paragraph.
+---
+
+### 2.1 Local Neural ML Intelligence Suite (Primary Focus)
+
+The cornerstone of the platform's intelligence is a dedicated, local Python microservice powered by **PyTorch**, **FastAPI**, and **Sentence-Transformers**, accelerated via NVIDIA CUDA GPUs (with automatic CPU fallback).
+
+#### 1. Zero-Shot Bloom’s Taxonomy & Fine-Tuned S-BERT Course Outcome Verifier
+- **Domain-Specific Fine-Tuning Dataset**:
+  - Rather than relying on generic models, our Sentence-BERT model (`sbert-obe-csematch`) was specifically fine-tuned on real university engineering examinations.
+  - Collected a corpus of **1,000+ authentic university exam questions** across core Computer Science courses: *CSE 443 (Digital Image Processing), CSE 315 (Computer Architecture & Design), CSE 313 (Database Management Systems), CSE 327 (Computer Networks), and CSE 317 (Software Engineering & Design Patterns)*.
+  - Applied academic domain-specific data augmentation to expand the dataset to **3,000+ training pairs**, optimizing normalized cosine similarity against syllabus Course Outcome descriptions.
+  - The fine-tuned model consistently achieves higher cosine alignment scores and superior accuracy compared to the generic base model (`all-MiniLM-L6-v2`).
+- **Cognitive Domain Classification (C1–C6)**:
+  - Uses Zero-Shot Classification (`valhalla/distilbart-mnli-12-3` / `bart-large-mnli`) to categorize question prompts into Bloom’s cognitive tiers:
+    - **C1: Remember** (recall, define, state)
+    - **C2: Understand** (explain, describe, summarize)
+    - **C3: Apply** (implement, solve, demonstrate)
+    - **C4: Analyze** (compare, differentiate, deconstruct)
+    - **C5: Evaluate** (judge, justify, critique)
+    - **C6: Create** (design, formulate, construct)
+- **Inline Non-Destructive Tagging**: Inserts formatted `[COx→Cy]` badges directly into the active paragraph or table cell with automated font and styling inheritance.
+
+#### 2. Sentence-BERT Exam Paper Similarity Analyzer
+- Computes high-dimensional semantic embeddings across all questions in the current draft paper.
+- Performs bidirectional cosine similarity checks against:
+  - **Current Semester Drafts** (preventing accidental duplicate questions across midterm and final assessments).
+  - **Historical Archived Exams** from preceding semesters stored in MongoDB.
+- Generates side-by-side comparison modals with match percentage tags (e.g., *94% Match with Spring 2025 Midterm*) to guarantee examination novelty and institutional integrity.
+
+#### 3. Real-Time Reference Questions Live Suggestion Engine
+- **How It Works**:
+  - Instructors pre-upload their reference lecture notes, slide decks, or course question banks into the workspace.
+  - As the instructor types a question into the editor, capture-phase listeners detect the active paragraph and debounce input after a 300ms pause.
+  - The S-BERT vector engine and in-memory keyword tokenizer instantly query the pre-indexed reference notes.
+  - Highly relevant reference questions appear dynamically in the right-hand sidebar card with similarity percentage badges.
+  - **Eliminates Manual Search**: Teachers never have to scramble through external PDFs, slide presentations, or notes while setting examination papers.
+- **Dual-Layer Search Architecture**:
+  - **Instant 0ms In-Memory Search**: Scans local candidate questions without waiting for network roundtrips.
+  - **Background Resilient Vector Sync**: Silently re-uploads document binary blobs from browser `IndexedDB` to the microservice if cloud containers restart during idle periods.
+
+#### 4. Smart Cloud Resource & Activity Keep-Alive Engine
+- **Single Unified Dark-Green Notification**: During cold-starts, displays a single unified dark-emerald card (`bg-emerald-950/95 text-emerald-100 border-emerald-400/60`) informing educators that neural models are loading (~20–30s), cleanly transforming into a confirmation checkmark upon completion.
+- **Zero-Overhead Activity Detection**: Uses passive capture listeners on `window` and `document` for `pointerdown`, `keydown`, `scroll`, and `wheel` throttled to 15-second write intervals (0% CPU impact, 60/120 FPS buttery-smooth typing and scrolling).
+- **5-Minute Inactivity Threshold**: If the teacher does not click, type, or scroll for $\ge 5$ minutes, keep-alive heartbeats are paused. Combined with Render's 15-minute sleep policy, the container sleeps within a maximum of **20 minutes total**, saving hundreds of free-tier compute hours monthly.
+- **Tab Visibility Pause**: When the user switches to other browser tabs (e.g., YouTube or university portals), heartbeats pause immediately. Returning within 15 minutes seamlessly refreshes the session without cold-starts.
+
+---
+
+### 2.2 Generative AI Creation Tools (OBE Tools Drawer)
+
+Accessed through the **AI Assistant (OBE Tools)** drawer, these tools combine custom algorithms and generative models to handle complex technical typesetting.
+
+- 📈 **CS Diagram Studio** *(Flagship Tool for Computer Science & Engineering)*:
+  - **Ending External Website Dependency**: In standard exam preparation, CS teachers are forced to leave Word, navigate to external diagram websites, draw trees or graphs, take screenshots, and paste low-res images into their questions.
+  - **Native Vector Diagrams**: Directly inside the editor, instructors can generate and embed:
+    - **Tree Structures**: Binary Search Trees, AVL Trees, B-Trees, Heap Trees.
+    - **Graph Theory**: Directed, undirected, weighted, and cyclic/acyclic graphs.
+    - **State Transition Diagrams**: Deterministic & Non-Deterministic Finite Automata (DFA/NFA).
+    - **Flow Maps & Circuits**: Logic circuit diagrams and algorithm flowcharts.
+  - Diagrams render with crisp vector lines that scale perfectly on high-resolution printouts and exported PDFs.
+- 💻 **Code Snippet Editor with Smart Output Analyzer**:
+  - **Ending the Word Formatting Mess**: Microsoft Word automatically capitalizes code keywords (`While`, `For`), strips leading spaces, and destroys monospace fonts.
+  - **Preserved Code Blocks**: Custom code container supporting **C, C++, Java, Python, and Pseudocode** with preserved indentation, syntax coloring, and line numbers.
+  - **Smart Output Analyzer**: Evaluates code logic, simulates runtime execution, and displays step-by-step variable traces and final console output to help teachers design robust output-prediction exam problems.
 - 📝 **Automated Question Gen**: Generates high-quality exam questions tailored to specific course topics, target marks, and designated Bloom cognitive tiers.
 - 📊 **Automated Data Table**: Automatically constructs academic tables, truth tables, and comparison grids without manual HTML formatting.
 - 🧮 **Math Equation Editor**: Built-in visual equation composer with native **KaTeX** rendering for complex inline and display mathematical formulas (`\( ... \)`, `$$ ... $$`).
-- 📈 **CS Diagram Studio** *(Flagship Tool for Computer Science & Engineering)*:
-  - Eliminates the need for external diagram tools. Teachers can generate and embed custom **Trees** (Binary Trees, AVL Trees, B-Trees), **Directed/Undirected Graphs**, **State Transition Diagrams (Finite Automata)**, and **Flow Maps** directly onto the question paper canvas.
-  - Native vector-crisp rendering ensures perfect legibility when printed or exported to PDF.
-- 💻 **Code Snippet Editor with Smart Output Analyzer**:
-  - Solves the nightmare of Microsoft Word stripping indentation, destroying monospace fonts, and auto-capitalizing keywords in programming exams.
-  - Supports **C, C++, Java, Python, and Pseudocode** with preserved indentation and custom syntax styling.
-  - **Smart Output Analyzer**: Features built-in execution prediction that explains the code's runtime output, helping instructors design challenging debugging questions.
 - 📄 **Paper Structure Builder**: Generates institutional exam headers, instructions to candidates, time limits, total marks, and section partitions with one click.
 
 ---
 
-### 2.2 Text Refinement Suite (Powered by Google Gemini AI API)
+### 2.3 Text Refinement Suite (Powered by Google Gemini AI API)
 When instructors highlight drafted text, the **Text Refinement** menu provides one-click AI polishing:
 - ✨ **Improve Content**: Enhances academic clarity and vocabulary.
 - 📝 **Shorten**: Condenses lengthy prompts to fit exam page constraints.
@@ -270,33 +319,14 @@ When instructors highlight drafted text, the **Text Refinement** menu provides o
 
 ---
 
-### 2.3 Sentence-BERT Exam Similarity Analyzer
-- Encodes exam questions into high-dimensional semantic vectors using Sentence-BERT.
-- Compares the draft against historical semester exams stored in MongoDB, surfacing pairwise cosine similarity matches.
-- Generates side-by-side comparison modals with match percentage tags (e.g., *94% Match with Spring 2025 Midterm*) to prevent question repetition across consecutive academic cycles.
-
----
-
-### 2.4 Real-Time Reference Questions Live Suggestion Engine
-- **Instant 0ms In-Memory Search**: Scans pre-indexed syllabus questions using prefix matching, substring heuristics, and multi-token overlap algorithms without waiting for network responses.
-- **Background Resilient Vector Sync**: Automatically re-uploads document binary blobs from browser `IndexedDB` to the microservice if cloud containers restart during idle periods.
-- **Debounced Input Capture**: Uses capture-phase listeners on Syncfusion content panels to surface live question suggestions 300ms after the teacher pauses typing.
-
----
-
-### 2.5 Smart Cloud Resource & Activity Keep-Alive Engine
-- **Single Unified Dark-Green Notification**: During cold-starts, displays a single unified dark-emerald card (`bg-emerald-950/95 text-emerald-100 border-emerald-400/60`) informing educators that neural models are loading (~20–30s), cleanly transforming into a confirmation checkmark upon completion.
-- **Zero-Overhead Activity Detection**: Uses passive capture listeners on `window` and `document` for `pointerdown`, `keydown`, `scroll`, and `wheel` throttled to 15-second write intervals (0% CPU impact, 60/120 FPS buttery-smooth typing and scrolling).
-- **5-Minute Inactivity Threshold**: If the teacher does not click, type, or scroll for $\ge 5$ minutes, keep-alive heartbeats are paused. Combined with Render's 15-minute sleep policy, the container sleeps within a maximum of **20 minutes total**, saving hundreds of free-tier compute hours monthly.
-- **Tab Visibility Pause**: When the user switches to other browser tabs (e.g., YouTube or university portals), heartbeats pause immediately. Returning within 15 minutes seamlessly refreshes the session without cold-starts.
-
----
-
 ## 📈 3. Automated OBE Reports & Accreditation Intelligence
 
-The **Automated OBE Reports** module is a comprehensive Continuous Quality Improvement (CQI) platform designed for Washington Accord and BAETE accreditation audits.
+The **Automated OBE Reports** module is an enterprise Continuous Quality Improvement (CQI) platform designed in strict accordance with **BAETE (Board of Accreditation for Engineering and Technical Education)** Manual guidelines and **Washington Accord** accreditation criteria.
 
-Unlike manual Excel spreadsheets—which frequently break due to `#REF!` errors, accidental formula deletion, and student row-mismatches—the automated reporting engine computes directly from validated MongoDB assessment schemas, guaranteeing **100% mathematical accuracy**.
+### 📊 Why This Automated Engine Surpasses Microsoft Excel
+- **Zero Calculation Breakage**: Excel spreadsheets rely on fragile cell formulas like `=SUM(C4:C29)` that silently corrupt when rows are inserted or students add/drop courses. Our engine computes directly from validated relational MongoDB schemas with deterministic validation and zero missed rows.
+- **Accurate Chart Mapping**: Unlike Excel graphs that frequently drop data series or truncate low scores, our system maps every student mark directly to the corresponding Course Outcome with 100% data fidelity.
+- **Unified CQI Audit Artifacts**: Produces accreditation-ready reports covering section-level metrics, multi-student benchmarks, individual heatmaps, and automated SWOT documentation in both **Print-Ready PDF** and **Institutional Excel (.xlsx)** formats.
 
 ```mermaid
 flowchart TD
@@ -307,7 +337,7 @@ flowchart TD
         TargetKPIs["Configured Attainment Targets (Pass % & KPI %)"]
     end
 
-    subgraph CoreEngine ["OBE Analytics Engine"]
+    subgraph CoreEngine ["OBE Analytics Engine (BAETE Aligned)"]
         CourseOverviewTab["1. Course Overview\nAttainment Charts, Contribution Bars & Heatmaps"]
         SectionAnalysisTab["2. CO/PO Attainment (Section)\n16 Analytical Metrics, Grade Spread & Gauge"]
         StudentAnalysisTab["3. Student Analysis\nIndividual Student Deep-Dive Across COs/POs"]
@@ -316,7 +346,7 @@ flowchart TD
         SWOTTab["6. SWOT Analysis\nAI-Synthesized Accreditation Audit Document"]
     end
 
-    subgraph ExportSuite ["Audit Deliverables"]
+    subgraph ExportSuite ["Accreditation Deliverables"]
         PDFExport["📄 Print Official PDF Report"]
         ExcelExport["📊 Export Institutional Excel (.xlsx)"]
     end
@@ -329,9 +359,11 @@ flowchart TD
     CoreEngine --> ExcelExport
 ```
 
+---
+
 ### 3.1 Deep Dive into the 6 Report Sub-Modules
 
-#### 1. Course Overview Sub-Page
+#### 1. Course Overview Sub-Page (Primary Visual Hub)
 - **Course Outcomes (COs) Attainment Bar Chart**: Side-by-side vertical bars showing the percentage of students crossing the Pass Mark (40%) versus the target KPI (50%) for each Course Outcome (**CO1–CO12**).
 - **CO Student Distribution Stacked Bar Chart**: Visualizes class performance bands:
   - 🔴 **Below 40%** (At-Risk Students needing remedial support)
@@ -482,6 +514,7 @@ $$\text{Overall Attainment} = (80\% \times \text{Direct Attainment}) + (20\% \ti
 | | FastAPI | `0.100+` | Asynchronous REST microservice with OpenAPI / Swagger docs |
 | | PyTorch | `2.0+` (CUDA / CPU) | Tensor computation and neural model inference |
 | | Sentence-Transformers | `all-MiniLM-L6-v2` | Sentence embeddings for CO mapping and paper similarity |
+| | Fine-Tuned Model | `sbert-obe-csematch` | S-BERT fine-tuned on 1,000+ real exam questions (3,000+ augmented pairs) |
 | | Hugging Face Transformers | `DistilBART-MNLI` | Zero-shot classification for Bloom's Taxonomy (C1–C6) |
 | **Generative AI** | Google Gemini API | `Gemini 1.5 / Flash` | Generative question synthesis, text refinement, and code output analysis |
 
@@ -502,7 +535,9 @@ $$\text{Overall Attainment} = (80\% \times \text{Direct Attainment}) + (20\% \ti
 │   ├── services/                   # Sentence-BERT & Zero-Shot inference engines
 │   ├── routes/                     # FastAPI Endpoints (/suggest-metadata, /similarity, /notes)
 │   ├── schemas/                    # Pydantic request & response models
-│   ├── training/                   # Model fine-tuning & evaluation scripts
+│   ├── dataset/                    # OBE_NLP_Dataset.xlsx (1,000+ Real & 3,000+ Augmented Questions)
+│   ├── models/                     # sbert-obe-csematch (Fine-tuned Sentence-BERT model checkpoints)
+│   ├── training/                   # train_sbert.py & evaluate_model.py benchmark scripts
 │   ├── requirements.txt            # Python dependencies (PyTorch, FastAPI, Transformers)
 │   └── main.py                     # FastAPI Microservice Entry Point
 │
