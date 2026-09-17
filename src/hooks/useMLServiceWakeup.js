@@ -5,11 +5,19 @@ import { apiService } from '../services/apiService';
 // We ping every 9 minutes during active editing sessions.
 const HEARTBEAT_INTERVAL_MS = 9 * 60 * 1000; // 9 minutes
 
+// Idle inactivity threshold: 5 minutes without mouse click, typing, or scrolling.
+// If idle for >= 5 minutes, heartbeats pause so Render can sleep (Total idle-to-sleep <= 20 min).
+const IDLE_INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+// Activity event throttle: update timestamp at most once every 15 seconds to ensure 0% CPU impact.
+const ACTIVITY_THROTTLE_MS = 15 * 1000; // 15 seconds
+
 // Absolute maximum session duration before disengaging keep-alive to preserve free-tier quotas.
 const MAX_SESSION_DURATION_MS = 90 * 60 * 1000; // 90 minutes (1.5 hours)
 
 /**
- * Custom React hook for JIT ML service pre-warming and strictly scoped keep-alive heartbeats.
+ * Custom React hook for JIT ML service pre-warming and strictly scoped keep-alive heartbeats
+ * with zero-overhead user activity detection (click, typing, scroll) and tab visibility tracking.
  * 
  * @param {object} options
  * @param {boolean} [options.isEditingSession=false] - Whether Question Paper Editor is currently open
@@ -27,6 +35,11 @@ export function useMLServiceWakeup(options = {}) {
   const sessionStartRef = useRef(Date.now());
   const isWakingRef = useRef(false);
   const isMountedRef = useRef(true);
+
+  // User presence & activity tracking refs
+  const lastActivityRef = useRef(Date.now());
+  const lastThrottleWriteRef = useRef(0);
+  const lastHeartbeatTimeRef = useRef(0);
 
   // Status transition helper with callback notification
   const updateStatus = useCallback((newStatus, err = null) => {
@@ -96,7 +109,9 @@ export function useMLServiceWakeup(options = {}) {
     try {
       const res = await apiService.sendMLHeartbeat();
       if (isMountedRef.current) {
-        setLastHeartbeat(Date.now());
+        const now = Date.now();
+        setLastHeartbeat(now);
+        lastHeartbeatTimeRef.current = now;
         if (res && res.online) {
           updateStatus('ready');
         }
@@ -143,9 +158,9 @@ export function useMLServiceWakeup(options = {}) {
     };
   }, [autoWarm, wakeUp]);
 
-  // Strictly Scoped Session Keep-Alive Heartbeat
+  // Strictly Scoped Session Keep-Alive Heartbeat with Activity & Tab Visibility Tracking
   useEffect(() => {
-    // If not an active editing session, do not run heartbeat
+    // If not an active editing session, do not run heartbeat or track activity
     if (!isEditingSession) {
       if (heartbeatTimerRef.current) {
         clearInterval(heartbeatTimerRef.current);
@@ -155,33 +170,92 @@ export function useMLServiceWakeup(options = {}) {
     }
 
     sessionStartRef.current = Date.now();
+    lastActivityRef.current = Date.now();
+    lastThrottleWriteRef.current = Date.now();
+    lastHeartbeatTimeRef.current = Date.now();
 
     // Initial wake-up on entering editing session
     wakeUp({ silent: true });
 
+    // Activity tracking handler (passive + throttled for 0% CPU impact)
+    const recordActivity = () => {
+      const now = Date.now();
+      const wasIdle = (now - lastActivityRef.current) >= IDLE_INACTIVITY_THRESHOLD_MS;
+
+      if (now - lastThrottleWriteRef.current > ACTIVITY_THROTTLE_MS) {
+        lastThrottleWriteRef.current = now;
+        lastActivityRef.current = now;
+
+        // Auto-resume: if user returns from idle (5-12 mins away) and tab is visible,
+        // send keep-alive poke if it's been >= 8 mins since last heartbeat so Render doesn't sleep at min 15
+        if (wasIdle && document.visibilityState === 'visible') {
+          const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
+          if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+            pingHeartbeat();
+          }
+        }
+      }
+    };
+
+    // Attach passive capture listeners for clicks, typing, and scrolling
+    const activityEvents = ['pointerdown', 'keydown', 'scroll', 'wheel'];
+    activityEvents.forEach(evt => {
+      window.addEventListener(evt, recordActivity, { passive: true, capture: true });
+      document.addEventListener(evt, recordActivity, { passive: true, capture: true });
+    });
+
     // Establish periodic keep-alive interval
     heartbeatTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      const idleElapsed = now - lastActivityRef.current;
+      const isTabHidden = document.visibilityState === 'hidden';
+
+      // 1. If tab is in background (e.g. YouTube), pause heartbeats to save hours
+      if (isTabHidden) {
+        return;
+      }
+
+      // 2. If user has been inactive (no clicks, keys, scroll) for >= 5 minutes, pause heartbeats.
+      // Render will sleep 15 mins after the last poke, keeping total idle-to-sleep <= 20 mins.
+      if (idleElapsed >= IDLE_INACTIVITY_THRESHOLD_MS) {
+        return;
+      }
+
+      // 3. User is actively editing in QuestionPaperEditor, dispatch heartbeat poke!
       pingHeartbeat();
     }, HEARTBEAT_INTERVAL_MS);
 
-    // Tab visibility handling: pause heartbeat when backgrounded, ping when user returns
+    // Tab visibility handling: pause heartbeat when backgrounded, resume when user returns
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        const sessionElapsed = Date.now() - sessionStartRef.current;
+        const now = Date.now();
+        lastActivityRef.current = now;
+        lastThrottleWriteRef.current = now;
+
+        const sessionElapsed = now - sessionStartRef.current;
         if (sessionElapsed <= MAX_SESSION_DURATION_MS) {
-          pingHeartbeat();
+          const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
+          // If returning to tab and it's been >= 8 mins since last heartbeat, refresh immediately
+          if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+            pingHeartbeat();
+          }
         }
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // CRITICAL: Cleanup function guarantees zero unbounded pings when leaving QuestionPaperEditor
+    // CRITICAL: Cleanup function guarantees zero unbounded pings and removes all listeners
+    // immediately when leaving QuestionPaperEditor
     return () => {
       if (heartbeatTimerRef.current) {
         clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
+      activityEvents.forEach(evt => {
+        window.removeEventListener(evt, recordActivity, { capture: true });
+        document.removeEventListener(evt, recordActivity, { capture: true });
+      });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isEditingSession, wakeUp, pingHeartbeat]);
