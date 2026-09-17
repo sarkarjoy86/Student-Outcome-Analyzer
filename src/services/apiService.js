@@ -1,4 +1,5 @@
 const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
+export const DEFAULT_PROD_ML_URL = "https://student-outcome-analyzer-ml.onrender.com";
 
 export function getApiBaseUrl() {
   if (import.meta.env.VITE_API_URL) {
@@ -8,6 +9,136 @@ export function getApiBaseUrl() {
     return DEFAULT_PROD_API_URL;
   }
   return "";
+}
+
+export function getMLBaseUrl() {
+  if (import.meta.env.VITE_ML_SERVICE_URL) {
+    return import.meta.env.VITE_ML_SERVICE_URL;
+  }
+  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1")) {
+    return DEFAULT_PROD_ML_URL;
+  }
+  return "http://localhost:8000";
+}
+
+let activeMLWakePromise = null;
+let isMLServiceConfirmedReady = false;
+
+export function isMLReady() {
+  return isMLServiceConfirmedReady;
+}
+
+export function setMLReadyState(ready) {
+  isMLServiceConfirmedReady = Boolean(ready);
+}
+
+/**
+ * Triggers a direct, clean single GET wake-up ping to the Python ML microservice
+ * (identical to a user clicking the link in a browser tab).
+ * Holds the connection cleanly for up to 50s without aborting, allowing Render to boot.
+ * Reuses a single shared Promise across all concurrent callers so Render is never flooded.
+ */
+export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = null, signal = null } = {}) {
+  if (isMLServiceConfirmedReady) {
+    return { online: true, status: "ready" };
+  }
+
+  if (activeMLWakePromise) {
+    return activeMLWakePromise;
+  }
+
+  const mlBase = getMLBaseUrl();
+  const directHealthUrl = `${mlBase}/health`;
+  const startTime = Date.now();
+
+  let progressInterval = null;
+  if (onProgress) {
+    onProgress({
+      attempt: 1,
+      maxAttempts: 1,
+      elapsedSec: 0,
+      statusMsg: "AI service is waking up from standby (~30s)..."
+    });
+    progressInterval = setInterval(() => {
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      onProgress({
+        attempt: 1,
+        maxAttempts: 1,
+        elapsedSec,
+        statusMsg: `AI service is waking up from standby (~30s)... Elapsed: ${elapsedSec}s`
+      });
+    }, 1000);
+  }
+
+  const cleanup = () => {
+    if (progressInterval) clearInterval(progressInterval);
+    activeMLWakePromise = null;
+  };
+
+  activeMLWakePromise = (async () => {
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        clearTimeout(abortTimeout);
+        controller.abort();
+      }, { once: true });
+    }
+
+    try {
+      // 1. Direct browser GET request to the ML service /health (mirrors exact browser tab click)
+      const directPingPromise = fetch(directHealthUrl, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { "Accept": "application/json" }
+      }).then(async (res) => {
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return { online: true, ...data };
+        }
+        throw new Error(`Direct ML ping returned status ${res.status}`);
+      });
+
+      // 2. Parallel backend proxy wake-up ping
+      const backendWakePromise = fetchWithDefaults(`${getApiBaseUrl()}/api/ai/ml-wake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ waitForReady: true }),
+        signal: controller.signal,
+        skipCache: true
+      }).then(async (res) => {
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.online) return data;
+        }
+        throw new Error("Backend wake ping not ready yet");
+      });
+
+      const result = await Promise.any([directPingPromise, backendWakePromise]);
+      clearTimeout(abortTimeout);
+      isMLServiceConfirmedReady = true;
+
+      if (onProgress) {
+        onProgress({
+          attempt: 1,
+          maxAttempts: 1,
+          elapsedSec: Math.round((Date.now() - startTime) / 1000),
+          statusMsg: "✓ AI service is ready!"
+        });
+      }
+
+      return result;
+    } catch (err) {
+      clearTimeout(abortTimeout);
+      console.warn("[ensureMLServiceReady] Wake ping notice:", err.message);
+      throw err;
+    } finally {
+      cleanup();
+    }
+  })();
+
+  return activeMLWakePromise;
 }
 
 const API_BASE = getApiBaseUrl();
@@ -185,30 +316,21 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
         (typeof data.message === 'string' && data.message.toLowerCase().includes('warming'));
 
       if (!res.ok || data.success === false) {
-        const canRetry = isColdStart && (attempt < maxRetries) && ((Date.now() - startTime) < maxTotalTimeMs);
-        if (canRetry) {
+        if (isColdStart && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
           attempt++;
-          const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 7000;
-          if (onProgress) {
-            onProgress({
-              attempt,
-              maxAttempts: maxRetries,
-              elapsedSec: Math.round((Date.now() - startTime) / 1000),
-              statusMsg: `AI service is waking up from standby... retrying in ${Math.round(waitTime / 1000)}s`
+          // Instead of rapid-fire retries every 3s that flood Render with aborted sockets,
+          // cleanly await the single ML wake-up promise (just like clicking the link in a browser)!
+          try {
+            await ensureMLServiceReady({
+              timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
+              onProgress,
+              signal
             });
+            // Once the wake-up finishes cleanly, replay request
+            continue;
+          } catch (wakeErr) {
+            console.warn('[fetchWithRetry] Wake-up attempt error:', wakeErr.message);
           }
-          await new Promise((resolve, reject) => {
-            const timer = setTimeout(resolve, waitTime);
-            if (signal) {
-              signal.addEventListener('abort', () => {
-                clearTimeout(timer);
-                const abortErr = new Error('Request cancelled by user.');
-                abortErr.name = 'AbortError';
-                reject(abortErr);
-              }, { once: true });
-            }
-          });
-          continue;
         }
 
         const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `Request failed with status ${res.status}`;
@@ -231,30 +353,18 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
         err.message.includes('timeout')
       );
 
-      const canRetryNet = isNetworkError && (attempt < maxRetries) && ((Date.now() - startTime) < maxTotalTimeMs);
-      if (canRetryNet) {
+      if (isNetworkError && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
         attempt++;
-        const waitTime = backoff[Math.min(attempt - 1, backoff.length - 1)] || 7000;
-        if (onProgress) {
-          onProgress({
-            attempt,
-            maxAttempts: maxRetries,
-            elapsedSec: Math.round((Date.now() - startTime) / 1000),
-            statusMsg: `Connecting to AI service... attempt ${attempt}/${maxRetries}`
+        try {
+          await ensureMLServiceReady({
+            timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
+            onProgress,
+            signal
           });
+          continue;
+        } catch (wakeErr) {
+          console.warn('[fetchWithRetry] Network error wake-up retry failed:', wakeErr.message);
         }
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(resolve, waitTime);
-          if (signal) {
-            signal.addEventListener('abort', () => {
-              clearTimeout(timer);
-              const abortErr = new Error('Request cancelled by user.');
-              abortErr.name = 'AbortError';
-              reject(abortErr);
-            }, { once: true });
-          }
-        });
-        continue;
       }
 
       throw err;
@@ -742,6 +852,10 @@ export const apiService = {
       skipCache: true
     });
     return handleResponse(res);
+  },
+
+  ensureMLReady(options = {}) {
+    return ensureMLServiceReady(options);
   },
 
   async suggestMetadata(payload, options = {}) {

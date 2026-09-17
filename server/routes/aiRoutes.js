@@ -65,7 +65,7 @@ router.get('/ml-status', async (req, res) => {
 router.post('/ml-wake', async (req, res) => {
   try {
     const waitForReady = req.body?.waitForReady === true
-    const timeoutMs = waitForReady ? 25_000 : 8_000
+    const timeoutMs = waitForReady ? 50_000 : 35_000
     const health = await checkNlpServiceHealth(timeoutMs)
     return res.json({
       success: true,
@@ -406,10 +406,6 @@ router.post('/suggest-metadata', async (req, res) => {
     if (!questionText) {
       return res.status(400).json({ success: false, message: 'No question text provided.' })
     }
-
-    // Fast probe: check if NLP service is already ready or in warming state
-    const health = await checkNlpServiceHealth(4000)
-    console.log(`[Suggest-Metadata] Health check status: online=${health.online}, status=${health.status}`)
 
     // Normalize course outcomes to guarantee required FastAPI keys (code, description)
     const normalizedOutcomes = (Array.isArray(rawOutcomes) ? rawOutcomes : []).map(item => ({

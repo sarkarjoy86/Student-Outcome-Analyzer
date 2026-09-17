@@ -2320,8 +2320,12 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       })
 
       if (mlStatus !== 'ready') {
-        wakeUpMLService({ silent: false, waitForReady: false })
-        showNotification('Connecting to AI service for question similarity analysis...', 'info', 4000)
+        showNotification('Connecting to AI service for question similarity analysis (~30s)...', 'info', 4000)
+        try {
+          await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+        } catch (wakeErr) {
+          console.warn('Similarity check wake-up notice:', wakeErr)
+        }
       }
 
       const res = await apiService.checkQuestionSimilarity(
@@ -5517,8 +5521,12 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifySuccessMsg('')
 
     if (mlStatus !== 'ready') {
-      wakeUpMLService({ silent: false, waitForReady: false })
-      showNotification('Connecting to AI service for Bloom & CO analysis...', 'info', 4000)
+      showNotification('Connecting to AI service for Bloom & CO analysis (~30s)...', 'info', 4000)
+      try {
+        await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+      } catch (wakeErr) {
+        console.warn('AI Verify wake-up notice:', wakeErr)
+      }
     }
 
     try {
@@ -5577,6 +5585,14 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyLoading(true)
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
+
+    if (mlStatus !== 'ready') {
+      try {
+        await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+      } catch (wakeErr) {
+        console.warn('Auto AI Verify wake-up notice:', wakeErr)
+      }
+    }
 
     try {
       const outcomesPayload = (coDetails && coDetails.length > 0)

@@ -9,13 +9,13 @@
  * - Multi-document support with individual file removal and aggregate indexing.
  */
 
-import { getApiBaseUrl } from './apiService.js';
+import { getApiBaseUrl, getMLBaseUrl } from './apiService.js';
 import { getNoteBlobFromIDB } from '../utils/notesStorage.js';
 
 const API_BASE = getApiBaseUrl();
 
 // ML service URL if configured directly, else routes through backend gateway /api/notes
-const DIRECT_ML_URL = import.meta.env.VITE_ML_SERVICE_URL || import.meta.env.REACT_APP_ML_SERVICE_URL || '';
+const DIRECT_ML_URL = import.meta.env.VITE_ML_SERVICE_URL || import.meta.env.REACT_APP_ML_SERVICE_URL || getMLBaseUrl();
 
 const LOCAL_STORAGE_KEY_PREFIX = 'teacher_course_notes_';
 

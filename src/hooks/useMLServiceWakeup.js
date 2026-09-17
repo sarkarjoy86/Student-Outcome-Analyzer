@@ -27,25 +27,12 @@ export function useMLServiceWakeup(options = {}) {
   const sessionStartRef = useRef(Date.now());
   const isWakingRef = useRef(false);
   const isMountedRef = useRef(true);
-  const readinessTimerRef = useRef(null);
-  const readinessPollStartRef = useRef(null);
-
-  const stopReadinessPolling = useCallback(() => {
-    if (readinessTimerRef.current) {
-      clearInterval(readinessTimerRef.current);
-      readinessTimerRef.current = null;
-    }
-    readinessPollStartRef.current = null;
-  }, []);
 
   // Status transition helper with callback notification
   const updateStatus = useCallback((newStatus, err = null) => {
     if (!isMountedRef.current) return;
     setStatus(newStatus);
     if (err) setError(err);
-    if (newStatus === 'ready') {
-      stopReadinessPolling();
-    }
     if (onStatusChange) {
       try {
         onStatusChange(newStatus, err);
@@ -53,74 +40,44 @@ export function useMLServiceWakeup(options = {}) {
         console.warn('[useMLServiceWakeup] onStatusChange error:', cbErr);
       }
     }
-  }, [onStatusChange, stopReadinessPolling]);
-
-  const startReadinessPolling = useCallback(() => {
-    if (readinessTimerRef.current) return;
-    readinessPollStartRef.current = Date.now();
-
-    readinessTimerRef.current = setInterval(async () => {
-      if (!isMountedRef.current) {
-        stopReadinessPolling();
-        return;
-      }
-
-      // Max poll duration 100 seconds
-      if (Date.now() - (readinessPollStartRef.current || 0) > 100_000) {
-        stopReadinessPolling();
-        return;
-      }
-
-      try {
-        const res = await apiService.getMLStatus(4000);
-        if (!isMountedRef.current) return;
-
-        if (res && (res.online === true || res.status === 'ready')) {
-          updateStatus('ready');
-          stopReadinessPolling();
-        }
-      } catch (err) {
-        // Still warming, keep polling
-      }
-    }, 5000);
-  }, [updateStatus, stopReadinessPolling]);
+  }, [onStatusChange]);
 
   /**
-   * JIT Silent background wake-up trigger
+   * Direct clean wake-up trigger.
+   * Mirrors a browser tab click: sends a single persistent GET request to the ML service /health.
+   * Reuses the shared singleton promise so no duplicate or aborted requests occur.
    */
   const wakeUp = useCallback(async (wakeOptions = { silent: true }) => {
-    if (isWakingRef.current) return;
-    isWakingRef.current = true;
+    if (status === 'ready') return { online: true, status: 'ready' };
 
     if (!wakeOptions.silent) {
       updateStatus('warming');
     }
 
     try {
-      const res = await apiService.wakeMLService({
-        waitForReady: wakeOptions.waitForReady === true
+      const res = await apiService.ensureMLReady({
+        timeoutMs: wakeOptions.timeoutMs || 50000,
+        onProgress: wakeOptions.onProgress || null
       });
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) return res;
 
       if (res && res.online) {
-        stopReadinessPolling();
         updateStatus('ready');
-      } else {
-        updateStatus('warming');
-        startReadinessPolling();
+        return res;
       }
+      return res;
     } catch (err) {
       if (isMountedRef.current) {
-        console.warn('[useMLServiceWakeup] Pre-warm ping notice:', err.message);
-        // Do not set hard offline on background ping failures; treat as warming and poll
+        console.warn('[useMLServiceWakeup] Wake ping notice:', err.message);
         updateStatus('warming', err.message);
-        startReadinessPolling();
       }
-    } finally {
-      isWakingRef.current = false;
+      if (wakeOptions.waitForReady) {
+        throw err;
+      }
+      return { online: false, status: 'warming' };
     }
-  }, [updateStatus, startReadinessPolling, stopReadinessPolling]);
+  }, [status, updateStatus]);
 
   /**
    * Single heartbeat ping
@@ -183,9 +140,8 @@ export function useMLServiceWakeup(options = {}) {
     }
     return () => {
       isMountedRef.current = false;
-      stopReadinessPolling();
     };
-  }, [autoWarm, wakeUp, stopReadinessPolling]);
+  }, [autoWarm, wakeUp]);
 
   // Strictly Scoped Session Keep-Alive Heartbeat
   useEffect(() => {
@@ -226,10 +182,9 @@ export function useMLServiceWakeup(options = {}) {
         clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
-      stopReadinessPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isEditingSession, wakeUp, pingHeartbeat, stopReadinessPolling]);
+  }, [isEditingSession, wakeUp, pingHeartbeat]);
 
   return {
     status,
