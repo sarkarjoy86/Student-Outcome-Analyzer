@@ -2068,14 +2068,15 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     })
   }, [mlStatus, wakeUpMLService, showNotification, notesCourseId])
 
-  // Real-time toast alert when AI service transitions from warming to ready during active Live Suggest
+  // Real-time toast alert when AI service transitions from warming to ready
   const prevMlStatusRef = useRef(mlStatus)
   useEffect(() => {
-    if (prevMlStatusRef.current !== 'ready' && mlStatus === 'ready' && isLiveSuggestActive) {
-      showNotification('✓ AI suggestion engine is ready! Real-time question suggestions are now live.', 'success', 4000)
+    if (prevMlStatusRef.current !== 'ready' && mlStatus === 'ready') {
+      showNotification('✓ AI Service is ready! All AI features are now active.', 'success', 4500)
+      setAiWarmingInfo(null)
     }
     prevMlStatusRef.current = mlStatus
-  }, [mlStatus, isLiveSuggestActive, showNotification])
+  }, [mlStatus, showNotification])
 
   const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
   const [showParagraphMarks, setShowParagraphMarks] = useState(false)
@@ -5493,13 +5494,16 @@ Equation description: "${aiEquationPrompt}"`
   const handleTriggerAiVerify = useCallback(async () => {
     let selText = aiVerifySelection?.selectedText || ''
     let rect = null
+    let range = null
 
-    if (!selText && rteRef.current) {
+    if (rteRef.current) {
       const editorDoc = rteRef.current.contentModule?.getDocument ? rteRef.current.contentModule.getDocument() : null
       const sel = (editorDoc && editorDoc.getSelection) ? editorDoc.getSelection() : window.getSelection()
-      selText = sel ? sel.toString().trim() : ''
       if (sel && sel.rangeCount > 0) {
-        rect = sel.getRangeAt(0).getBoundingClientRect()
+        range = sel.getRangeAt(0)
+        const rangeText = sel.toString().trim()
+        if (rangeText) selText = rangeText
+        rect = range.getBoundingClientRect()
       }
     }
 
@@ -5513,7 +5517,97 @@ Equation description: "${aiEquationPrompt}"`
 
     // Immediately compute perfectly clamped coordinates for the expanded popover card
     const targetRect = rect || (lastSelectionRangeRef.current ? lastSelectionRangeRef.current.getBoundingClientRect() : null)
-    setPopoverPos(calculateClampedPosition(targetRect, true))
+    const cardPos = calculateClampedPosition(targetRect, true)
+    setPopoverPos(cardPos)
+
+    // Ensure targetInfo is properly parsed if aiVerifySelection was null (e.g. after closing via X button)
+    let targetInfo = aiVerifySelection?.targetInfo || null
+    if (!targetInfo && range) {
+      try {
+        const common = range.commonAncestorContainer
+        const editPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+        let container = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement
+        while (container && container !== editPanel && !['TD', 'TH', 'P', 'LI', 'DIV'].includes(container.tagName)) {
+          container = container.parentElement
+        }
+
+        let qNumStr = null
+        let qIndex = null
+
+        const tr = container ? container.closest('tr') : null
+        if (tr) {
+          let curr = tr
+          while (curr) {
+            const firstCol = curr.querySelector('td')
+            const textContent = firstCol ? firstCol.textContent.trim() : ''
+            const match = textContent.match(/^(?:Q\s*)?(\d+)/i)
+            if (match) {
+              const num = parseInt(match[1])
+              qNumStr = `Q${num}`
+              qIndex = num - 1
+              break
+            }
+            curr = curr.previousElementSibling
+          }
+        }
+
+        if (!qNumStr && container) {
+          const match = container.textContent.trim().match(/^(?:Q(?:uestion)?\s*(\d+)|\b(\d+)[\.\)])/i)
+          if (match) {
+            const num = parseInt(match[1] || match[2])
+            qNumStr = `Q${num}`
+            qIndex = num - 1
+          }
+        }
+
+        let existingCo = null
+        let existingBloom = null
+        const cellOrContainer = container ? (container.closest('td, li, p') || container) : null
+        const tagSpan = cellOrContainer ? cellOrContainer.querySelector('.co-bloom-tag') : null
+        if (tagSpan) {
+          const spanText = tagSpan.textContent || ''
+          const coMatch = spanText.match(/CO\d+/i)
+          const bloomMatch = spanText.match(/C[1-6]/i)
+          if (coMatch) existingCo = coMatch[0].toUpperCase()
+          if (bloomMatch) existingBloom = bloomMatch[0].toUpperCase()
+        } else if (cellOrContainer) {
+          const rawMatch = cellOrContainer.textContent.match(/\[(?:(CO\d+))?(?:\s*(?:->|→)\s*)?(C[1-6])?\]/i)
+          if (rawMatch) {
+            if (rawMatch[1]) existingCo = rawMatch[1].toUpperCase()
+            if (rawMatch[2]) existingBloom = rawMatch[2].toUpperCase()
+          }
+        }
+
+        targetInfo = {
+          containerElement: container,
+          questionNumber: qNumStr,
+          questionIndex: qIndex,
+          existingCo,
+          existingBloom,
+          tagSpan
+        }
+      } catch (err) {
+        console.warn('Error resolving targetInfo in handleTriggerAiVerify:', err)
+      }
+    }
+
+    if (!targetInfo) {
+      targetInfo = {
+        containerElement: null,
+        questionNumber: null,
+        questionIndex: null,
+        existingCo: null,
+        existingBloom: null,
+        tagSpan: null
+      }
+    }
+
+    // Always guarantee valid aiVerifySelection object before rendering popover
+    setAiVerifySelection({
+      selectedText: selText,
+      position: cardPos,
+      targetInfo
+    })
 
     setShowAiVerifyPopover(true)
     setAiVerifyLoading(true)
@@ -5521,7 +5615,7 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifySuccessMsg('')
 
     if (mlStatus !== 'ready') {
-      showNotification('Connecting to AI service for Bloom & CO analysis (~30s)...', 'info', 4000)
+      showNotification('Connecting to AI service for Bloom & CO analysis (~20-30s on first run)...', 'info', 6000)
       try {
         await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
@@ -5536,7 +5630,7 @@ Equation description: "${aiEquationPrompt}"`
 
       const data = await apiService.suggestMetadata(
         {
-          questionText: aiVerifySelection?.selectedText || selText,
+          questionText: selText,
           courseOutcomes: outcomesPayload
         },
         {
@@ -5561,7 +5655,7 @@ Equation description: "${aiEquationPrompt}"`
       setAiVerifyLoading(false)
       setAiWarmingInfo(null)
     }
-  }, [aiVerifySelection, calculateClampedPosition, coDetails, availableCOs, offering, showNotification])
+  }, [aiVerifySelection, calculateClampedPosition, coDetails, availableCOs, offering, showNotification, mlStatus, wakeUpMLService])
 
   // Helper: Trigger AI Tag Verifier for newly inserted suggested question text
   const triggerAiVerifyForText = useCallback(async (text, rect = null) => {
@@ -6102,11 +6196,11 @@ Equation description: "${aiEquationPrompt}"`
   const handleApplyAiTag = ({ applyCo = false, applyBloom = false }) => {
     if (!aiVerifyResult || !aiVerifySelection) return
 
-    const targetInfo = aiVerifySelection.targetInfo || {}
+    const targetInfo = aiVerifySelection?.targetInfo || {}
     const container = targetInfo.containerElement
     const qIndex = targetInfo.questionIndex
 
-    const selectedQText = (aiVerifySelection.selectedText || '').trim()
+    const selectedQText = (aiVerifySelection?.selectedText || '').trim()
 
     // Determine CO to apply
     let finalCo = targetInfo.existingCo || (qIndex !== null && questions[qIndex] && questions[qIndex].co !== 'NONE' ? questions[qIndex].co : '')
@@ -12418,7 +12512,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               left: `${(floatingBtnPos || aiVerifySelection?.position || { top: 100, left: 100 }).left}px`
             }}
           >
-            {!showAiVerifyPopover ? (
+            {(!showAiVerifyPopover || !aiVerifySelection) ? (
               <div id="floating-ai-assistant-wrapper" className="relative flex flex-col items-center">
                 {/* Floating Button (Green/Emerald Theme + Draggable on Press & Hold) - Hidden when opened via right-click */}
                 {!isContextMenuTriggered && (
@@ -12758,7 +12852,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     </span>
                     <div className="flex items-center gap-1.5">
                       <span className="font-extrabold text-xs tracking-wide">AI Tag Verifier</span>
-                      {aiVerifySelection.targetInfo?.questionNumber && (
+                      {aiVerifySelection?.targetInfo?.questionNumber && (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-700/90 text-emerald-100 rounded border border-emerald-500/40">
                           {aiVerifySelection.targetInfo.questionNumber}
                         </span>
@@ -12792,10 +12886,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 <div className="p-4 space-y-3 bg-white overflow-y-auto max-h-[calc(92vh-50px)]">
                   {/* Selected Text Excerpt */}
                   <div 
-                    title={aiVerifySelection.selectedText}
+                    title={aiVerifySelection?.selectedText || ''}
                     className="px-3 py-2 bg-emerald-50/50 border border-emerald-200/60 rounded-xl text-[11px] text-gray-700 italic font-serif leading-relaxed line-clamp-2"
                   >
-                    "{aiVerifySelection.selectedText}"
+                    "{aiVerifySelection?.selectedText || ''}"
                   </div>
 
                   {/* Loading State with Micro-spinner */}
@@ -12840,7 +12934,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
                         <div className="flex justify-between items-center pt-1.5 border-t border-purple-100">
                           <span className="text-[10px] text-gray-500">
-                            Current: <strong className="text-gray-700">{aiVerifySelection.targetInfo?.existingBloom || 'None'}</strong>
+                            Current: <strong className="text-gray-700">{aiVerifySelection?.targetInfo?.existingBloom || 'None'}</strong>
                           </span>
                           <button
                             type="button"
@@ -12874,7 +12968,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
                         <div className="flex justify-between items-center pt-1.5 border-t border-teal-100">
                           <span className="text-[10px] text-gray-500">
-                            Current: <strong className="text-gray-700">{aiVerifySelection.targetInfo?.existingCo || 'None'}</strong>
+                            Current: <strong className="text-gray-700">{aiVerifySelection?.targetInfo?.existingCo || 'None'}</strong>
                           </span>
                           <button
                             type="button"
@@ -17399,8 +17493,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
       {/* Non-Blocking Notifications Container (Top-Right Stack with Translucent Glassy Dark Emerald Aesthetic) */}
       <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
-        {/* Real-Time AI Cold-Start Warming Card */}
-        {aiWarmingInfo && (
+        {/* Real-Time AI Cold-Start Warming Card - Stays visible continuously while warming */}
+        {(aiWarmingInfo || mlStatus === 'warming' || isMlWarming) && mlStatus !== 'ready' && (
           <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-2xl flex items-start gap-3.5 backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-50 border-emerald-500/50 ring-1 ring-emerald-400/20">
             <div className="relative flex items-center justify-center shrink-0 mt-0.5">
               <Sparkles size={17} className="text-amber-400 animate-pulse" />
@@ -17411,18 +17505,18 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             </div>
             <div className="flex-1 flex flex-col text-left pr-1">
               <span className="text-white font-bold tracking-wide leading-tight">
-                {aiWarmingInfo.statusMsg || 'AI service is waking up from standby...'}
+                {aiWarmingInfo?.statusMsg || 'AI Service is waking up from standby...'}
               </span>
-              <span className="text-[11px] text-emerald-200/90 font-normal mt-0.5 leading-tight">
-                {aiWarmingInfo.attempt > 1
+              <span className="text-[11px] text-emerald-200/90 font-normal mt-1 leading-tight">
+                {aiWarmingInfo?.attempt > 1
                   ? `Attempt ${aiWarmingInfo.attempt}/${aiWarmingInfo.maxAttempts || 24} • Elapsed: ${aiWarmingInfo.elapsedSec || 0}s (Microservice waking from sleep)`
-                  : 'Waking up ML container... You can keep editing without interruption.'}
+                  : 'First run takes ~20–30 seconds. Please wait a moment while the neural models load into memory.'}
               </span>
             </div>
             <button
               type="button"
               onClick={() => {
-                if (aiWarmingInfo.onCancel) aiWarmingInfo.onCancel()
+                if (aiWarmingInfo?.onCancel) aiWarmingInfo.onCancel()
                 setAiWarmingInfo(null)
               }}
               className="shrink-0 text-emerald-300/80 hover:text-white hover:bg-white/15 p-1 rounded-lg transition cursor-pointer"
