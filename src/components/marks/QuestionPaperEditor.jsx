@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { apiService } from '../../services/apiService'
+import { apiService, isMLReady } from '../../services/apiService'
 import { useAuth } from '../../context/AuthContext'
 import { useMLServiceWakeup } from '../../hooks/useMLServiceWakeup'
 import {
@@ -1945,9 +1945,34 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Strictly Scoped Keep-Alive Heartbeat for ML Service (Render Cold-Start Mitigation)
-  const { status: mlStatus, isWarming: isMlWarming, wakeUp: wakeUpMLService } = useMLServiceWakeup({
+  const { status: mlStatus, isWarming: isMlWarming, isIdle: isUserIdle, wakeUp: wakeUpMLService } = useMLServiceWakeup({
     isEditingSession: true,
-    autoWarm: true
+    autoWarm: true,
+    onIdleChange: (idle) => {
+      if (idle) {
+        // Teacher has been inactive for >= 5 minutes.
+        // Auto-pause Live reference question suggestions to preserve quota/battery and prevent calls to sleeping server
+        setIsLiveSuggestActive(prev => {
+          if (prev) {
+            setIsSuggestionsAutoPaused(true)
+            return false
+          }
+          return prev
+        })
+      }
+    },
+    onVisibilityChange: (visibility) => {
+      if (visibility === 'hidden') {
+        // Teacher switched to another tab (e.g. YouTube or portal). Auto-pause live suggestions
+        setIsLiveSuggestActive(prev => {
+          if (prev) {
+            setIsSuggestionsAutoPaused(true)
+            return false
+          }
+          return prev
+        })
+      }
+    }
   })
 
   // Non-blocking Toast Notification State
@@ -2042,8 +2067,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const notePopoverRef = useRef(null)
 
   // Dual-Layer Resource Optimization: Live suggestions default to PAUSED (false) to prevent accidental backend load.
-  // Resets to paused whenever the teacher navigates away or opens the editor fresh.
+  // Resets to paused whenever the teacher navigates away, enters idle state, or switches tabs.
   const [isLiveSuggestActive, setIsLiveSuggestActive] = useState(false)
+  const [isSuggestionsAutoPaused, setIsSuggestionsAutoPaused] = useState(false)
   const suggestAbortRef = useRef(null)
   const suggestRequestIdRef = useRef(0)
 
@@ -2056,8 +2082,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     setIsLiveSuggestActive(prev => {
       const nextState = forceState !== null ? forceState : !prev
       if (nextState) {
+        setIsSuggestionsAutoPaused(false)
         // Teacher toggled Live ON: Ensure ML microservice begins waking up if not yet ready
-        if (mlStatus !== 'ready') {
+        if (mlStatus !== 'ready' || !isMLReady()) {
           wakeUpMLService({ silent: false, waitForReady: false })
         } else {
           showNotification('Live question suggestions active.', 'success', 2500)
@@ -5616,7 +5643,14 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
 
-    if (mlStatus !== 'ready') {
+    const isServerCold = mlStatus !== 'ready' || !isMLReady()
+    if (isServerCold) {
+      setAiWarmingInfo({
+        attempt: 1,
+        maxAttempts: 24,
+        elapsedSec: 0,
+        statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+      })
       try {
         await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
@@ -5681,7 +5715,14 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
 
-    if (mlStatus !== 'ready') {
+    const isServerCold = mlStatus !== 'ready' || !isMLReady()
+    if (isServerCold) {
+      setAiWarmingInfo({
+        attempt: 1,
+        maxAttempts: 24,
+        elapsedSec: 0,
+        statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+      })
       try {
         await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
@@ -5716,7 +5757,7 @@ Equation description: "${aiEquationPrompt}"`
       setAiVerifyLoading(false)
       setAiWarmingInfo(null)
     }
-  }, [calculateClampedPosition, coDetails, availableCOs, offering])
+  }, [calculateClampedPosition, coDetails, availableCOs, offering, mlStatus, wakeUpMLService])
 
   // Fetch reference notes status for current course on load (shared across sections of same course)
   const refreshNotesStatus = useCallback(() => {
@@ -11542,12 +11583,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             </p>
           </div>
         ) : !isLiveSuggestActive ? (
-          /* Subtle Paused Helper Tip when Live Suggestions are turned OFF */
+          /* Subtle Paused Helper Tip when Live Suggestions are turned OFF or Auto-Paused */
           <div className="bg-amber-50/70 rounded-xl p-2.5 border border-amber-200/60 text-[11px] text-amber-900 leading-snug font-medium space-y-1.5 animate-in fade-in duration-150">
             <div className="flex items-start gap-2">
               <span className="text-amber-600 text-xs mt-0.5">⏸️</span>
               <p>
-                Suggestions are paused Click{' '}
+                Suggestions are paused {isSuggestionsAutoPaused ? '(auto-paused due to inactivity / tab switch). ' : ''}Click{' '}
                 <button
                   type="button"
                   onClick={() => handleToggleLiveSuggest(true)}
@@ -17495,7 +17536,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       {/* Non-Blocking Notifications Container (Top-Right Stack with Translucent Glassy Dark Emerald Aesthetic) */}
       <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
         {/* Real-Time AI Cold-Start Warming Card - Stays visible continuously while warming */}
-        {(aiWarmingInfo || mlStatus === 'warming' || isMlWarming) && mlStatus !== 'ready' && (
+        {(aiWarmingInfo || mlStatus === 'warming' || isMlWarming) && (
           <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-xl flex items-start gap-3.5 backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-100 border-emerald-400/60 ring-1 ring-emerald-400/25">
             <div className="relative flex items-center justify-center shrink-0 mt-0.5">
               <Sparkles size={17} className="text-emerald-400 animate-pulse" />

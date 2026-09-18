@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiService } from '../services/apiService';
+import { apiService, setMLReadyState, isMLReady } from '../services/apiService';
 
 // Render free tier spins down after 15 minutes of inactivity.
 // We ping every 9 minutes during active editing sessions.
@@ -23,11 +23,20 @@ const MAX_SESSION_DURATION_MS = 90 * 60 * 1000; // 90 minutes (1.5 hours)
  * @param {boolean} [options.isEditingSession=false] - Whether Question Paper Editor is currently open
  * @param {boolean} [options.autoWarm=false] - Whether to automatically trigger JIT wake-up on mount
  * @param {function} [options.onStatusChange] - Optional callback when ML service status transitions
+ * @param {function} [options.onIdleChange] - Optional callback when user enters/exits idle state (>= 5 mins)
+ * @param {function} [options.onVisibilityChange] - Optional callback when tab visibility changes
  */
 export function useMLServiceWakeup(options = {}) {
-  const { isEditingSession = false, autoWarm = false, onStatusChange = null } = options;
+  const {
+    isEditingSession = false,
+    autoWarm = false,
+    onStatusChange = null,
+    onIdleChange = null,
+    onVisibilityChange = null
+  } = options;
 
   const [status, setStatus] = useState('idle'); // 'idle' | 'warming' | 'ready' | 'offline'
+  const [isIdle, setIsIdle] = useState(false);
   const [lastHeartbeat, setLastHeartbeat] = useState(null);
   const [error, setError] = useState(null);
 
@@ -186,11 +195,18 @@ export function useMLServiceWakeup(options = {}) {
         lastThrottleWriteRef.current = now;
         lastActivityRef.current = now;
 
-        // Auto-resume: if user returns from idle (5-12 mins away) and tab is visible,
-        // send keep-alive poke if it's been >= 8 mins since last heartbeat so Render doesn't sleep at min 15
-        if (wasIdle && document.visibilityState === 'visible') {
+        if (wasIdle) {
+          setIsIdle(false);
+          if (onIdleChange) {
+            try { onIdleChange(false); } catch (e) {}
+          }
+
+          // If user returned after 12+ minutes of dormancy, Render container has spun down to sleep
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+          if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
+            setMLReadyState(false);
+            updateStatus('idle');
+          } else if (document.visibilityState === 'visible' && timeSinceLastHeartbeat >= 8 * 60 * 1000) {
             pingHeartbeat();
           }
         }
@@ -204,7 +220,34 @@ export function useMLServiceWakeup(options = {}) {
       document.addEventListener(evt, recordActivity, { passive: true, capture: true });
     });
 
-    // Establish periodic keep-alive interval
+    // High-frequency (15s) non-blocking idle presence & sleep state detector
+    const idleCheckInterval = setInterval(() => {
+      const now = Date.now();
+      const idleElapsed = now - lastActivityRef.current;
+      const isCurrentlyIdle = idleElapsed >= IDLE_INACTIVITY_THRESHOLD_MS;
+
+      setIsIdle(prev => {
+        if (prev !== isCurrentlyIdle) {
+          if (onIdleChange) {
+            try { onIdleChange(isCurrentlyIdle); } catch (e) {}
+          }
+        }
+        return isCurrentlyIdle;
+      });
+
+      // If user has been idle for >= 12 minutes (or no heartbeat in >= 12 mins),
+      // the Render container has entered or is entering sleep mode.
+      // Invalidate confirmed ready state so next AI interaction prompts pre-warming.
+      const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
+      if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
+        setMLReadyState(false);
+        if (status === 'ready') {
+          updateStatus('idle');
+        }
+      }
+    }, 15000);
+
+    // Establish periodic keep-alive interval (runs every 9 minutes during active work)
     heartbeatTimerRef.current = setInterval(() => {
       const now = Date.now();
       const idleElapsed = now - lastActivityRef.current;
@@ -227,16 +270,28 @@ export function useMLServiceWakeup(options = {}) {
 
     // Tab visibility handling: pause heartbeat when backgrounded, resume when user returns
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      const currentVisibility = document.visibilityState;
+      if (onVisibilityChange) {
+        try { onVisibilityChange(currentVisibility); } catch (e) {}
+      }
+
+      if (currentVisibility === 'visible') {
         const now = Date.now();
         lastActivityRef.current = now;
         lastThrottleWriteRef.current = now;
+        setIsIdle(false);
+        if (onIdleChange) {
+          try { onIdleChange(false); } catch (e) {}
+        }
 
         const sessionElapsed = now - sessionStartRef.current;
         if (sessionElapsed <= MAX_SESSION_DURATION_MS) {
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          // If returning to tab and it's been >= 8 mins since last heartbeat, refresh immediately
-          if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+          if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
+            // Container slept while away: invalidate ready cache
+            setMLReadyState(false);
+            updateStatus('idle');
+          } else if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
             pingHeartbeat();
           }
         }
@@ -252,19 +307,22 @@ export function useMLServiceWakeup(options = {}) {
         clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
+      clearInterval(idleCheckInterval);
       activityEvents.forEach(evt => {
         window.removeEventListener(evt, recordActivity, { capture: true });
         document.removeEventListener(evt, recordActivity, { capture: true });
       });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isEditingSession, wakeUp, pingHeartbeat]);
+  }, [isEditingSession, wakeUp, pingHeartbeat, onIdleChange, onVisibilityChange, status, updateStatus]);
 
   return {
     status,
     isWarming: status === 'warming',
     isReady: status === 'ready',
     isOffline: status === 'offline',
+    isIdle,
+    isUserIdle: isIdle,
     lastHeartbeat,
     error,
     wakeUp,

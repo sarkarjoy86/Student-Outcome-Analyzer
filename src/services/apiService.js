@@ -38,8 +38,8 @@ export function setMLReadyState(ready) {
  * Holds the connection cleanly for up to 50s without aborting, allowing Render to boot.
  * Reuses a single shared Promise across all concurrent callers so Render is never flooded.
  */
-export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = null, signal = null } = {}) {
-  if (isMLServiceConfirmedReady) {
+export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = null, signal = null, force = false } = {}) {
+  if (isMLServiceConfirmedReady && !force) {
     return { online: true, status: "ready" };
   }
 
@@ -318,13 +318,23 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
       if (!res.ok || data.success === false) {
         if (isColdStart && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
           attempt++;
-          // Instead of rapid-fire retries every 3s that flood Render with aborted sockets,
-          // cleanly await the single ML wake-up promise (just like clicking the link in a browser)!
+          // Confirmed cold start: invalidate cached ready state immediately
+          setMLReadyState(false);
+          if (onProgress) {
+            onProgress({
+              attempt,
+              maxAttempts: maxRetries,
+              elapsedSec: Math.round((Date.now() - startTime) / 1000),
+              statusMsg: "AI service is waking up from standby (~20–30s)..."
+            });
+          }
+          // Cleanly await the single ML wake-up promise with force: true
           try {
             await ensureMLServiceReady({
               timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
               onProgress,
-              signal
+              signal,
+              force: true
             });
             // Once the wake-up finishes cleanly, replay request
             continue;
@@ -355,11 +365,21 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
 
       if (isNetworkError && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
         attempt++;
+        setMLReadyState(false);
+        if (onProgress) {
+          onProgress({
+            attempt,
+            maxAttempts: maxRetries,
+            elapsedSec: Math.round((Date.now() - startTime) / 1000),
+            statusMsg: "AI service is waking up from standby (~20–30s)..."
+          });
+        }
         try {
           await ensureMLServiceReady({
             timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
             onProgress,
-            signal
+            signal,
+            force: true
           });
           continue;
         } catch (wakeErr) {
