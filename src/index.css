@@ -4,6 +4,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  background-color: #f8fafc;
+}
+
 body {
   margin: 0;
   font-family:
@@ -21,6 +25,34 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  zoom: 0.9;
+  min-height: 111.12vh;
+}
+
+#root {
+  min-height: 111.12vh;
+}
+
+.min-h-screen {
+  min-height: 111.12vh !important;
+}
+
+.h-screen {
+  height: 111.12vh !important;
+}
+
+.auth-split-container {
+  min-height: 111.12vh !important;
+}
+
+@media print {
+  body {
+    zoom: 1 !important;
+    min-height: auto !important;
+  }
+  .min-h-screen {
+    min-height: 100vh !important;
+  }
 }
 
 /* ==========================================

@@ -1109,11 +1109,16 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
 function generateTableHtml(headers = [], rows = []) {
   if (!headers || headers.length === 0) return ''
 
-  let html = `<table class="e-rte-table" style="border-collapse: collapse; width: 100%; max-width: 550px; margin: 14px 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; border: 1px solid #9ca3af; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">`
-  html += `<thead><tr style="background-color: #e5e7eb; border-bottom: 2px solid #9ca3af;">`
+  const colCount = headers.length
+  const colWidthPct = (100 / colCount).toFixed(1)
+  const cellPadding = colCount >= 6 ? '3px 5px' : (colCount === 5 ? '4px 6px' : '6px 10px')
+  const fontSize = colCount >= 6 ? '11px' : (colCount === 5 ? '12px' : '13px')
+
+  let html = `<table class="e-rte-table" style="border-collapse: collapse; width: 100%; max-width: 100%; margin: 8px auto; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; border: 1px solid #000000; box-sizing: border-box;">`
+  html += `<thead><tr style="background-color: #f3f4f6; border-bottom: 1.5px solid #000000;">`
 
   headers.forEach(h => {
-    html += `<th style="padding: 9px 14px; border: 1px solid #9ca3af; text-align: left; font-weight: 700; color: #1f2937; background-color: #e5e7eb;">${h}</th>`
+    html += `<th style="width: ${colWidthPct}%; padding: ${cellPadding}; border: 1px solid #000000; text-align: center; font-weight: 700; color: #000000; background-color: #f3f4f6; word-break: break-word; overflow-wrap: break-word; line-height: 1.2;">${h}</th>`
   })
   html += `</tr></thead><tbody>`
 
@@ -1121,7 +1126,7 @@ function generateTableHtml(headers = [], rows = []) {
     const bg = idx % 2 === 0 ? '#ffffff' : '#f9fafb'
     html += `<tr style="background-color: ${bg};">`
     row.forEach(cell => {
-      html += `<td style="padding: 8px 14px; border: 1px solid #9ca3af; color: #374151;">${cell}</td>`
+      html += `<td style="width: ${colWidthPct}%; padding: ${cellPadding}; border: 1px solid #000000; color: #000000; text-align: center; word-break: break-word; overflow-wrap: break-word; line-height: 1.2;">${cell}</td>`
     })
     html += `</tr>`
   })
@@ -1187,17 +1192,22 @@ function parseScenarioAndTable(text) {
 function markdownTableToHtml(parsedTable) {
   if (!parsedTable || !parsedTable.headers || parsedTable.headers.length === 0) return ''
 
-  let html = `<table class="e-rte-table" style="border-collapse: collapse; width: auto; margin: 8px 0; font-family: 'Times New Roman', Times, serif; font-size: 12pt; border: 1.5px solid #374151;">`
-  html += `<thead><tr style="background-color: #f3f4f6; border-bottom: 2px solid #374151;">`
+  const colCount = parsedTable.headers.length
+  const colWidthPct = (100 / colCount).toFixed(1)
+  const cellPadding = colCount >= 6 ? '3px 5px' : (colCount === 5 ? '4px 6px' : '5px 8px')
+  const fontSize = colCount >= 6 ? '8.5pt' : (colCount === 5 ? '9pt' : '10pt')
+
+  let html = `<table class="e-rte-table" style="border-collapse: collapse; width: 100%; max-width: 100%; margin: 8px auto; font-family: 'Times New Roman', Times, serif; font-size: ${fontSize}; border: 1px solid #000000; box-sizing: border-box;">`
+  html += `<thead><tr style="background-color: #f3f4f6; border-bottom: 1.5px solid #000000;">`
   parsedTable.headers.forEach(h => {
-    html += `<th style="padding: 6px 14px; border: 1px solid #374151; text-align: left; font-weight: 700; color: #111827;">${h}</th>`
+    html += `<th style="width: ${colWidthPct}%; padding: ${cellPadding}; border: 1px solid #000000; text-align: center; font-weight: 700; color: #000000; background-color: #f3f4f6; word-break: break-word; overflow-wrap: break-word; line-height: 1.2;">${h}</th>`
   })
   html += `</tr></thead><tbody>`
   parsedTable.rows.forEach((row, idx) => {
     const bg = idx % 2 === 0 ? '#ffffff' : '#f9fafb'
     html += `<tr style="background-color: ${bg};">`
     row.forEach(cell => {
-      html += `<td style="padding: 5px 14px; border: 1px solid #374151; color: #1f2937;">${cell}</td>`
+      html += `<td style="width: ${colWidthPct}%; padding: ${cellPadding}; border: 1px solid #000000; color: #000000; text-align: center; word-break: break-word; overflow-wrap: break-word; line-height: 1.2;">${cell}</td>`
     })
     html += `</tr>`
   })
@@ -1233,22 +1243,20 @@ function parseExamPaperStructureFromDom(tableEl) {
 
     // 1. Part Header Row (colspan="4" or single-cell row with text containing "PART")
     if (tds.length === 1 && !isOrRow && (firstCellColspan >= 4 || /PART/i.test(tds[0].textContent))) {
-      if (currentQ && blankSpaceCount > 0) {
-        currentQ.qSpaceRows = blankSpaceCount
-      }
+      const partBeforeSpace = blankSpaceCount
       blankSpaceCount = 0
 
       const partName = tds[0].textContent.trim()
-      currentPart = { name: partName, questions: [] }
+      currentPart = { name: partName, beforeSpace: partBeforeSpace, afterSpace: 0, questions: [] }
       parts.push(currentPart)
       currentQ = null
-      pendingOrContext = null
+      pendingOrContext = 'after-part'
       return
     }
 
     // 2. OR Separator Row
     if (isOrRow) {
-      if (currentQ && blankSpaceCount > 0) {
+      if (currentQ) {
         currentQ.qOrBeforeSpace = blankSpaceCount
       }
       blankSpaceCount = 0
@@ -1287,9 +1295,7 @@ function parseExamPaperStructureFromDom(tableEl) {
       // A. Explicit Sub-Q OR alternative row
       if (rowType === 'sub-q-or' || (pendingOrContext === 'after-or' && !isQNumber && !isSubQLabel)) {
         if (currentQ) {
-          if (blankSpaceCount > 0) {
-            currentQ.qOrAfterSpace = blankSpaceCount
-          }
+          currentQ.qOrAfterSpace = blankSpaceCount
           const sIdx = tr.hasAttribute('data-sub-idx')
             ? parseInt(tr.getAttribute('data-sub-idx'))
             : Math.max(0, (currentQ.marks?.length || 1) - 1)
@@ -1312,7 +1318,7 @@ function parseExamPaperStructureFromDom(tableEl) {
       // B. Explicit Question-level OR alternative row
       if (rowType === 'question-or' || (pendingOrContext === 'after-or' && !isQNumber && isSubQLabel)) {
         if (currentQ) {
-          if (!currentQ.hasQuestionOr && blankSpaceCount > 0) {
+          if (!currentQ.hasQuestionOr) {
             currentQ.qOrAfterSpace = blankSpaceCount
           }
           currentQ.hasQuestionOr = true
@@ -1330,7 +1336,9 @@ function parseExamPaperStructureFromDom(tableEl) {
 
       // C. Standard Question row (e.g. "1.")
       if (isQNumber) {
-        if (currentQ && blankSpaceCount > 0) {
+        if (pendingOrContext === 'after-part' && currentPart) {
+          currentPart.afterSpace = blankSpaceCount
+        } else if (currentQ && blankSpaceCount > 0) {
           currentQ.qSpaceRows = blankSpaceCount
         }
         blankSpaceCount = 0
@@ -1348,14 +1356,14 @@ function parseExamPaperStructureFromDom(tableEl) {
           subOrBlooms: [''],
           subOrContents: [''],
           subOrMarks: [markVal],
-          subOrBeforeSpace: [1],
-          subOrAfterSpace: [1],
+          subOrBeforeSpace: [0],
+          subOrAfterSpace: [0],
           hasQuestionOr: false,
           questionOrMarks: [],
           questionOrBlooms: [],
           questionOrContents: [],
-          qOrBeforeSpace: 1,
-          qOrAfterSpace: 1,
+          qOrBeforeSpace: 0,
+          qOrAfterSpace: 0,
           spaceRows: 1,
           subSpaceRows: [0],
           qSpaceRows: 1
@@ -1381,9 +1389,9 @@ function parseExamPaperStructureFromDom(tableEl) {
         if (!currentQ.subOrMarks) currentQ.subOrMarks = []
         currentQ.subOrMarks.push(markVal)
         if (!currentQ.subOrBeforeSpace) currentQ.subOrBeforeSpace = []
-        currentQ.subOrBeforeSpace.push(1)
+        currentQ.subOrBeforeSpace.push(0)
         if (!currentQ.subOrAfterSpace) currentQ.subOrAfterSpace = []
-        currentQ.subOrAfterSpace.push(1)
+        currentQ.subOrAfterSpace.push(0)
         if (!currentQ.subSpaceRows) currentQ.subSpaceRows = []
         currentQ.subSpaceRows.push(0)
       }
@@ -1425,8 +1433,19 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
   parts.forEach((part) => {
     // Part Header Row — merged across all 4 columns, bold centered (only if part.name is non-empty)
     if (part.name && part.name.trim()) {
-      html += `<tr><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
-      html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+      // Space before Part header
+      const beforeCount = Math.max(0, parseInt(part.beforeSpace) || 0)
+      for (let sp = 0; sp < beforeCount; sp++) {
+        html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+      }
+
+      html += `<tr data-obe-row="part-header"><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
+
+      // Space after Part header
+      const afterCount = Math.max(0, parseInt(part.afterSpace) || 0)
+      for (let sp = 0; sp < afterCount; sp++) {
+        html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+      }
     }
 
     part.questions.forEach((q) => {
@@ -1557,10 +1576,10 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
         if (hasSubOr) {
           const subBeforeOr = (Array.isArray(q.subOrBeforeSpace) && q.subOrBeforeSpace[s] !== undefined)
             ? parseInt(q.subOrBeforeSpace[s])
-            : (q.subOrBeforeSpace !== undefined ? parseInt(q.subOrBeforeSpace) : 1)
+            : (q.subOrBeforeSpace !== undefined ? parseInt(q.subOrBeforeSpace) : 0)
           const subAfterOr = (Array.isArray(q.subOrAfterSpace) && q.subOrAfterSpace[s] !== undefined)
             ? parseInt(q.subOrAfterSpace[s])
-            : (q.subOrAfterSpace !== undefined ? parseInt(q.subOrAfterSpace) : 1)
+            : (q.subOrAfterSpace !== undefined ? parseInt(q.subOrAfterSpace) : 0)
 
           // Gap row(s) before OR
           html += renderSpacingRows(subBeforeOr)
@@ -1608,8 +1627,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
       // 2. Question-level OR alternative set
       if (q.hasQuestionOr) {
-        const beforeOrCount = q.qOrBeforeSpace !== undefined ? parseInt(q.qOrBeforeSpace) : 1
-        const afterOrCount = q.qOrAfterSpace !== undefined ? parseInt(q.qOrAfterSpace) : 1
+        const beforeOrCount = q.qOrBeforeSpace !== undefined ? parseInt(q.qOrBeforeSpace) : 0
+        const afterOrCount = q.qOrAfterSpace !== undefined ? parseInt(q.qOrAfterSpace) : 0
 
         // Gap row(s) before OR
         html += renderSpacingRows(beforeOrCount)
@@ -1907,12 +1926,12 @@ function generateCodeSnippetHtml({
       return `<tr><td class="obe-code-ln" style="border:none;color:#555555;user-select:none;padding:0 10px 0 0;text-align:right;border-right:1px solid #999999;font-family:Consolas,Courier New,Monaco,monospace;font-size:${fontSize};vertical-align:top;line-height:1.35;font-weight:normal;">${lineNum}</td><td class="obe-code-txt" style="border:none;padding:0 0 0 10px;font-family:Consolas,Courier New,Monaco,monospace;font-size:${fontSize};white-space:pre-wrap;line-height:1.35;vertical-align:top;text-align:left;color:#000000;">${formattedLine}</td></tr>`
     }).join('')
 
-    innerCodeHtml = `<table class="obe-code-table" style="border-collapse:collapse;border:none;margin:0;padding:0;width:auto;text-align:left;background:transparent;color:#000000;"><tbody>${tableRows}</tbody></table>`
+    innerCodeHtml = `<table class="obe-code-table" style="border-collapse:collapse;border:none;margin:0;padding:0;width:auto;text-align:left;background:transparent;color:#000000;user-select:none;-webkit-user-select:none;pointer-events:none;"><tbody>${tableRows}</tbody></table>`
   } else {
-    innerCodeHtml = `<code style="font-family:inherit;font-size:inherit;color:#000000;background:transparent;padding:0;border:none;">${formatCodeWithKeywordsBold(safeCode, language)}</code>`
+    innerCodeHtml = `<code style="font-family:inherit;font-size:inherit;color:#000000;background:transparent;padding:0;border:none;user-select:none;-webkit-user-select:none;pointer-events:none;">${formatCodeWithKeywordsBold(safeCode, language)}</code>`
   }
 
-  return `<div class="obe-code-snippet-container" data-obe-code="true" data-code="${encodedCode}" data-language="${language}" data-align="${alignment}" data-hasborder="${isWithBorder ? 'true' : 'false'}" data-linenumbers="${showLineNumbers ? 'true' : 'false'}" data-fontsize="${fontSize}" style="${containerStyle}" contenteditable="false" tabindex="0" draggable="false"><pre class="obe-code-block" draggable="false" style="display: inline-block; text-align: left; margin: 0; ${boxPadding} font-family: 'Consolas', 'Courier New', Monaco, monospace; font-size: ${fontSize}; line-height: 1.35; ${boxBg} ${boxBorder} color: #000000; ${borderRadius} tab-size: 4; -moz-tab-size: 4; white-space: pre-wrap; word-break: break-word; max-width: 95%; box-sizing: border-box; cursor: text; user-select: text; -webkit-user-select: text;" title="Double-click to edit code snippet">${innerCodeHtml}</pre></div><p style="clear: both;"><br></p>`
+  return `<div class="obe-code-wrapper" style="clear: both; ${isCentered ? 'text-align: center;' : 'text-align: left;'} margin: 6px 0;"><div class="obe-code-snippet-container" data-obe-code="true" data-code="${encodedCode}" data-language="${language}" data-align="${alignment}" data-hasborder="${isWithBorder ? 'true' : 'false'}" data-linenumbers="${showLineNumbers ? 'true' : 'false'}" data-fontsize="${fontSize}" style="display: inline-block; vertical-align: middle; text-align: left; max-width: 95%; cursor: pointer;" contenteditable="false" tabindex="0" draggable="false"><pre class="obe-code-block" draggable="false" style="display: block; text-align: left; margin: 0; ${boxPadding} font-family: 'Consolas', 'Courier New', Monaco, monospace; font-size: ${fontSize}; line-height: 1.35; ${boxBg} ${boxBorder} color: #000000; ${borderRadius} tab-size: 4; -moz-tab-size: 4; white-space: pre-wrap; word-break: break-word; user-select: none; -webkit-user-select: none; pointer-events: none;" title="Click to select, double-click to edit code snippet">${innerCodeHtml}</pre></div></div>`
 }
 
 export default function QuestionPaperEditor({ assessment, offering, onBack }) {
@@ -2455,9 +2474,77 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     creditHours: '',
     duration: '',
     fullMarks: '',
-    notesList: [],
+    notesList: [
+      'Figure on the right of each question indicates the marks for the respective question.',
+      'Answer all questions.'
+    ],
     customCOs: []
   })
+
+  // Professional Export Filename Generator (Shared by Word and PDF exports)
+  // Example output: TF_Question_CSE311_Operating_Systems_Spring_2026_L2_T2
+  const generateExportBaseFileName = useCallback(() => {
+    let examPrefix = 'Question_Paper'
+    if (isTermFinal) examPrefix = 'TF_Question'
+    else if (isMidTerm) examPrefix = 'Mid_Question'
+    else if (isCT) examPrefix = 'CT_Question'
+    else if (isAssignment) examPrefix = 'Assignment'
+
+    const rawCode = headerCustom.courseCode || offering?.course?.courseCode || offering?.courseCode || ''
+    const cleanCode = rawCode.replace(/[^a-zA-Z0-9]/g, '')
+
+    const rawTitle = headerCustom.courseTitle || offering?.course?.courseName || offering?.courseName || offering?.course?.title || ''
+    const cleanTitle = rawTitle
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .trim()
+      .split(/\s+/)
+      .slice(0, 4)
+      .join('_')
+
+    const semName = offering?.semester?.semesterName || offering?.semesterName || ''
+    const acadYear = offering?.academicYear || offering?.semester?.academicYear || ''
+    const semFull = acadYear ? `${semName}_${acadYear}` : (semName || 'Spring_2026')
+    const cleanSem = semFull
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')
+
+    const lvlMatch = (level ? String(level) : (headerCustom.levelTerm || offering?.level || '')).match(/\d+/)
+    const lvlShort = `L${lvlMatch ? lvlMatch[0] : '4'}`
+
+    let termShort = 'T1'
+    const rawTerm = (term ? String(term) : (headerCustom.levelTerm || offering?.term || ''))
+    if (/iii|3/i.test(rawTerm)) termShort = 'T3'
+    else if (/ii|2/i.test(rawTerm)) termShort = 'T2'
+    else if (/i|1/i.test(rawTerm)) termShort = 'T1'
+
+    const ltCode = `${lvlShort}_${termShort}`
+
+    const parts = [examPrefix]
+    if (cleanCode) parts.push(cleanCode)
+    if (cleanTitle) parts.push(cleanTitle)
+    if (cleanSem) parts.push(cleanSem)
+    parts.push(ltCode)
+
+    const resultName = parts.filter(Boolean).join('_').replace(/[/\\?%*:|"<>]/g, '_')
+    return resultName || 'Question_Paper'
+  }, [
+    isTermFinal, isMidTerm, isCT, isAssignment,
+    headerCustom.courseCode, headerCustom.courseTitle, headerCustom.levelTerm,
+    offering, level, term
+  ])
+
+  // Synchronize browser tab and window title with the Question Paper metadata
+  // Ensures Windows Print Spooler and Chrome always have the exact desired filename
+  useEffect(() => {
+    const paperTitle = generateExportBaseFileName()
+    if (paperTitle) {
+      document.title = paperTitle
+    }
+    return () => {
+      document.title = 'OBE Course Outcome Attainment System'
+    }
+  }, [generateExportBaseFileName])
 
   // Graph Generator State & Interactive Drag-and-Drop (Defaults to Tree preset as requested)
   const [showGraphGenModal, setShowGraphGenModal] = useState(false)
@@ -2483,7 +2570,25 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [editingDiagramElement, setEditingDiagramElement] = useState(null)
   const [editingDiagramId, setEditingDiagramId] = useState(null)
 
+  const savedDiagramRangeRef = useRef(null)
+
   const handleOpenNewDiagramModal = () => {
+    try {
+      const editor = rteRef.current
+      const doc = editor?.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const sel = doc ? doc.getSelection() : window.getSelection()
+      const editPanel = editor?.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+
+      if (sel && sel.rangeCount > 0 && editPanel && editPanel.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        savedDiagramRangeRef.current = sel.getRangeAt(0).cloneRange()
+        savedEditorRangeRef.current = sel.getRangeAt(0).cloneRange()
+      } else if (savedEditorRangeRef.current && editPanel && editPanel.contains(savedEditorRangeRef.current.commonAncestorContainer)) {
+        savedDiagramRangeRef.current = savedEditorRangeRef.current.cloneRange()
+      }
+    } catch (e) {
+      savedDiagramRangeRef.current = null
+    }
+
     setEditingDiagramElement(null)
     setEditingDiagramId(null)
     setShowGraphGenModal(true)
@@ -2664,6 +2769,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [paperStructureParts, setPaperStructureParts] = useState([
     {
       name: 'PART A',
+      beforeSpace: 0,
+      afterSpace: 0,
       questions: [
         { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
         { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
@@ -2672,6 +2779,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     },
     {
       name: 'PART B',
+      beforeSpace: 0,
+      afterSpace: 0,
       questions: [
         { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
         { subCount: 3, marks: [10, 10, 10], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
@@ -4636,10 +4745,167 @@ Equation description: "${aiEquationPrompt}"`
       }
 
       // ══════════════════════════════════════════════════════════
-      // 1. BACKSPACE KEY (MS Word: Erase empty list item 2. or outdent sublist)
+      // 1. BACKSPACE / DELETE KEY: Delete empty lines without destroying diagrams or code snippets
       // ══════════════════════════════════════════════════════════
-      if (e.key === 'Backspace') {
-        if (listItem) {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        const cell = parentElem ? parentElem.closest('td, th, .col-content-cell') : (node?.closest ? node.closest('td, th, .col-content-cell') : null)
+
+        const isBlockEmpty = (el) => {
+          if (!el) return false
+          if (el.querySelector && el.querySelector('img, svg, table, pre, code, .obe-code-snippet-container, .obe-graph-diagram, [data-diagram-id], [data-obe-diagram], .math-equation-wrapper')) {
+            return false
+          }
+          const text = (el.textContent || '').replace(/[\s\u200B\u00A0\r\n\t]+/g, '')
+          return text.length === 0
+        }
+
+        const isDiagramOrCode = (target) => {
+          if (!target) return false
+          if (target.nodeType === 1) {
+            if (target.matches?.('img.obe-graph-diagram, [data-obe-diagram], .obe-code-snippet-container, pre.obe-code-block, .obe-diagram-wrapper, .obe-code-wrapper, table.e-rte-table, table:not(.obe-paper-structure-table)')) return true
+            if (target.querySelector?.('img.obe-graph-diagram, [data-obe-diagram], .obe-code-snippet-container, pre.obe-code-block, table.e-rte-table')) return true
+          }
+          return false
+        }
+
+        const syncEditor = () => {
+          if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+            editor.formatter.saveData()
+          }
+          if (editor.contentModule && editor.contentModule.getEditPanel) {
+            const newHtml = editor.contentModule.getEditPanel().innerHTML
+            setEditorValue(newHtml)
+            if (typeof editor.value !== 'undefined') editor.value = newHtml
+          }
+        }
+
+        if (cell && sel && sel.isCollapsed) {
+          // --- SCENARIO A: Caret is inside a diagram wrapper, code wrapper, or paragraph containing media ---
+          let directDiagParent = null
+          if (parentElem && (parentElem.querySelector?.('img.obe-graph-diagram, [data-obe-diagram], .obe-code-snippet-container') || parentElem.classList?.contains('obe-diagram-wrapper') || parentElem.classList?.contains('obe-code-wrapper'))) {
+            directDiagParent = parentElem
+          } else if (node?.parentElement && (node.parentElement.querySelector?.('img.obe-graph-diagram, [data-obe-diagram], .obe-code-snippet-container') || node.parentElement.classList?.contains('obe-diagram-wrapper') || node.parentElement.classList?.contains('obe-code-wrapper'))) {
+            directDiagParent = node.parentElement
+          }
+
+          if (directDiagParent) {
+            if (e.key === 'Backspace') {
+              e.preventDefault()
+              e.stopPropagation()
+
+              Array.from(directDiagParent.childNodes).forEach(ch => {
+                if (ch.nodeName === 'BR' || (ch.nodeType === 3 && !ch.textContent.replace(/[\s\u200B\u00A0\r\n\t]+/g, ''))) {
+                  ch.remove()
+                }
+              })
+
+              const prev = directDiagParent.previousElementSibling
+              const newRange = doc.createRange()
+              if (prev && prev.nodeName === 'P') {
+                newRange.selectNodeContents(prev)
+                newRange.collapse(false)
+              } else {
+                newRange.selectNodeContents(cell)
+                newRange.collapse(false)
+              }
+              sel.removeAllRanges()
+              sel.addRange(newRange)
+
+              syncEditor()
+              return
+            } else if (e.key === 'Delete') {
+              e.preventDefault()
+              e.stopPropagation()
+              return
+            }
+          }
+
+          // --- SCENARIO B: Caret is in a separate empty paragraph/block after diagram or code ---
+          let currentBlock = node ? (node.closest ? node.closest('p, div, li') : node.parentElement?.closest('p, div, li')) : null
+          if (currentBlock && cell.contains(currentBlock) && currentBlock !== cell && !currentBlock.classList.contains('obe-code-snippet-container')) {
+            if (isBlockEmpty(currentBlock)) {
+              e.preventDefault()
+              e.stopPropagation()
+
+              const prevEl = currentBlock.previousElementSibling
+              const nextEl = currentBlock.nextElementSibling
+
+              currentBlock.remove()
+
+              const newRange = doc.createRange()
+              if (e.key === 'Delete' && nextEl) {
+                newRange.selectNodeContents(nextEl)
+                newRange.collapse(true)
+              } else if (prevEl) {
+                if (prevEl.nodeName === 'P' && !isDiagramOrCode(prevEl)) {
+                  newRange.selectNodeContents(prevEl)
+                  newRange.collapse(false)
+                } else {
+                  newRange.selectNodeContents(cell)
+                  newRange.collapse(false)
+                }
+              } else {
+                newRange.selectNodeContents(cell)
+                newRange.collapse(false)
+              }
+
+              sel.removeAllRanges()
+              sel.addRange(newRange)
+
+              syncEditor()
+              return
+            }
+          }
+
+          // --- SCENARIO C: Loose <br> or empty text node in the cell ---
+          if (cell.contains(node)) {
+            const childList = Array.from(cell.childNodes)
+            for (let i = childList.length - 1; i >= 0; i--) {
+              const ch = childList[i]
+              if (ch.nodeName === 'BR' || (ch.nodeType === 3 && !ch.textContent.replace(/[\s\u200B\u00A0\r\n\t]+/g, '')) || (ch.nodeType === 1 && isBlockEmpty(ch) && !ch.classList.contains('obe-code-snippet-container'))) {
+                if (ch.contains(node) || node === ch) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  ch.remove()
+                  const newRange = doc.createRange()
+                  newRange.selectNodeContents(cell)
+                  newRange.collapse(false)
+                  sel.removeAllRanges()
+                  sel.addRange(newRange)
+                  syncEditor()
+                  return
+                }
+              }
+            }
+          }
+
+          // --- SCENARIO D: Caret is right after a diagram or code block (collapsed) ---
+          if (e.key === 'Backspace') {
+            let prevNode = null
+            if (range.startContainer.nodeType === 1) {
+              prevNode = range.startContainer.childNodes[range.startOffset - 1] || null
+            } else if (range.startContainer.nodeType === 3 && range.startOffset === 0) {
+              prevNode = range.startContainer.previousSibling || range.startContainer.parentElement?.previousElementSibling
+            }
+
+            if (isDiagramOrCode(prevNode)) {
+              e.preventDefault()
+              e.stopPropagation()
+              if (node && node !== cell && isBlockEmpty(node)) {
+                node.remove()
+              }
+              const newRange = doc.createRange()
+              newRange.selectNodeContents(cell)
+              newRange.collapse(false)
+              sel.removeAllRanges()
+              sel.addRange(newRange)
+              syncEditor()
+              return
+            }
+          }
+        }
+
+        if (e.key === 'Backspace' && listItem) {
           const liText = listItem.textContent.replace(/[\s\u200B\u00A0\r\n\t]+/g, '').trim()
           if (!liText) {
             e.preventDefault()
@@ -4661,9 +4927,42 @@ Equation description: "${aiEquationPrompt}"`
       }
 
       // ══════════════════════════════════════════════════════════
-      // 2. ENTER KEY (MS Word: Enter on empty item exits list / outdents)
+      // 2. ENTER KEY (Create clean line below diagram, code snippet, or table)
       // ══════════════════════════════════════════════════════════
       if (e.key === 'Enter' && !e.shiftKey) {
+        const cell = parentElem ? parentElem.closest('td, th, .col-content-cell') : (node?.closest ? node.closest('td, th, .col-content-cell') : null)
+
+        // Check if caret is inside a diagram wrapper or code wrapper or table
+        const wrapper = parentElem ? (parentElem.closest('.obe-diagram-wrapper, .obe-code-wrapper, .obe-code-snippet-container, table.e-rte-table') || ((parentElem.classList?.contains('obe-diagram-wrapper') || parentElem.classList?.contains('obe-code-wrapper')) ? parentElem : null)) : null
+
+        if (wrapper && cell && cell.contains(wrapper)) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+            editor.formatter.saveData()
+          }
+
+          const newP = doc.createElement('p')
+          newP.innerHTML = '<br>'
+          newP.style.margin = '4px 0'
+          newP.style.textAlign = 'left'
+          newP.style.lineHeight = '1.4'
+          newP.style.fontSize = '12pt'
+          newP.style.color = '#000000'
+
+          wrapper.insertAdjacentElement('afterend', newP)
+
+          const newRange = doc.createRange()
+          newRange.setStart(newP, 0)
+          newRange.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(newRange)
+
+          syncEditor()
+          return
+        }
+
         if (listItem) {
           const liText = listItem.textContent.replace(/[\s\u200B\u00A0\r\n\t]+/g, '').trim()
           if (!liText) {
@@ -4736,14 +5035,20 @@ Equation description: "${aiEquationPrompt}"`
 
     // Attach click, dblclick, and keydown handlers to window (capture), RTE container & iframe
     let iframeDoc = null
-    const timer = setTimeout(() => {
+    const attachListeners = () => {
       window.addEventListener('keydown', handleMsWordKeyboard, true)
+      document.addEventListener('keydown', handleMsWordKeyboard, true)
 
       const container = document.querySelector('.e-richtexteditor .e-rte-content')
       if (container) {
         container.addEventListener('click', handleEditorClicks)
         container.addEventListener('dblclick', handleEditorClicks)
         container.addEventListener('keydown', handleMsWordKeyboard, true)
+      }
+
+      const editPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+      if (editPanel) {
+        editPanel.addEventListener('keydown', handleMsWordKeyboard, true)
       }
 
       const iframe = document.querySelector('.e-richtexteditor iframe')
@@ -4753,11 +5058,14 @@ Equation description: "${aiEquationPrompt}"`
         iframeDoc.addEventListener('dblclick', handleEditorClicks)
         iframeDoc.addEventListener('keydown', handleMsWordKeyboard, true)
       }
-    }, 400)
+    }
+
+    const timer = setTimeout(attachListeners, 50)
 
     return () => {
       clearTimeout(timer)
       window.removeEventListener('keydown', handleMsWordKeyboard, true)
+      document.removeEventListener('keydown', handleMsWordKeyboard, true)
 
       const container = document.querySelector('.e-richtexteditor .e-rte-content')
       if (container) {
@@ -4765,13 +5073,17 @@ Equation description: "${aiEquationPrompt}"`
         container.removeEventListener('dblclick', handleEditorClicks)
         container.removeEventListener('keydown', handleMsWordKeyboard, true)
       }
+      const editPanel = rteRef.current?.contentModule?.getEditPanel ? rteRef.current.contentModule.getEditPanel() : document.querySelector('.e-rte-content .e-content')
+      if (editPanel) {
+        editPanel.removeEventListener('keydown', handleMsWordKeyboard, true)
+      }
       if (iframeDoc) {
         iframeDoc.removeEventListener('click', handleEditorClicks)
         iframeDoc.removeEventListener('dblclick', handleEditorClicks)
         iframeDoc.removeEventListener('keydown', handleMsWordKeyboard, true)
       }
     }
-  }, [editorValue, loading])
+  }, [loading])
 
   // Word-Style Editable Font Size Combobox: Direct number typing + dropdown list
   useEffect(() => {
@@ -5434,6 +5746,33 @@ Equation description: "${aiEquationPrompt}"`
 
       e.preventDefault()
       e.stopPropagation()
+
+      // Position caret precisely where user right-clicked so insertion target is accurate!
+      try {
+        const doc = e.target.ownerDocument || document
+        if (doc.caretRangeFromPoint) {
+          const clickRange = doc.caretRangeFromPoint(e.clientX, e.clientY)
+          if (clickRange && editPanel && editPanel.contains(clickRange.commonAncestorContainer)) {
+            const sel = doc.getSelection ? doc.getSelection() : window.getSelection()
+            sel.removeAllRanges()
+            sel.addRange(clickRange)
+            savedEditorRangeRef.current = clickRange.cloneRange()
+            savedDiagramRangeRef.current = clickRange.cloneRange()
+          }
+        } else if (doc.caretPositionFromPoint) {
+          const pos = doc.caretPositionFromPoint(e.clientX, e.clientY)
+          if (pos && pos.offsetNode && editPanel && editPanel.contains(pos.offsetNode)) {
+            const clickRange = doc.createRange()
+            clickRange.setStart(pos.offsetNode, pos.offset)
+            clickRange.collapse(true)
+            const sel = doc.getSelection ? doc.getSelection() : window.getSelection()
+            sel.removeAllRanges()
+            sel.addRange(clickRange)
+            savedEditorRangeRef.current = clickRange.cloneRange()
+            savedDiagramRangeRef.current = clickRange.cloneRange()
+          }
+        }
+      } catch (err) {}
 
       // Calculate coordinates: only add iframe offset if event was dispatched inside an iframe document
       let clientX = e.clientX
@@ -6929,7 +7268,7 @@ Equation description: "${aiEquationPrompt}"`
       if (!notesArray || notesArray.length === 0) {
         notesArray = [
           'Figure on the right of each question indicates the marks for the respective question.',
-          ...(isTermFinal ? ['Answer all questions.'] : [])
+          'Answer all questions.'
         ]
       }
 
@@ -6954,12 +7293,12 @@ Equation description: "${aiEquationPrompt}"`
           </div>
 
           <!-- University Logo & Name Table (2-Column Perfectly Centered, Zero Overlap) -->
-          <table style="margin: 0 auto 6px auto !important; border: none !important; border-collapse: collapse !important;">
+          <table align="center" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 6px auto !important; border: none !important; border-collapse: collapse !important;">
             <tr>
-              <td style="vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 8px 0 0 !important; width: 48px !important;">
-                <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 50px !important; width: auto !important; display: block !important;" />
+              <td width="55" valign="middle" align="left" style="vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 8px 0 0 !important; width: 55px !important;">
+                <img src="${BAIUST_LOGO}" width="48" height="51" alt="BAIUST Logo" style="height: 50px !important; width: 48px !important; display: block !important; border: 0 !important;" />
               </td>
-              <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 !important; white-space: nowrap !important;">
+              <td valign="middle" align="center" style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 !important; white-space: nowrap !important;">
                 <div style="font-size: 14.5px !important; font-weight: bold !important; color: #000 !important; line-height: 1.25 !important; font-family: 'Times New Roman', Times, serif !important; white-space: nowrap !important; letter-spacing: 0.1px !important;">
                   ${bengaliName}
                 </div>
@@ -7019,12 +7358,12 @@ Equation description: "${aiEquationPrompt}"`
     return `
       <div class="qp-header-wrapper" style="text-align: center !important; font-family: 'Times New Roman', Times, serif !important; margin-bottom: 15px !important; line-height: 1.3 !important; color: #000 !important;">
         <!-- University Logo & English Name Header for CT / Assignment -->
-        <table style="width: 100% !important; border: none !important; border-collapse: collapse !important; margin-bottom: 8px !important; table-layout: fixed !important;">
+        <table align="center" border="0" cellpadding="0" cellspacing="0" style="width: 100% !important; border: none !important; border-collapse: collapse !important; margin-bottom: 8px !important; table-layout: fixed !important;">
           <tr>
-            <td style="width: 55px !important; vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 !important;">
-              <img src="${BAIUST_LOGO}" alt="BAIUST Logo" style="height: 46px !important; width: auto !important; display: block !important;" />
+            <td width="55" valign="middle" align="left" style="width: 55px !important; vertical-align: middle !important; text-align: left !important; border: none !important; padding: 0 !important;">
+              <img src="${BAIUST_LOGO}" width="44" height="46" alt="BAIUST Logo" style="height: 46px !important; width: 44px !important; display: block !important; border: 0 !important;" />
             </td>
-            <td style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 4px !important;">
+            <td valign="middle" align="center" style="text-align: center !important; vertical-align: middle !important; border: none !important; padding: 0 4px !important;">
               <div style="font-size: 10.6px !important; font-weight: bold !important; color: #000 !important; letter-spacing: 0.05px !important; font-family: 'Times New Roman', Times, serif !important;">
                 ${englishName}
               </div>
@@ -7442,17 +7781,19 @@ Equation description: "${aiEquationPrompt}"`
       /* =========================================================================
          Nested User Content Tables (Inside Question Content Cells)
          ========================================================================= */
-      td.col-content-cell table,
-      td[colspan="2"].col-content-cell table,
-      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table,
-      table.obe-paper-structure-table > tbody > tr > td table,
-      table[data-obe-paper-structure="true"] > tbody > tr > td table,
-      table.e-rte-table:not(.obe-paper-structure-table),
+      td.col-content-cell table:not(.obe-code-table),
+      td[colspan="2"].col-content-cell table:not(.obe-code-table),
+      table.obe-paper-structure-table > tbody > tr > td:nth-child(3) table:not(.obe-code-table),
+      table.obe-paper-structure-table > tbody > tr > td table:not(.obe-code-table),
+      table[data-obe-paper-structure="true"] > tbody > tr > td table:not(.obe-code-table),
+      table.e-rte-table:not(.obe-paper-structure-table):not(.obe-code-table),
       .obe-content-table {
         display: table !important;
-        width: 100% !important;
+        width: auto;
         max-width: 100% !important;
-        margin: 6px 0 !important;
+        margin: 6px auto !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
         border-collapse: collapse !important;
         table-layout: auto !important;
         font-family: 'Times New Roman', Times, serif !important;
@@ -7463,6 +7804,29 @@ Equation description: "${aiEquationPrompt}"`
         box-sizing: border-box !important;
         clear: both !important;
         overflow: visible !important;
+      }
+
+      /* Explicit alignment overrides for user content tables */
+      td.col-content-cell table[data-obe-align="left"],
+      td.col-content-cell table.obe-align-left {
+        margin-left: 0 !important;
+        margin-right: auto !important;
+      }
+      td.col-content-cell table[data-obe-align="right"],
+      td.col-content-cell table.obe-align-right {
+        margin-left: auto !important;
+        margin-right: 0 !important;
+      }
+      td.col-content-cell table[data-obe-align="center"],
+      td.col-content-cell table.obe-align-center {
+        margin-left: auto !important;
+        margin-right: auto !important;
+      }
+      td.col-content-cell table[data-obe-align="full"],
+      td.col-content-cell table.obe-table-full {
+        width: 100% !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
       }
 
       /* Auto-scale: Tables with many columns get tighter formatting to fit A4 width */
@@ -7537,8 +7901,7 @@ Equation description: "${aiEquationPrompt}"`
       td.col-content-cell table colgroup,
       table.obe-paper-structure-table > tbody > tr > td table col,
       table.obe-paper-structure-table > tbody > tr > td table colgroup {
-        width: auto !important;
-        max-width: none !important;
+        max-width: 100% !important;
         min-width: 0 !important;
       }
     `
@@ -7628,27 +7991,175 @@ Equation description: "${aiEquationPrompt}"`
       // Skip the outer structure table itself — only process nested user tables
       if (table.classList.contains('obe-paper-structure-table') || table.getAttribute('data-obe-paper-structure') === 'true') continue
 
-      // --- Width Stripping ---
-      // Remove hardcoded pixel widths from the table element
-      const tableWidth = table.style.width || table.getAttribute('width') || ''
-      if (tableWidth && (tableWidth.includes('px') || /^\d+$/.test(tableWidth))) {
-        table.style.removeProperty('width')
-        table.removeAttribute('width')
+      // --- Table Alignment & Width Handling ---
+      const ml = (table.style.marginLeft || '').trim().toLowerCase()
+      const mr = (table.style.marginRight || '').trim().toLowerCase()
+      const alignAttr = (table.getAttribute('align') || '').trim().toLowerCase()
+      const styleAlign = (table.style.textAlign || '').trim().toLowerCase()
+      const parentTextAlign = (table.parentElement?.style?.textAlign || '').trim().toLowerCase()
+      const rawMargin = (table.style.margin || '').toLowerCase()
+
+      let align = 'center'
+      if (ml === '0px' || ml === '0' || alignAttr === 'left' || parentTextAlign === 'left' || styleAlign === 'left') {
+        align = 'left'
+      } else if (((mr === '0px' || mr === '0') && ml !== '0px' && ml !== '0') || alignAttr === 'right' || parentTextAlign === 'right' || styleAlign === 'right') {
+        align = 'right'
+      } else if ((ml === 'auto' && mr === 'auto') || alignAttr === 'center' || parentTextAlign === 'center' || rawMargin.includes('auto')) {
+        align = 'center'
       }
-      table.style.width = '100%'
-      table.style.maxWidth = '100%'
+
+      table.setAttribute('data-obe-align', align)
+      table.classList.add(`obe-align-${align}`)
+
+      const rawTableWidth = (table.style.width || table.getAttribute('width') || '').trim()
+      const rawMaxWidth = (table.style.maxWidth || '').trim()
+      const isFullWidth = (rawTableWidth === '100%' || align === 'full' || table.classList.contains('obe-table-full') || table.classList.contains('w-full')) && align !== 'center' && align !== 'left' && align !== 'right'
+
+      if (isFullWidth) {
+        table.setAttribute('data-obe-align', 'full')
+        table.classList.add('obe-table-full')
+        table.style.width = '100%'
+        table.style.maxWidth = '100%'
+        table.style.marginLeft = '0'
+        table.style.marginRight = '0'
+      } else {
+        // Compact / Sized table matching editor dimensions
+        let explicitPx = null
+        if (rawTableWidth && (rawTableWidth.includes('px') || /^\d+(\.\d+)?$/.test(rawTableWidth))) {
+          explicitPx = parseFloat(rawTableWidth)
+        }
+
+        // Check if cols have defined pixel widths
+        const cols = table.querySelectorAll(':scope > colgroup > col, :scope > col')
+        let totalColPx = 0
+        let hasColPx = false
+        cols.forEach(col => {
+          const cw = col.style.width || col.getAttribute('width') || ''
+          if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+            totalColPx += parseFloat(cw)
+            hasColPx = true
+          }
+        })
+
+        // Check if first-row cells have defined pixel widths
+        const firstRow = table.querySelector('tr')
+        const firstRowCells = firstRow ? Array.from(firstRow.querySelectorAll(':scope > td, :scope > th')) : []
+        let totalCellPx = 0
+        let hasCellPx = false
+        if (!hasColPx && firstRowCells.length > 0) {
+          firstRowCells.forEach(cell => {
+            const cw = cell.style.width || cell.getAttribute('width') || ''
+            if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+              totalCellPx += parseFloat(cw)
+              hasCellPx = true
+            }
+          })
+        }
+
+        const MAX_PRINTABLE_WIDTH = 580 // Max printable content cell width in px
+
+        if (explicitPx !== null && explicitPx > 0) {
+          if (explicitPx > MAX_PRINTABLE_WIDTH) {
+            table.style.width = '100%'
+            table.style.maxWidth = '100%'
+            // Proportionally scale cols if they were in px
+            if (hasColPx && totalColPx > 0) {
+              cols.forEach(col => {
+                const cw = col.style.width || col.getAttribute('width') || ''
+                if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                  const pct = ((parseFloat(cw) / totalColPx) * 100).toFixed(1)
+                  col.style.width = `${pct}%`
+                  col.setAttribute('width', `${pct}%`)
+                }
+              })
+            }
+          } else {
+            table.style.width = `${Math.round(explicitPx)}px`
+            table.style.maxWidth = '100%'
+            if (hasColPx) {
+              cols.forEach(col => {
+                const cw = col.style.width || col.getAttribute('width') || ''
+                if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                  col.style.width = `${Math.round(parseFloat(cw))}px`
+                  col.setAttribute('width', `${Math.round(parseFloat(cw))}`)
+                }
+              })
+            }
+          }
+        } else if (rawTableWidth && rawTableWidth.endsWith('%') && rawTableWidth !== '100%') {
+          table.style.width = rawTableWidth
+          table.style.maxWidth = '100%'
+        } else if (hasColPx && totalColPx > 0) {
+          if (totalColPx > MAX_PRINTABLE_WIDTH) {
+            table.style.width = '100%'
+            table.style.maxWidth = '100%'
+            cols.forEach(col => {
+              const cw = col.style.width || col.getAttribute('width') || ''
+              if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                const pct = ((parseFloat(cw) / totalColPx) * 100).toFixed(1)
+                col.style.width = `${pct}%`
+                col.setAttribute('width', `${pct}%`)
+              }
+            })
+          } else {
+            table.style.width = `${Math.round(totalColPx)}px`
+            table.style.maxWidth = '100%'
+            cols.forEach(col => {
+              const cw = col.style.width || col.getAttribute('width') || ''
+              if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                col.style.width = `${Math.round(parseFloat(cw))}px`
+                col.setAttribute('width', `${Math.round(parseFloat(cw))}`)
+              }
+            })
+          }
+        } else if (hasCellPx && totalCellPx > 0) {
+          if (totalCellPx > MAX_PRINTABLE_WIDTH) {
+            table.style.width = '100%'
+            table.style.maxWidth = '100%'
+            firstRowCells.forEach(cell => {
+              const cw = cell.style.width || cell.getAttribute('width') || ''
+              if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                cell.style.width = `${((parseFloat(cw) / totalCellPx) * 100).toFixed(1)}%`
+              }
+            })
+          } else {
+            table.style.width = `${Math.round(totalCellPx)}px`
+            table.style.maxWidth = '100%'
+            firstRowCells.forEach(cell => {
+              const cw = cell.style.width || cell.getAttribute('width') || ''
+              if (cw && (cw.includes('px') || /^\d+(\.\d+)?$/.test(cw))) {
+                cell.style.width = `${Math.round(parseFloat(cw))}px`
+              }
+            })
+          }
+        } else if (rawMaxWidth && (rawMaxWidth.includes('px') || /^\d+(\.\d+)?$/.test(rawMaxWidth))) {
+          const maxPx = parseFloat(rawMaxWidth)
+          if (maxPx <= MAX_PRINTABLE_WIDTH) {
+            table.style.maxWidth = `${Math.round(maxPx)}px`
+            table.style.width = 'auto'
+          } else {
+            table.style.maxWidth = '100%'
+            table.style.width = '100%'
+          }
+        } else {
+          table.style.width = 'auto'
+          table.style.maxWidth = '100%'
+        }
+
+        if (align === 'left') {
+          table.style.marginLeft = '0'
+          table.style.marginRight = 'auto'
+        } else if (align === 'right') {
+          table.style.marginLeft = 'auto'
+          table.style.marginRight = '0'
+        } else {
+          table.style.marginLeft = 'auto'
+          table.style.marginRight = 'auto'
+        }
+      }
       table.style.tableLayout = 'auto'
       table.style.borderCollapse = 'collapse'
       table.style.boxSizing = 'border-box'
-
-      // Strip fixed widths from colgroup/col elements
-      const cols = table.querySelectorAll(':scope > colgroup > col, :scope > colgroup, :scope > col')
-      for (const col of cols) {
-        col.style.removeProperty('width')
-        col.style.removeProperty('max-width')
-        col.style.removeProperty('min-width')
-        col.removeAttribute('width')
-      }
 
       // Count actual columns by checking first row
       const firstRow = table.querySelector('tr')
@@ -7665,16 +8176,9 @@ Equation description: "${aiEquationPrompt}"`
         table.classList.add('obe-print-compact')
       }
 
-      // Strip fixed pixel widths from all cells and ensure borders
+      // Ensure all cells have proper borders and word wrapping
       const allCells = table.querySelectorAll('td, th')
       for (const cell of allCells) {
-        const cellWidth = cell.style.width || cell.getAttribute('width') || ''
-        if (cellWidth && (cellWidth.includes('px') || /^\d+$/.test(cellWidth))) {
-          cell.style.removeProperty('width')
-          cell.style.removeProperty('max-width')
-          cell.style.removeProperty('min-width')
-          cell.removeAttribute('width')
-        }
         // Ensure borders are visible
         if (!cell.style.border || cell.style.border === 'none' || cell.style.border === '0') {
           cell.style.border = '1px solid #000'
@@ -7706,37 +8210,783 @@ Equation description: "${aiEquationPrompt}"`
     return tempDiv.innerHTML
   }
 
-  // Word export
-  const handleExportWord = () => {
+  // Helper: Parse SVG width & height from viewBox or attributes
+  const parseSvgDimensions = (svgText) => {
+    try {
+      const parser = new DOMParser()
+      const svgDoc = parser.parseFromString(svgText, 'image/svg+xml')
+      const svgEl = svgDoc.querySelector('svg')
+      if (svgEl) {
+        const vb = svgEl.getAttribute('viewBox')
+        if (vb) {
+          const parts = vb.trim().split(/[\s,]+/).map(parseFloat)
+          if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+            return { w: Math.round(parts[2]), h: Math.round(parts[3]) }
+          }
+        }
+        const wAttr = parseFloat(svgEl.getAttribute('width'))
+        const hAttr = parseFloat(svgEl.getAttribute('height'))
+        if (wAttr > 0 && hAttr > 0) {
+          return { w: Math.round(wAttr), h: Math.round(hAttr) }
+        }
+      }
+    } catch (e) {}
+    return { w: 400, h: 300 }
+  }
+
+  // Helper: Convert SVG Data URL or diagram payload to high-res PNG Data URL for Microsoft Word compatibility
+  const convertSvgDataUrlToPng = (svgDataUrl, fallbackPayload = null) => {
+    return new Promise(async (resolve) => {
+      const timer = setTimeout(() => resolve(null), 4000)
+      try {
+        let svgMarkup = ''
+        if (fallbackPayload && fallbackPayload.edgesText) {
+          try {
+            svgMarkup = generateGraphSvg(
+              fallbackPayload.edgesText,
+              fallbackPayload.type || 'directed',
+              'bw',
+              fallbackPayload.positions || {},
+              {
+                startState: fallbackPayload.startState || null,
+                acceptStates: fallbackPayload.acceptStates || []
+              }
+            )
+          } catch (e) {}
+        }
+
+        if (!svgMarkup && svgDataUrl) {
+          if (svgDataUrl.includes(';base64,')) {
+            const b64 = svgDataUrl.split(';base64,')[1]
+            try {
+              svgMarkup = decodeURIComponent(escape(atob(b64)))
+            } catch (e) {
+              try {
+                svgMarkup = atob(b64)
+              } catch (e2) {}
+            }
+          } else if (svgDataUrl.includes(',')) {
+            svgMarkup = decodeURIComponent(svgDataUrl.split(',')[1])
+          } else if (svgDataUrl.startsWith('<svg')) {
+            svgMarkup = svgDataUrl
+          }
+        }
+
+        if (!svgMarkup) {
+          clearTimeout(timer)
+          resolve(null)
+          return
+        }
+
+        const dims = parseSvgDimensions(svgMarkup)
+        const w = dims.w || 400
+        const h = dims.h || 300
+
+        // Ensure root <svg> has explicit width & height and xml namespace
+        if (!svgMarkup.includes('xmlns="http://www.w3.org/2000/svg"')) {
+          svgMarkup = svgMarkup.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')
+        }
+        svgMarkup = svgMarkup.replace(/<svg\b([^>]*)>/i, (m, attrs) => {
+          const cleanAttrs = attrs
+            .replace(/\bwidth=["'][^"']*["']/gi, '')
+            .replace(/\bheight=["'][^"']*["']/gi, '')
+          return `<svg width="${w}" height="${h}" ${cleanAttrs}>`
+        })
+
+        // Attempt 1: html2canvas on off-screen DOM element (handles all CSS, markers, paths without canvas tainting)
+        try {
+          const container = document.createElement('div')
+          container.style.cssText = `position:fixed;left:-9999px;top:-9999px;width:${w}px;height:${h}px;background:#ffffff;display:block;margin:0;padding:0;overflow:hidden;`
+          container.innerHTML = svgMarkup
+          document.body.appendChild(container)
+
+          const canvas = await html2canvas(container, {
+            backgroundColor: '#ffffff',
+            scale: 2,
+            logging: false,
+            width: w,
+            height: h
+          })
+
+          if (container.parentNode) {
+            container.parentNode.removeChild(container)
+          }
+
+          if (canvas && canvas.width > 0 && canvas.height > 0) {
+            clearTimeout(timer)
+            resolve({
+              dataUrl: canvas.toDataURL('image/png'),
+              width: w,
+              height: h
+            })
+            return
+          }
+        } catch (e) {
+          console.warn('html2canvas SVG conversion error:', e)
+        }
+
+        // Attempt 2: Image loader with Blob URL + Canvas
+        try {
+          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' })
+          const blobUrl = URL.createObjectURL(blob)
+          const img = new Image()
+          img.onload = () => {
+            clearTimeout(timer)
+            URL.revokeObjectURL(blobUrl)
+            try {
+              const canvas = document.createElement('canvas')
+              const scale = 2
+              canvas.width = w * scale
+              canvas.height = h * scale
+              const ctx = canvas.getContext('2d')
+              ctx.fillStyle = '#ffffff'
+              ctx.fillRect(0, 0, canvas.width, canvas.height)
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+              resolve({
+                dataUrl: canvas.toDataURL('image/png'),
+                width: w,
+                height: h
+              })
+            } catch (e2) {
+              resolve(null)
+            }
+          }
+          img.onerror = () => {
+            clearTimeout(timer)
+            URL.revokeObjectURL(blobUrl)
+            resolve(null)
+          }
+          img.src = blobUrl
+        } catch (e3) {
+          clearTimeout(timer)
+          resolve(null)
+        }
+      } catch (err) {
+        clearTimeout(timer)
+        resolve(null)
+      }
+    })
+  }
+
+  // Word export — Authentic BAIUST Exam Paper Format
+  const handleExportWord = async () => {
     const currentContent = rteRef.current ? rteRef.current.value : editorValue
     const headerHtml = getHeaderHtml()
     const coDescriptions = getCoDescriptionsHtml()
     const rawAnnotatedContent = injectQuestionAnnotations(currentContent)
-    const annotatedContent = sanitizeNestedTablesForPrint(rawAnnotatedContent)
-    const fullHtml = headerHtml + coDescriptions + annotatedContent
 
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' " +
-      "xmlns:w='urn:schemas-microsoft-com:office:word' " +
-      "xmlns='http://www.w3.org/TR/REC-html40'>" +
-      "<head><title>Question Paper</title>" +
-      "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css'>" +
-      "<style>" +
-      "body { font-family: 'Times New Roman', Times, serif; padding: 20px; }" +
-      "table { border-collapse: collapse; width: 100%; }" +
-      "th, td { border: 1px solid black; padding: 8px; text-align: left; }" +
-      getPrintStyles() +
-      "</style></head><body>"
-    const footer = "</body></html>"
-    const sourceHTML = header + fullHtml + footer
+    // Confidential watermark text
+    const confText = headerCustom.confidentialText || 'EXAMINATION CONFIDENTIAL'
 
-    const blob = new Blob(['\ufeff' + sourceHTML], {
-      type: 'application/msword'
+    // Clean university header by removing embedded static confidential (running header handles it)
+    let cleanHeaderHtml = headerHtml || ''
+    cleanHeaderHtml = cleanHeaderHtml.replace(/<div class="static-top-confidential"[\s\S]*?<\/div>/gi, '')
+
+    // Parse into working DOM
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(cleanHeaderHtml + (coDescriptions || '') + (rawAnnotatedContent || ''), 'text/html')
+
+    // 1. Raw LaTeX for Word: replace equation wrappers with exact LaTeX formula string
+    // Teachers in Word can select it and press Alt + = to instantly convert it to Word's native equation object!
+    const mathWrappers = Array.from(doc.querySelectorAll('.math-equation-wrapper, [data-latex]'))
+    for (const wrapper of mathWrappers) {
+      try {
+        const encodedLatex = wrapper.getAttribute('data-latex') || ''
+        let latexStr = encodedLatex ? decodeURIComponent(encodedLatex) : wrapper.textContent || ''
+        latexStr = latexStr.trim()
+        if (!latexStr) continue
+
+        const parentP = wrapper.closest('p, div, li')
+        const isStandalone = !wrapper.previousSibling ||
+          (wrapper.previousSibling.nodeType === Node.TEXT_NODE && !wrapper.previousSibling.textContent.trim()) ||
+          (parentP && parentP.querySelectorAll('.math-equation-wrapper').length <= 2 && parentP.textContent.trim() === '')
+
+        if (isStandalone && wrapper.parentNode) {
+          const centerP = doc.createElement('p')
+          centerP.setAttribute('align', 'center')
+          centerP.style.cssText = 'text-align: center; margin: 6px auto; font-family: "Cambria Math", "Times New Roman", serif; font-size: 11pt; color: #000000;'
+          centerP.textContent = latexStr
+          wrapper.parentNode.replaceChild(centerP, wrapper)
+        } else if (wrapper.parentNode) {
+          const span = doc.createElement('span')
+          span.className = 'latex-equation'
+          span.style.cssText = 'font-family: "Cambria Math", "Times New Roman", serif; font-size: 11pt; color: #000000; padding: 0 2px;'
+          span.textContent = latexStr
+          wrapper.parentNode.replaceChild(span, wrapper)
+        }
+      } catch (err) {
+        console.warn('Equation processing error for Word:', err)
+      }
+    }
+
+    // 2. Remove unwanted 4-sided boxes around scenarios/blockquotes in Word
+    doc.querySelectorAll('blockquote').forEach(bq => {
+      const p = doc.createElement('p')
+      p.style.cssText = 'margin: 4px 0 6px 0; padding: 2px 4px; border: none; font-style: italic; font-family: "Times New Roman", Times, serif; color: #000000; line-height: 1.25;'
+      p.innerHTML = bq.innerHTML
+      bq.parentNode.replaceChild(p, bq)
     })
 
+    // 3. Unwrap single-cell nested tables inside question content cells (often created by pasted callouts or text boxes)
+    doc.querySelectorAll('td.col-content-cell table, table.obe-paper-structure-table td table').forEach(tbl => {
+      if (tbl.classList.contains('obe-code-table')) return
+      const rows = Array.from(tbl.querySelectorAll('tr'))
+      const cells = Array.from(tbl.querySelectorAll('td, th'))
+      if (rows.length === 1 && cells.length === 1) {
+        const div = doc.createElement('div')
+        div.style.cssText = 'margin: 0; padding: 0; border: none;'
+        div.innerHTML = cells[0].innerHTML
+        tbl.parentNode.replaceChild(div, tbl)
+      }
+    })
+
+    // 4. Strip all unwanted borders and outlines from inline elements inside question cells
+    doc.querySelectorAll('td.col-content-cell *, table.obe-paper-structure-table td:nth-child(3) *').forEach(el => {
+      if (
+        el.tagName === 'TABLE' ||
+        el.tagName === 'TD' ||
+        el.tagName === 'TH' ||
+        el.classList.contains('obe-code-block') ||
+        el.classList.contains('obe-code-table') ||
+        el.closest('.obe-code-snippet-container')
+      ) {
+        return
+      }
+      el.style.border = 'none'
+      el.style.outline = 'none'
+      if (el.hasAttribute('border')) el.removeAttribute('border')
+      if (el.hasAttribute('style')) {
+        let s = el.getAttribute('style')
+        s = s.replace(/\bborder(-[a-z]+)?\s*:\s*[^;]+;?/gi, '')
+        s = s.replace(/\bmso-border-[a-z]+\s*:\s*[^;]+;?/gi, '')
+        s = s.replace(/\boutline(-[a-z]+)?\s*:\s*[^;]+;?/gi, '')
+        el.setAttribute('style', s)
+      }
+    })
+
+    // 5. Normalize all images (Logo, diagrams, uploads) and convert SVGs/diagrams to PNG for Word
+    const allImages = Array.from(doc.querySelectorAll('img'))
+    for (const img of allImages) {
+      const src = img.getAttribute('src') || ''
+      const alt = (img.getAttribute('alt') || '').toLowerCase()
+      const isLogo = alt.includes('logo') || src.includes('data:image/gif') || src.includes('baiust')
+
+      if (isLogo) {
+        img.setAttribute('width', '48')
+        img.setAttribute('height', '51')
+        img.style.width = '48px'
+        img.style.height = '51px'
+        img.style.display = 'block'
+        img.style.border = '0'
+        img.style.transform = 'none'
+      } else if (
+        src.startsWith('data:image/svg+xml') ||
+        src.includes('<svg') ||
+        img.classList.contains('obe-graph-diagram') ||
+        img.hasAttribute('data-diagram-payload')
+      ) {
+        let payload = null
+        const rawPayload = img.getAttribute('data-diagram-payload')
+        if (rawPayload) {
+          try {
+            payload = JSON.parse(decodeURIComponent(rawPayload))
+          } catch (e) {
+            try { payload = JSON.parse(rawPayload) } catch (e2) {}
+          }
+        }
+
+        // Convert SVG diagram to high-res PNG for Microsoft Word compatibility
+        const pngResult = await convertSvgDataUrlToPng(src, payload)
+        if (pngResult && pngResult.dataUrl) {
+          img.src = pngResult.dataUrl
+          const displayW = Math.min(Math.max(pngResult.width, 180), 480)
+          const displayH = Math.round(displayW * (pngResult.height / pngResult.width))
+          img.setAttribute('width', String(displayW))
+          img.setAttribute('height', String(displayH))
+          img.style.width = `${displayW}px`
+          img.style.height = 'auto'
+          img.style.maxWidth = '100%'
+          img.style.border = '0'
+          img.style.transform = 'none'
+        }
+        if (img.parentElement) {
+          img.parentElement.setAttribute('align', 'center')
+          img.parentElement.style.textAlign = 'center'
+          img.parentElement.style.margin = '8px auto'
+        }
+      } else {
+        // Other raster images (PNG, JPEG, etc.)
+        let explicitWidth = null
+        const styleWidth = img.style.width || ''
+        const attrWidth = img.getAttribute('width') || ''
+        if (styleWidth.includes('px')) {
+          explicitWidth = parseInt(styleWidth, 10)
+        } else if (/^\d+$/.test(attrWidth)) {
+          explicitWidth = parseInt(attrWidth, 10)
+        }
+
+        const safeWidth = explicitWidth ? Math.min(explicitWidth, 520) : Math.min(img.width || 460, 520)
+        img.setAttribute('width', String(safeWidth))
+        img.style.maxWidth = '100%'
+        img.style.height = 'auto'
+        img.style.border = '0'
+        img.style.transform = 'none'
+
+        if (img.classList.contains('obe-graph-diagram') || img.hasAttribute('data-obe-diagram') || alt.includes('diagram')) {
+          if (img.parentElement) {
+            img.parentElement.setAttribute('align', 'center')
+            img.parentElement.style.textAlign = 'center'
+            img.parentElement.style.margin = '6px auto'
+          }
+        }
+      }
+    }
+
+    // 6. Normalize Tables for Word
+    const allTables = Array.from(doc.querySelectorAll('table'))
+    allTables.forEach(tbl => {
+      const isStructureTable = tbl.classList.contains('obe-paper-structure-table') || tbl.getAttribute('data-obe-paper-structure') === 'true'
+      const isCodeTable = tbl.classList.contains('obe-code-table')
+      const isHeaderTable = tbl.closest('.qp-official-header, .qp-header-wrapper') !== null
+
+      if (isHeaderTable) {
+        tbl.setAttribute('border', '0')
+        tbl.setAttribute('cellspacing', '0')
+        tbl.setAttribute('cellpadding', '0')
+        tbl.setAttribute('align', 'center')
+        tbl.style.border = 'none'
+        tbl.style.margin = '0 auto 6px auto'
+        tbl.querySelectorAll('td, th').forEach(c => {
+          c.setAttribute('border', '0')
+          c.style.border = 'none'
+        })
+      } else if (isCodeTable) {
+        tbl.setAttribute('border', '0')
+        tbl.setAttribute('cellspacing', '0')
+        tbl.setAttribute('cellpadding', '0')
+        tbl.style.border = 'none'
+        tbl.style.backgroundColor = 'transparent'
+        tbl.querySelectorAll('.obe-code-ln').forEach(c => {
+          c.setAttribute('border', '0')
+          c.style.border = 'none'
+          c.style.borderRight = '1px solid #999999'
+          c.style.paddingRight = '8px'
+          c.style.color = '#555555'
+        })
+        tbl.querySelectorAll('.obe-code-txt').forEach(c => {
+          c.setAttribute('border', '0')
+          c.style.border = 'none'
+          c.style.paddingLeft = '8px'
+          c.style.color = '#000000'
+        })
+      } else if (isStructureTable) {
+        // Detect if user has cleared/hidden borders on the structure table in the editor
+        const isBordersCleared = tbl.getAttribute('data-obe-borders-cleared') === 'true' ||
+          tbl.classList.contains('borders-cleared') ||
+          tbl.style.border === 'none' ||
+          tbl.style.borderWidth === '0px' ||
+          (tbl.getAttribute('style') || '').includes('border: none') ||
+          (tbl.getAttribute('style') || '').includes('border:none')
+
+        if (isBordersCleared) {
+          tbl.setAttribute('border', '0')
+          tbl.setAttribute('cellspacing', '0')
+          tbl.setAttribute('cellpadding', '4')
+          tbl.setAttribute('width', '100%')
+          tbl.style.width = '100%'
+          tbl.style.border = 'none'
+          tbl.style.borderCollapse = 'collapse'
+          tbl.querySelectorAll(':scope > tbody > tr > td, :scope > tbody > tr > th, :scope > tr > td, :scope > tr > th').forEach(c => {
+            c.setAttribute('border', '0')
+            c.style.border = 'none'
+            c.style.fontFamily = "'Times New Roman', Times, serif"
+            c.style.verticalAlign = 'top'
+          })
+        } else {
+          tbl.setAttribute('border', '1')
+          tbl.setAttribute('cellspacing', '0')
+          tbl.setAttribute('cellpadding', '4')
+          tbl.setAttribute('width', '100%')
+          tbl.style.width = '100%'
+          tbl.style.border = '1px solid #000000'
+          tbl.style.borderCollapse = 'collapse'
+          tbl.querySelectorAll(':scope > tbody > tr > td, :scope > tbody > tr > th, :scope > tr > td, :scope > tr > th').forEach(c => {
+            c.style.border = '1px solid #000000'
+            c.style.fontFamily = "'Times New Roman', Times, serif"
+            c.style.verticalAlign = 'top'
+          })
+        }
+      } else {
+        // User nested content tables - ensure 100% width fit inside question column so it never overflows/gets cut off
+        tbl.setAttribute('border', '1')
+        tbl.setAttribute('cellspacing', '0')
+        tbl.setAttribute('width', '100%')
+        tbl.style.width = '100%'
+        tbl.style.maxWidth = '100%'
+        tbl.style.boxSizing = 'border-box'
+        tbl.style.borderCollapse = 'collapse'
+        tbl.style.msoTableLspace = '0pt'
+        tbl.style.msoTableRspace = '0pt'
+        tbl.style.tableLayout = 'auto'
+        tbl.style.msoTableLayoutAlt = 'autofit'
+
+        // Determine maximum columns in any row
+        let maxCols = 1
+        const rows = Array.from(tbl.querySelectorAll('tr'))
+        rows.forEach(r => {
+          const count = r.querySelectorAll('td, th').length
+          if (count > maxCols) maxCols = count
+        })
+
+        // Dynamically compute proportional column width, padding, and font size based on column count
+        const colWidthPct = (100 / maxCols).toFixed(1) + '%'
+        let cellFontSize = '9pt'
+        let cellPadding = '2px 4px'
+        if (maxCols >= 6) {
+          cellFontSize = '8pt'
+          cellPadding = '2px 3px'
+        } else if (maxCols === 5) {
+          cellFontSize = '8.5pt'
+          cellPadding = '2px 4px'
+        }
+
+        const align = tbl.getAttribute('data-obe-align') || 'center'
+        if (align === 'center') {
+          tbl.setAttribute('align', 'center')
+          tbl.style.marginLeft = 'auto'
+          tbl.style.marginRight = 'auto'
+        } else if (align === 'left') {
+          tbl.setAttribute('align', 'left')
+          tbl.style.marginLeft = '0'
+          tbl.style.marginRight = 'auto'
+        } else if (align === 'right') {
+          tbl.setAttribute('align', 'right')
+          tbl.style.marginLeft = 'auto'
+          tbl.style.marginRight = '0'
+        }
+
+        tbl.querySelectorAll('td, th').forEach(c => {
+          c.setAttribute('border', '1')
+          c.setAttribute('width', colWidthPct)
+          c.style.border = '1px solid #000000'
+          c.style.fontFamily = "'Times New Roman', Times, serif"
+          c.style.fontSize = cellFontSize
+          c.style.padding = cellPadding
+          c.style.lineHeight = '1.15'
+          c.style.wordBreak = 'break-word'
+          c.style.overflowWrap = 'break-word'
+          c.style.whiteSpace = 'normal'
+          c.style.width = colWidthPct
+          c.style.verticalAlign = 'middle'
+          // Clean any explicit max-width / min-width styles that could force horizontal overflow
+          if (c.hasAttribute('style')) {
+            let s = c.getAttribute('style')
+            s = s.replace(/\b(min-width|max-width)\s*:\s*[^;]+;?/gi, '')
+            c.setAttribute('style', s)
+          }
+        })
+      }
+    })
+
+    // 7. Sanitize and encode special Unicode characters (arrows, dashes)
+    // using HTML decimal entities (&#8594;) so Microsoft Word never corrupts them into ANSI garbled characters (â†’)
+    let bodyHtml = doc.body.innerHTML
+      .replace(/→/g, '&#8594;')
+      .replace(/â†’/g, '&#8594;')
+      .replace(/&rarr;/g, '&#8594;')
+      .replace(/←/g, '&#8592;')
+      .replace(/↔/g, '&#8596;')
+      .replace(/⇒/g, '&#8658;')
+      .replace(/–/g, '&#8211;')
+      .replace(/—/g, '&#8212;')
+
+    // Clean any trailing empty paragraphs at the end of bodyHtml to prevent extra blank pages
+    bodyHtml = bodyHtml.replace(/(?:<p[^>]*>(?:\s|&nbsp;|<br[^>]*>)*<\/p>\s*)+$/gi, '').trim()
+
+    const wordHtml = `
+      <html xmlns:v="urn:schemas-microsoft-com:vml"
+            xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:w="urn:schemas-microsoft-com:office:word"
+            xmlns:m="http://schemas.microsoft.com/office/2004/12/omml"
+            xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <title>${assessment.name || 'Question Paper'}</title>
+        <!--[if gte mso 9]>
+        <xml>
+          <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+            <w:ValidateAgainstSchemas/>
+            <w:SaveIfXMLInvalid>false</w:SaveIfXMLInvalid>
+            <w:IgnoreMixedContent>false</w:IgnoreMixedContent>
+            <w:AlwaysShowPlaceholderText>false</w:AlwaysShowPlaceholderText>
+            <w:Compatibility>
+              <w:BreakWrappedTables/>
+              <w:SnapToGridInCell/>
+              <w:WrapTextWithPunct/>
+              <w:UseAsianBreakRules/>
+              <w:DontGrowAutofit/>
+            </w:Compatibility>
+          </w:WordDocument>
+        </xml>
+        <![endif]-->
+        <style>
+          /* Page Definition */
+          @page Section1 {
+            size: 210mm 297mm; /* A4 standard */
+            margin: 20mm 18mm 22mm 18mm;
+            mso-header-margin: 8mm;
+            mso-footer-margin: 8mm;
+            mso-header: h1;
+            mso-footer: f1;
+          }
+          div.Section1 {
+            page: Section1;
+          }
+
+          /* Base Typography */
+          body {
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 10pt;
+            line-height: 1.25;
+            color: #000000;
+            margin: 0;
+            padding: 0;
+          }
+          p, div, td, th, span {
+            font-family: 'Times New Roman', Times, serif;
+          }
+
+          /* Running Header & Footer for Word */
+          p.MsoHeader, div.MsoHeader {
+            margin: 0;
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 9.5pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: center;
+          }
+          p.MsoFooter, div.MsoFooter {
+            margin: 0;
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 9pt;
+            font-weight: bold;
+            color: #000000;
+            text-align: center;
+          }
+          #hrdftrtbl, table#hrdftrtbl {
+            margin: 0in 0in 0in 9in;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+          }
+
+          /* University Header */
+          .qp-official-header table,
+          .qp-header-wrapper table {
+            border: none !important;
+            border-collapse: collapse !important;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+          }
+          .qp-official-header td,
+          .qp-header-wrapper td {
+            border: none !important;
+            padding: 0;
+          }
+
+          /* Main Exam Structure Table */
+          table.obe-paper-structure-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+            margin-bottom: 0 !important;
+          }
+          table.obe-paper-structure-table > tbody > tr > td,
+          table.obe-paper-structure-table > tr > td {
+            border: 1px solid #000000;
+            padding: 3px 5px !important;
+            vertical-align: top !important;
+            font-family: 'Times New Roman', Times, serif !important;
+            font-size: 10pt !important;
+            line-height: 1.25 !important;
+          }
+
+          /* When borders are cleared on structure table, force borders to none on direct cells */
+          table.obe-paper-structure-table.borders-cleared,
+          table.obe-paper-structure-table[data-obe-borders-cleared="true"] {
+            border: none !important;
+          }
+          table.obe-paper-structure-table.borders-cleared > tbody > tr > td,
+          table.obe-paper-structure-table.borders-cleared > tr > td,
+          table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tbody > tr > td,
+          table.obe-paper-structure-table[data-obe-borders-cleared="true"] > tr > td,
+          table.obe-paper-structure-table.borders-cleared td,
+          table.obe-paper-structure-table[data-obe-borders-cleared="true"] td {
+            border: none !important;
+          }
+
+          /* Prevent borders/boxes around question text inside content cells */
+          .col-content-cell p,
+          .col-content-cell span,
+          .col-content-cell div:not(.obe-code-snippet-container) {
+            border: none !important;
+            outline: none !important;
+          }
+
+          /* Spacer Rows */
+          tr[data-space-row="true"] td,
+          tr.space-row td {
+            height: 14pt !important;
+            font-size: 10pt !important;
+            border: 1px solid #000000;
+            padding: 0 4px !important;
+          }
+          table.obe-paper-structure-table.borders-cleared tr[data-space-row="true"] td,
+          table.obe-paper-structure-table[data-obe-borders-cleared="true"] tr[data-space-row="true"] td {
+            border: none !important;
+          }
+
+          /* Part Header Row */
+          tr[data-part-row="true"] td {
+            font-size: 13pt !important;
+            font-weight: bold !important;
+            text-align: center !important;
+            letter-spacing: 0.5px !important;
+          }
+
+          /* Question OR Row */
+          tr[data-or-row="true"] td {
+            font-size: 11pt !important;
+            font-weight: bold !important;
+            text-align: center !important;
+            letter-spacing: 0.5px !important;
+          }
+
+          /* Nested Content Tables */
+          .col-content-cell table:not(.obe-code-table) {
+            width: 100% !important;
+            max-width: 100% !important;
+            border-collapse: collapse !important;
+            margin: 6px auto !important;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+            table-layout: auto !important;
+            box-sizing: border-box !important;
+          }
+          .col-content-cell table:not(.obe-code-table) td,
+          .col-content-cell table:not(.obe-code-table) th {
+            border: 1px solid #000000 !important;
+            padding: 2px 3px !important;
+            font-family: 'Times New Roman', Times, serif !important;
+            font-size: 8.5pt !important;
+            line-height: 1.15 !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            white-space: normal !important;
+            vertical-align: middle !important;
+          }
+
+          /* Code Snippets */
+          .obe-code-snippet-container {
+            margin: 6px 0;
+          }
+          pre.obe-code-block {
+            display: inline-block;
+            border: 1px solid #444444 !important;
+            background-color: #f8f9fa !important;
+            padding: 6px 10px !important;
+            margin: 4px 0 !important;
+            font-family: 'Consolas', 'Courier New', Courier, monospace !important;
+            font-size: 9pt !important;
+            line-height: 1.3 !important;
+          }
+          table.obe-code-table {
+            border: none !important;
+            background: transparent !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          table.obe-code-table td {
+            border: none !important;
+            padding: 1px 4px !important;
+            font-family: 'Consolas', 'Courier New', Courier, monospace !important;
+            font-size: 9pt !important;
+            line-height: 1.3 !important;
+          }
+          .obe-code-ln {
+            border-right: 1px solid #999999 !important;
+            padding-right: 8px !important;
+            color: #555555 !important;
+          }
+          .obe-code-txt {
+            padding-left: 8px !important;
+            color: #000000 !important;
+          }
+
+          /* Diagrams and Images */
+          img {
+            max-width: 100%;
+            border: 0;
+            outline: none;
+          }
+          .obe-graph-diagram {
+            display: block;
+            margin: 6px auto;
+          }
+
+          /* Raw LaTeX Equations */
+          .latex-equation {
+            font-family: 'Cambria Math', 'Times New Roman', serif;
+            font-size: 11pt;
+            color: #000000;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="Section1">
+          ${bodyHtml}
+        </div>
+
+        <!-- Word Running Header and Footer -->
+        <table id="hrdftrtbl" border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td>
+              <div style="mso-element:header" id="h1">
+                <p class="MsoHeader" align="center" style="text-align:center;font-family:'Times New Roman',Times,serif;font-size:9.5pt;font-weight:bold;text-transform:uppercase;letter-spacing:1px;color:#000000;margin:0;">
+                  ${confText}
+                </p>
+              </div>
+            </td>
+            <td>
+              <div style="mso-element:footer" id="f1">
+                <p class="MsoFooter" align="center" style="text-align:center;font-family:'Times New Roman',Times,serif;font-size:9pt;font-weight:bold;color:#000000;margin:0 0 2px 0;letter-spacing:0.5px;">
+                  <span style="mso-field-code: PAGE "></span> OF <span style="mso-field-code: NUMPAGES "></span>
+                </p>
+                <p class="MsoFooter" align="center" style="text-align:center;font-family:'Times New Roman',Times,serif;font-size:9pt;font-weight:bold;text-transform:uppercase;letter-spacing:1px;color:#000000;margin:0;">
+                  ${confText}
+                </p>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `
+
+    const blob = new Blob(['\ufeff' + wordHtml], {
+      type: 'application/msword;charset=utf-8'
+    })
+
+    const downloadFileName = `${generateExportBaseFileName()}.doc`
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${assessment.name || 'question_paper'}.doc`
+    a.download = downloadFileName
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -7765,6 +9015,7 @@ Equation description: "${aiEquationPrompt}"`
     const headerHtml = getHeaderHtml()
     const coDescriptions = getCoDescriptionsHtml()
     const rawAnnotatedContent = injectQuestionAnnotations(currentContent)
+    const exportBaseFileName = generateExportBaseFileName()
 
     // Render equations into native vector KaTeX HTML
     const equationRenderedContent = renderEquationsForPrint(rawAnnotatedContent)
@@ -7820,8 +9071,8 @@ Equation description: "${aiEquationPrompt}"`
     // Physical A4: 297mm = ~1123px.
     // Protected Top: 10mm padding (~38px) + confidential header (~25px) = ~63px.
     // Protected Bottom: Compact footer (3.5mm bottom + 9.5mm height = 13mm) leaving >266mm for content.
-    // Slicing budget: 975px (~258mm) maximizes usable space down to the footer boundary.
-    const USABLE_SHEET_HEIGHT = 975
+    // Slicing budget: 980px (~259mm) provides an optimal balance: fills the page naturally while maintaining a clean 7-8mm safety margin above the footer.
+    const USABLE_SHEET_HEIGHT = 980
 
     const getAvailableHeight = (isFirst, hH = 0) => {
       if (isFirst) {
@@ -7834,22 +9085,53 @@ Equation description: "${aiEquationPrompt}"`
     const sandbox = document.createElement('div')
     sandbox.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:174mm;visibility:hidden;font-family:"Times New Roman",Times,serif;font-size:10pt;line-height:1.3;box-sizing:border-box;'
 
-    // Inject exact print simulation styles into measurement sandbox so offsets match print layout
+    // Inject exact print simulation styles and KaTeX rules into measurement sandbox so offsets match print layout
     const sandboxStyle = document.createElement('style')
     sandboxStyle.textContent = `
+      ${katexCssInline}
+      * { box-sizing: border-box; }
       .print-exam-header { margin: 0 0 3mm 0; padding: 0; }
       table.obe-paper-structure-table { width: 174mm; border-collapse: collapse; table-layout: fixed; margin: 2px 0; }
       table.obe-paper-structure-table > tbody > tr > td { vertical-align: top; font-family: "Times New Roman", Times, serif; font-size: 10pt; line-height: 1.3; }
-      .col-qnum-cell { width: 24px; min-width: 24px; max-width: 28px; padding: 3px 2px 3px 0; font-weight: bold; }
-      .col-subq-cell { width: 20px; min-width: 20px; max-width: 24px; padding: 3px 3px 3px 0; font-weight: bold; }
-      .col-content-cell { padding: 3px 8px; word-break: break-word; overflow-wrap: break-word; }
-      .col-marks-cell { width: 42px; min-width: 42px; max-width: 46px; padding: 3px 0 3px 3px; text-align: right; font-weight: bold; }
-      .col-content-cell p { margin: 2px 0 3px 0; padding: 0; line-height: 1.25; }
-      .col-content-cell .scenario-box, .col-content-cell blockquote { margin: 4px 0; padding: 4px 8px; }
+      .col-qnum-cell { width: 24px; min-width: 24px; max-width: 28px; padding: 3px 2px 3px 0; font-weight: bold; white-space: nowrap; vertical-align: top; }
+      .col-subq-cell { width: 20px; min-width: 20px; max-width: 24px; padding: 3px 3px 3px 0; font-weight: bold; white-space: nowrap; vertical-align: top; }
+      .col-content-cell { padding: 3px 8px; word-break: break-word; overflow-wrap: break-word; vertical-align: top; }
+      .col-marks-cell { width: 42px; min-width: 42px; max-width: 46px; padding: 3px 0 3px 3px; text-align: right; font-weight: bold; white-space: nowrap; vertical-align: top; }
+      
+      /* Question text paragraphs */
+      .col-content-cell p, td.col-content-cell p { margin: 2px 0 3px 0; padding: 0; line-height: 1.25; display: block; clear: both; }
+      
+      /* Part headers and OR separators */
+      tr > td[colspan="4"] { padding: 6px 6px; font-size: 11pt; text-align: center; font-weight: bold; }
+      tr[data-obe-row="or-separator"] > td { padding: 4px 6px; font-size: 10pt; font-weight: bold; text-align: center; letter-spacing: 2px; }
+      
+      /* Scenario box and blockquotes */
+      .col-content-cell .scenario-box, .col-content-cell blockquote { margin: 4px 0; padding: 4px 8px; font-size: 10pt; }
       .katex-display { margin: 4px 0; }
+      
+      /* Nested user tables — compact styling matching print iframe */
+      .col-content-cell table:not(.obe-code-table) { width: auto; max-width: 100%; margin: 4px auto; border-collapse: collapse; table-layout: auto; font-size: 9pt; line-height: 1.2; }
+      .col-content-cell table[data-obe-align="left"], .col-content-cell table.obe-align-left { margin-left: 0; margin-right: auto; }
+      .col-content-cell table[data-obe-align="right"], .col-content-cell table.obe-align-right { margin-left: auto; margin-right: 0; }
+      .col-content-cell table[data-obe-align="center"], .col-content-cell table.obe-align-center { margin-left: auto; margin-right: auto; }
+      .col-content-cell table[data-obe-align="full"], .col-content-cell table.obe-table-full { width: 100%; margin-left: 0; margin-right: 0; }
+      
+      .col-content-cell table th, .col-content-cell table td { border: 1px solid #000; padding: 2px 4px; font-size: 9pt; line-height: 1.2; word-break: break-word; overflow-wrap: break-word; vertical-align: middle; }
+      .col-content-cell table th { font-weight: bold; }
+      
+      /* Auto-scaled compact tables (5+ columns, e.g. Q4.a snapshot table) */
+      .col-content-cell table.obe-print-compact, .col-content-cell table.obe-print-compact td, .col-content-cell table.obe-print-compact th { font-size: 8pt !important; line-height: 1.1 !important; padding: 1.5px 2.5px !important; }
+      
+      /* Inner table paragraphs MUST NOT inherit question paragraph margins */
+      .col-content-cell table td p, .col-content-cell table td div { display: block; margin: 0; padding: 0; line-height: inherit; }
+      
+      /* Code tables and snippets */
       .obe-code-table { font-size: 8.5pt; line-height: 1.15; margin: 4px 0; }
       .obe-code-table td { padding: 3px 5px; }
       pre.obe-code-block { font-family: Consolas, monospace; font-size: 9pt; line-height: 1.35; margin: 0; }
+      
+      /* Images / diagrams */
+      .col-content-cell img, .col-content-cell svg, .col-content-cell canvas, .col-content-cell .diagram-container, .col-content-cell .graph-container { display: block; margin: 6px auto; text-align: center; max-width: 90%; height: auto; }
     `
     sandbox.appendChild(sandboxStyle)
     document.body.appendChild(sandbox)
@@ -8144,19 +9426,6 @@ Equation description: "${aiEquationPrompt}"`
           continue
         }
 
-        const remainingSpace = maxAllowedH - currentSheetH
-        const isQuestionStart = Boolean(item.qNum || item.subQ)
-
-        // Anti-Orphan Heading Rule: A question heading requires at least 140px (~38mm) of remaining space
-        // to prevent leaving a lone title/header stranded at the bottom of the page with its content/code on the next page
-        if (isQuestionStart && currentSheetRows.length > 0 && remainingSpace < 140) {
-          sheets.push([...currentSheetRows])
-          currentSheetRows = []
-          isFirstPage = false
-          maxAllowedH = getAvailableHeight(false, 0)
-          currentSheetH = 0
-        }
-
         // Atomic question: cannot be sliced
         if (!item.canSplit) {
           if (currentSheetH + item.height <= maxAllowedH) {
@@ -8427,7 +9696,7 @@ Equation description: "${aiEquationPrompt}"`
       <!DOCTYPE html>
       <html>
         <head>
-          <title> </title>
+          <title>${exportBaseFileName}</title>
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
           <style>
             ${katexCssInline}
@@ -8443,6 +9712,8 @@ Equation description: "${aiEquationPrompt}"`
               html, body {
                 margin: 0 !important;
                 padding: 0 !important;
+                height: auto !important;
+                min-height: auto !important;
                 background: #fff !important;
                 font-family: "Times New Roman", Times, serif !important;
                 color: #000 !important;
@@ -8453,20 +9724,25 @@ Equation description: "${aiEquationPrompt}"`
               /* Fixed A4 dimensions with protected internal margins */
               .exam-print-sheet {
                 width: 210mm !important;
-                height: 297mm !important;
-                max-height: 297mm !important;
+                height: 296mm !important;
+                max-height: 296mm !important;
                 position: relative !important; /* Creates positioning context for absolute footer */
                 box-sizing: border-box !important;
                 padding: 10mm 18mm 0mm 18mm !important;
-                page-break-after: always !important;
-                break-after: page !important;
                 overflow: hidden !important;
                 background: #fff !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+
+              .exam-print-sheet:not(:last-child) {
+                page-break-after: always !important;
+                break-after: page !important;
               }
 
               .exam-print-sheet:last-child {
-                page-break-after: auto !important;
-                break-after: auto !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
               }
 
               /* Top Running Header: Pinned at top as protected block */
@@ -8487,7 +9763,7 @@ Equation description: "${aiEquationPrompt}"`
               /* Content area strictly bounded above footer zone */
               .sheet-content-body {
                 width: 100% !important;
-                max-height: 266mm !important; /* Maximized content area ending cleanly above the 13mm footer zone */
+                max-height: 268mm !important; /* Maximized content area allowing bottom borders and padding to display fully without clipping */
                 overflow: hidden !important;
               }
 
@@ -8713,18 +9989,43 @@ Equation description: "${aiEquationPrompt}"`
                 margin: 4px 0 !important;
               }
 
-              /* Nested user data tables */
-              .col-content-cell table,
-              td.col-content-cell table,
-              td[colspan="2"].col-content-cell table {
-                width: 100% !important;
+              /* Nested user data tables: Compact & Orientation-Preserving */
+              .col-content-cell table:not(.obe-code-table),
+              td.col-content-cell table:not(.obe-code-table),
+              td[colspan="2"].col-content-cell table:not(.obe-code-table) {
+                display: table !important;
+                width: auto;
                 max-width: 100% !important;
                 table-layout: auto !important;
                 border-collapse: collapse !important;
-                margin: 4px 0 !important;
+                margin: 4px auto !important;
+                margin-left: auto !important;
+                margin-right: auto !important;
                 overflow: visible !important;
                 font-size: 9pt !important;
                 line-height: 1.2 !important;
+              }
+
+              .col-content-cell table[data-obe-align="left"],
+              .col-content-cell table.obe-align-left {
+                margin-left: 0 !important;
+                margin-right: auto !important;
+              }
+              .col-content-cell table[data-obe-align="right"],
+              .col-content-cell table.obe-align-right {
+                margin-left: auto !important;
+                margin-right: 0 !important;
+              }
+              .col-content-cell table[data-obe-align="center"],
+              .col-content-cell table.obe-align-center {
+                margin-left: auto !important;
+                margin-right: auto !important;
+              }
+              .col-content-cell table[data-obe-align="full"],
+              .col-content-cell table.obe-table-full {
+                width: 100% !important;
+                margin-left: 0 !important;
+                margin-right: 0 !important;
               }
 
               .col-content-cell table th,
@@ -8767,8 +10068,7 @@ Equation description: "${aiEquationPrompt}"`
               .col-content-cell table colgroup,
               td.col-content-cell table col,
               td.col-content-cell table colgroup {
-                width: auto !important;
-                max-width: none !important;
+                max-width: 100% !important;
                 min-width: 0 !important;
               }
 
@@ -8831,46 +10131,25 @@ Equation description: "${aiEquationPrompt}"`
             }
           </style>
         </head>
-        <body>
-          ${generatedSheetsHtml}
-
-          <script>
-            async function doPrint() {
-              try {
-                if (document.fonts && document.fonts.ready) {
-                  await document.fonts.ready;
-                }
-              } catch(e) {}
-
-              document.title = ' ';
-              setTimeout(function() {
-                window.print();
-                setTimeout(function() { window.close(); }, 800);
-              }, 400);
-            }
-            if (document.readyState === 'complete') {
-              doPrint();
-            } else {
-              window.addEventListener('load', doPrint);
-            }
-          </script>
-        </body>
+        <body>${generatedSheetsHtml}</body>
       </html>
     `
 
-    // Render into hidden iframe — completely isolated from live editor
+    // Render into isolated iframe with Blob URL so Chromium treats it as a full document
+    const blob = new Blob([printDocumentHtml], { type: 'text/html;charset=utf-8' })
+    const blobUrl = URL.createObjectURL(blob)
+
     const printIframe = document.createElement('iframe')
-    printIframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;opacity:0;pointer-events:none;'
+    printIframe.title = exportBaseFileName
+    printIframe.style.cssText = 'position:fixed;right:0;bottom:0;width:40px;height:40px;border:none;opacity:0.01;z-index:-9999;pointer-events:none;'
     printIframe.setAttribute('aria-hidden', 'true')
+    printIframe.src = blobUrl
     document.body.appendChild(printIframe)
 
-    const iframeDoc = printIframe.contentDocument || printIframe.contentWindow.document
-    iframeDoc.open()
-    iframeDoc.write(printDocumentHtml)
-    iframeDoc.close()
+    printIframe.onload = async () => {
+      const iframeWindow = printIframe.contentWindow
+      const iframeDoc = printIframe.contentDocument || iframeWindow.document
 
-    const iframeWindow = printIframe.contentWindow
-    const triggerPrint = async () => {
       try {
         if (iframeDoc.fonts && iframeDoc.fonts.ready) {
           await iframeDoc.fonts.ready
@@ -8887,29 +10166,42 @@ Equation description: "${aiEquationPrompt}"`
         }
       } catch (e) { /* proceed anyway */ }
 
-      iframeDoc.title = ' '
+      iframeDoc.title = exportBaseFileName
+      document.title = exportBaseFileName
+
+      let cleanedUp = false
+      const cleanup = () => {
+        if (cleanedUp) return
+        cleanedUp = true
+        try {
+          URL.revokeObjectURL(blobUrl)
+          if (printIframe && printIframe.parentNode) {
+            printIframe.parentNode.removeChild(printIframe)
+          }
+        } catch (e) {}
+      }
+
+      window.addEventListener('afterprint', cleanup, { once: true })
+      try {
+        if (iframeWindow) {
+          iframeWindow.addEventListener('afterprint', cleanup, { once: true })
+        }
+      } catch (e) {}
+
+      // Generous safety fallback (120 seconds) so iframe is never destroyed while user is saving
+      setTimeout(cleanup, 120000)
+
       await new Promise(resolve => setTimeout(resolve, 300))
 
       try {
         iframeWindow.focus()
         iframeWindow.print()
       } catch (e) {
-        const printWindow = window.open('', '_blank')
+        const printWindow = window.open(blobUrl, '_blank')
         if (printWindow) {
-          printWindow.document.write(printDocumentHtml)
-          printWindow.document.close()
+          printWindow.focus()
         }
       }
-
-      setTimeout(() => {
-        try { document.body.removeChild(printIframe) } catch (e) {}
-      }, 2000)
-    }
-
-    if (iframeDoc.readyState === 'complete') {
-      triggerPrint()
-    } else {
-      printIframe.addEventListener('load', triggerPrint)
     }
   }
 
@@ -9551,13 +10843,73 @@ EXAMINATION STRUCTURE & OBE TAGGING:
       return
     }
 
-    // Insert new diagram image inside block container with clear: both to prevent text wrapping or auto-floating shift
-    const newDiagramId = `cs-diag-${Date.now()}`
-    const htmlToInsert = `<p style="clear: both; text-align: center; margin: 8px 0;"><img src="${dataUrl}" alt="Graph Diagram" title="Double-click to edit CS Diagram in Studio" class="e-rte-image e-imgbreak e-imgcenter obe-graph-diagram" data-obe-diagram="true" data-diagram-id="${newDiagramId}" data-diagram-payload="${payloadAttr}" style="min-width: 120px; max-width: 100%; width: ${displayWidth}px; height: auto;" /></p><p style="clear: both;"><br></p>`
-    editor.executeCommand('insertHTML', htmlToInsert)
+    // Insert new diagram image precisely at user cursor location inside block container with clear: both
+    editor.focusIn()
+    const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+    const sel = doc ? doc.getSelection() : window.getSelection()
+    const targetRange = savedDiagramRangeRef.current || savedEditorRangeRef.current
+
+    let rangeRestored = false
+    if (targetRange && editArea && editArea.contains(targetRange.commonAncestorContainer)) {
+      try {
+        sel.removeAllRanges()
+        sel.addRange(targetRange.cloneRange())
+        rangeRestored = true
+      } catch (e) {}
+    }
+
+    // Safety fallback: If range was not inside a content cell, locate the active question cell
+    if (!rangeRestored && editArea) {
+      const activeCell = editArea.querySelector('.col-content-cell:focus, .col-content-cell[data-active="true"]') ||
+        editArea.querySelector('tr[data-obe-row="question"]:last-of-type .col-content-cell') ||
+        editArea.querySelector('.col-content-cell:last-of-type')
+      if (activeCell) {
+        try {
+          const fallbackRange = doc.createRange()
+          fallbackRange.selectNodeContents(activeCell)
+          fallbackRange.collapse(false)
+          sel.removeAllRanges()
+          sel.addRange(fallbackRange)
+        } catch (e) {}
+      }
+    }
+
     if (editor.formatter && typeof editor.formatter.saveData === 'function') {
       editor.formatter.saveData()
     }
+
+    const newDiagramId = `cs-diag-${Date.now()}`
+    // Clean diagram container WITHOUT trailing <p><br></p>
+    const htmlToInsert = `<p class="obe-diagram-wrapper" style="clear: both; text-align: center; margin: 4px 0; line-height: 0; font-size: 0;"><img src="${dataUrl}" alt="Graph Diagram" title="Double-click to edit CS Diagram in Studio" class="e-rte-image e-imgbreak e-imgcenter obe-graph-diagram" data-obe-diagram="true" data-diagram-id="${newDiagramId}" data-diagram-payload="${payloadAttr}" style="min-width: 120px; max-width: 100%; width: ${displayWidth}px; height: auto; display: inline-block; vertical-align: middle;" /></p>`
+    editor.executeCommand('insertHTML', htmlToInsert)
+
+    // Immediately clean up any empty trailing <p><br></p> that Chrome contentEditable automatically appends
+    try {
+      const insertedImg = editArea ? editArea.querySelector(`img[data-diagram-id="${newDiagramId}"]`) : null
+      if (insertedImg) {
+        const parentBlock = insertedImg.closest('p, div')
+        if (parentBlock) {
+          const nextBlock = parentBlock.nextElementSibling
+          if (nextBlock && (nextBlock.nodeName === 'P' || nextBlock.nodeName === 'DIV')) {
+            const nextText = (nextBlock.textContent || '').replace(/[\s\u200B\u00A0\r\n\t]+/g, '')
+            const hasMedia = nextBlock.querySelector('img, svg, table, pre, code')
+            if (!nextText && !hasMedia) {
+              nextBlock.remove()
+            }
+          }
+        }
+      }
+      if (editor.formatter && typeof editor.formatter.saveData === 'function') {
+        editor.formatter.saveData()
+      }
+      if (editArea) {
+        const newHtml = editArea.innerHTML
+        setEditorValue(newHtml)
+        if (typeof editor.value !== 'undefined') editor.value = newHtml
+      }
+    } catch (e) {}
+
+    savedDiagramRangeRef.current = null
     setEditingDiagramElement(null)
     setEditingDiagramId(null)
     setShowGraphGenModal(false)
@@ -9662,14 +11014,18 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     marks,
     blooms: blooms.length ? blooms : Array(subCount || 1).fill(''),
     subSpaceRows: Array(subCount || 1).fill(0),
-    qSpaceRows: 1
+    qSpaceRows: 1,
+    qOrBeforeSpace: 0,
+    qOrAfterSpace: 0,
+    subOrBeforeSpace: Array(subCount || 1).fill(0),
+    subOrAfterSpace: Array(subCount || 1).fill(0)
   })
 
   const handlePaperStructureAddPart = () => {
     setPaperStructureParts(prev => {
       const idx = prev.length
       const partName = `PART ${String.fromCharCode(65 + idx)}`
-      return [...prev, { name: partName, questions: [makePresetQuestion(2, [10, 10])] }]
+      return [...prev, { name: partName, beforeSpace: 0, afterSpace: 0, questions: [makePresetQuestion(2, [10, 10])] }]
     })
   }
 
@@ -9682,6 +11038,22 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     setPaperStructureParts(prev => prev.map((part, i) => {
       if (i !== partIdx) return part
       return { ...part, name: newName }
+    }))
+  }
+
+  const handlePaperStructureSetPartBeforeSpace = (partIdx, space) => {
+    const parsed = Math.max(0, parseInt(space) || 0)
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return { ...part, beforeSpace: parsed }
+    }))
+  }
+
+  const handlePaperStructureSetPartAfterSpace = (partIdx, space) => {
+    const parsed = Math.max(0, parseInt(space) || 0)
+    setPaperStructureParts(prev => prev.map((part, i) => {
+      if (i !== partIdx) return part
+      return { ...part, afterSpace: parsed }
     }))
   }
 
@@ -9744,9 +11116,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const newQOrContents = Array(effectiveCount).fill('')
           if (q.questionOrContents) q.questionOrContents.forEach((c, k) => { if (k < effectiveCount) newQOrContents[k] = c })
 
-          const newSubOrBeforeSpace = Array(effectiveCount).fill(1)
+          const newSubOrBeforeSpace = Array(effectiveCount).fill(0)
           if (Array.isArray(q.subOrBeforeSpace)) q.subOrBeforeSpace.forEach((v, k) => { if (k < effectiveCount) newSubOrBeforeSpace[k] = v })
-          const newSubOrAfterSpace = Array(effectiveCount).fill(1)
+          const newSubOrAfterSpace = Array(effectiveCount).fill(0)
           if (Array.isArray(q.subOrAfterSpace)) q.subOrAfterSpace.forEach((v, k) => { if (k < effectiveCount) newSubOrAfterSpace[k] = v })
 
           return {
@@ -9766,8 +11138,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             questionOrMarks: newQOrMarks,
             questionOrBlooms: newQOrBlooms,
             questionOrContents: newQOrContents,
-            qOrBeforeSpace: q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 1,
-            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1,
+            qOrBeforeSpace: q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 0,
+            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 0,
             qSpaceRows: q.qSpaceRows !== undefined ? q.qSpaceRows : 1
           }
         })
@@ -9831,11 +11203,16 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           const currentSubOrMarks = Array.isArray(q.subOrMarks) ? [...q.subOrMarks] : Array(count).fill(q.marks[subIdx] || 10)
           currentSubOrMarks[subIdx] = q.marks[subIdx] || 10
 
+          const currentSubOrBeforeSpace = Array.isArray(q.subOrBeforeSpace) ? [...q.subOrBeforeSpace] : Array(count).fill(0)
+          const currentSubOrAfterSpace = Array.isArray(q.subOrAfterSpace) ? [...q.subOrAfterSpace] : Array(count).fill(0)
+
           return {
             ...q,
             subHasOr: currentSubHasOr,
             subOrBlooms: currentSubOrBlooms,
-            subOrMarks: currentSubOrMarks
+            subOrMarks: currentSubOrMarks,
+            subOrBeforeSpace: currentSubOrBeforeSpace,
+            subOrAfterSpace: currentSubOrAfterSpace
           }
         })
       }
@@ -9861,7 +11238,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             ...q,
             hasQuestionOr: newHasQuestionOr,
             questionOrMarks: [...(q.marks || Array(count).fill(10))],
-            questionOrBlooms: currentQOrBlooms
+            questionOrBlooms: currentQOrBlooms,
+            qOrBeforeSpace: q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 0,
+            qOrAfterSpace: q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 0
           }
         })
       }
@@ -9937,7 +11316,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         questions: part.questions.map((q, j) => {
           if (j !== qIdx) return q
           const count = q.subCount === 0 ? 1 : (q.subCount || 1)
-          const newBefore = Array.isArray(q.subOrBeforeSpace) ? [...q.subOrBeforeSpace] : Array(count).fill(1)
+          const newBefore = Array.isArray(q.subOrBeforeSpace) ? [...q.subOrBeforeSpace] : Array(count).fill(0)
           newBefore[subIdx] = parsed
           return { ...q, subOrBeforeSpace: newBefore }
         })
@@ -9954,7 +11333,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         questions: part.questions.map((q, j) => {
           if (j !== qIdx) return q
           const count = q.subCount === 0 ? 1 : (q.subCount || 1)
-          const newAfter = Array.isArray(q.subOrAfterSpace) ? [...q.subOrAfterSpace] : Array(count).fill(1)
+          const newAfter = Array.isArray(q.subOrAfterSpace) ? [...q.subOrAfterSpace] : Array(count).fill(0)
           newAfter[subIdx] = parsed
           return { ...q, subOrAfterSpace: newAfter }
         })
@@ -10114,6 +11493,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         setPaperStructureParts([
           {
             name: 'PART A',
+            beforeSpace: 0,
+            afterSpace: 0,
             questions: [
               { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
               { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
@@ -10122,6 +11503,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           },
           {
             name: 'PART B',
+            beforeSpace: 0,
+            afterSpace: 0,
             questions: [
               { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 },
               { subCount: 3, marks: [10, 10, 10], blooms: ['', '', ''], subSpaceRows: [0, 0, 0], qSpaceRows: 1 }
@@ -10566,14 +11949,33 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       setEditingCodeElement(null)
     } else {
       editor.focusIn()
-      try {
-        if (savedCodeRangeRef.current) {
-          const sel = window.getSelection()
+      const doc = editor.contentModule?.getDocument ? editor.contentModule.getDocument() : document
+      const sel = doc ? doc.getSelection() : window.getSelection()
+      const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
+      const targetRange = savedCodeRangeRef.current || savedEditorRangeRef.current
+
+      let rangeRestored = false
+      if (targetRange && editArea && editArea.contains(targetRange.commonAncestorContainer)) {
+        try {
           sel.removeAllRanges()
-          sel.addRange(savedCodeRangeRef.current)
+          sel.addRange(targetRange.cloneRange())
+          rangeRestored = true
+        } catch (e) {}
+      }
+
+      if (!rangeRestored && editArea) {
+        const activeCell = editArea.querySelector('.col-content-cell:focus, .col-content-cell[data-active="true"]') ||
+          editArea.querySelector('tr[data-obe-row="question"]:last-of-type .col-content-cell') ||
+          editArea.querySelector('.col-content-cell:last-of-type')
+        if (activeCell) {
+          try {
+            const fallbackRange = doc.createRange()
+            fallbackRange.selectNodeContents(activeCell)
+            fallbackRange.collapse(false)
+            sel.removeAllRanges()
+            sel.addRange(fallbackRange)
+          } catch (e) {}
         }
-      } catch (e) {
-        // Fallback
       }
 
       if (editor.formatter && typeof editor.formatter.saveData === 'function') {
@@ -12286,7 +13688,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       creditHours: '',
                       duration: '',
                       fullMarks: '',
-                      notesList: [],
+                      notesList: [
+                        'Figure on the right of each question indicates the marks for the respective question.',
+                        'Answer all questions.'
+                      ],
                       customCOs: []
                     })}
                     className="text-xs text-gray-500 hover:text-red-600 font-bold underline"
@@ -14783,8 +16188,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: 'PART A', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] },
-                            { name: 'PART B', questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] }
+                            { name: 'PART A', beforeSpace: 0, afterSpace: 0, questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] },
+                            { name: 'PART B', beforeSpace: 0, afterSpace: 0, questions: [makePresetQuestion(3, [10, 10, 10]), makePresetQuestion(3, [10, 10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -14792,8 +16197,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: 'PART A', questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] },
-                            { name: 'PART B', questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] }
+                            { name: 'PART A', beforeSpace: 0, afterSpace: 0, questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] },
+                            { name: 'PART B', beforeSpace: 0, afterSpace: 0, questions: [makePresetQuestion(2, [10, 10]), makePresetQuestion(2, [10, 10])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
@@ -14885,8 +16290,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 {paperStructureParts.map((part, partIdx) => (
                   <div key={partIdx} className="bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
                     {!isNoParts && (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2 pb-1 border-b border-emerald-100">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <input
                             type="text"
                             value={part.name}
@@ -14896,6 +16301,40 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                           <span className="text-xs text-gray-400 font-medium">
                             ({part.questions.length} question{part.questions.length !== 1 ? 's' : ''})
                           </span>
+
+                          {/* Space Before & After Part Controls */}
+                          <div className="flex items-center gap-2 ml-2 bg-emerald-50/80 border border-emerald-200 rounded-lg px-2.5 py-1">
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-xs text-emerald-900 font-bold whitespace-nowrap" title="Blank spacing rows before Part header">
+                                Space Before Part:
+                              </label>
+                              <select
+                                value={part.beforeSpace !== undefined ? part.beforeSpace : 0}
+                                onChange={(e) => handlePaperStructureSetPartBeforeSpace(partIdx, e.target.value)}
+                                className="border border-emerald-300 rounded px-1.5 py-0.5 text-xs bg-white font-bold text-emerald-900 outline-none cursor-pointer focus:border-emerald-500"
+                                title="Blank spacing rows before Part header"
+                              >
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                  <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex items-center gap-1.5 border-l border-emerald-200 pl-2">
+                              <label className="text-xs text-emerald-900 font-bold whitespace-nowrap" title="Blank spacing rows after Part header">
+                                Space After Part:
+                              </label>
+                              <select
+                                value={part.afterSpace !== undefined ? part.afterSpace : 0}
+                                onChange={(e) => handlePaperStructureSetPartAfterSpace(partIdx, e.target.value)}
+                                className="border border-emerald-300 rounded px-1.5 py-0.5 text-xs bg-white font-bold text-emerald-900 outline-none cursor-pointer focus:border-emerald-500"
+                                title="Blank spacing rows after Part header"
+                              >
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                  <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
                         </div>
                         {paperStructureParts.length > 1 && (
                           <button
@@ -15045,7 +16484,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                         <div className="flex items-center gap-1 ml-1 border-l border-amber-200 pl-2 bg-amber-50/70 rounded px-1.5 py-0.5">
                                           <span className="text-[10px] text-amber-800 font-bold" title="Spacing rows before / after OR">OR Space:</span>
                                           <select
-                                            value={Array.isArray(q.subOrBeforeSpace) ? (q.subOrBeforeSpace[sIdx] ?? 1) : 1}
+                                            value={Array.isArray(q.subOrBeforeSpace) ? (q.subOrBeforeSpace[sIdx] ?? 0) : (q.subOrBeforeSpace !== undefined ? q.subOrBeforeSpace : 0)}
                                             onChange={(e) => handlePaperStructureSetSubOrBeforeSpace(partIdx, qIdx, sIdx, e.target.value)}
                                             className="border border-amber-300 rounded px-1 py-0.5 text-[10px] bg-white font-bold text-amber-900 outline-none cursor-pointer"
                                             title="Blank rows before Sub-Q OR"
@@ -15055,7 +16494,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                             ))}
                                           </select>
                                           <select
-                                            value={Array.isArray(q.subOrAfterSpace) ? (q.subOrAfterSpace[sIdx] ?? 1) : 1}
+                                            value={Array.isArray(q.subOrAfterSpace) ? (q.subOrAfterSpace[sIdx] ?? 0) : (q.subOrAfterSpace !== undefined ? q.subOrAfterSpace : 0)}
                                             onChange={(e) => handlePaperStructureSetSubOrAfterSpace(partIdx, qIdx, sIdx, e.target.value)}
                                             className="border border-amber-300 rounded px-1 py-0.5 text-[10px] bg-white font-bold text-amber-900 outline-none cursor-pointer"
                                             title="Blank rows after Sub-Q OR"
@@ -15104,7 +16543,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                     <div className="flex items-center gap-1.5">
                                       <label className="text-xs text-amber-900 font-bold whitespace-nowrap">Space Before OR:</label>
                                       <select
-                                        value={q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 1}
+                                        value={q.qOrBeforeSpace !== undefined ? q.qOrBeforeSpace : 0}
                                         onChange={(e) => handlePaperStructureSetQuestionOrBeforeSpace(partIdx, qIdx, e.target.value)}
                                         className="border border-amber-300 rounded px-2 py-0.5 text-xs bg-white font-bold text-amber-900 outline-none cursor-pointer focus:border-amber-500"
                                         title="Blank spacing rows between primary questions and the OR row"
@@ -15117,7 +16556,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                     <div className="flex items-center gap-1.5 border-l border-amber-200 pl-3">
                                       <label className="text-xs text-amber-900 font-bold whitespace-nowrap">Space After OR:</label>
                                       <select
-                                        value={q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 1}
+                                        value={q.qOrAfterSpace !== undefined ? q.qOrAfterSpace : 0}
                                         onChange={(e) => handlePaperStructureSetQuestionOrAfterSpace(partIdx, qIdx, e.target.value)}
                                         className="border border-amber-300 rounded px-2 py-0.5 text-xs bg-white font-bold text-amber-900 outline-none cursor-pointer focus:border-amber-500"
                                         title="Blank spacing rows between the OR row and alternative questions"
@@ -17068,13 +18507,21 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         }
 
         /* Code Snippet Styles in RTE Editor */
+        .obe-code-wrapper {
+          clear: both !important;
+          margin: 6px 0 !important;
+          line-height: 1.4 !important;
+        }
         .obe-code-snippet-container {
-          margin: 10px 0 !important;
+          display: inline-block !important;
+          vertical-align: middle !important;
+          margin: 4px 0 !important;
           clear: both !important;
           position: relative !important;
           page-break-inside: avoid !important;
-          user-select: text !important;
-          -webkit-user-select: text !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          cursor: pointer !important;
         }
         .obe-code-snippet-container[data-align="center"] {
           text-align: center !important;
@@ -17083,7 +18530,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           text-align: left !important;
         }
         .obe-code-block {
-          display: inline-block !important;
+          display: block !important;
           font-family: Consolas, 'Courier New', Monaco, monospace !important;
           line-height: 1.35 !important;
           letter-spacing: 0 !important;
@@ -17095,11 +18542,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           text-align: left !important;
           box-sizing: border-box !important;
           transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
-          cursor: text !important;
-          user-select: text !important;
-          -webkit-user-select: text !important;
+          cursor: pointer !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          pointer-events: none !important;
         }
-        .obe-code-block:hover {
+        .obe-code-snippet-container:hover .obe-code-block {
           box-shadow: 0 0 0 2px #10b981 !important;
         }
         .obe-code-snippet-container[data-selected="true"] .obe-code-block,
@@ -17116,8 +18564,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
         .obe-code-table * {
           color: #000000 !important;
           background-color: transparent !important;
-          user-select: text !important;
-          -webkit-user-select: text !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          pointer-events: none !important;
         }
         .obe-code-block strong {
           font-weight: 700 !important;

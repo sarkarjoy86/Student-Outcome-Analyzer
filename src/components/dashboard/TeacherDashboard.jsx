@@ -2011,33 +2011,38 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     )
   }
 
+  const semName = offering.semester?.semesterName || '';
+  const formattedSemName = semName ? semName.charAt(0).toUpperCase() + semName.slice(1).toLowerCase() : '';
+  const academicYear = offering.academicYear || offering.semester?.academicYear || '';
+  const sessionDisplay = formattedSemName && academicYear ? `${formattedSemName} (${academicYear})` : formattedSemName || academicYear || 'N/A';
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Top Banner / Course Header */}
       <div className="no-print bg-gradient-to-br from-white via-green-50/20 to-blue-50/20 rounded-2xl shadow-xl p-6 border border-green-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBackToDashboard}
-              className="p-2 hover:bg-green-50 rounded-lg text-green-700 transition-colors border border-green-100"
-              title="Back to Courses"
-            >
-              <ArrowLeft size={16} />
-            </button>
-            <h1 className="text-2xl font-extrabold text-gray-800">
+        <div className="flex items-start gap-3.5">
+          <button
+            onClick={onBackToDashboard}
+            className="p-2 mt-0.5 hover:bg-green-50 rounded-xl text-green-700 transition-colors border border-green-200 shrink-0 cursor-pointer shadow-xs hover:shadow-sm"
+            title="Back to Course Sections"
+          >
+            <ArrowLeft size={17} />
+          </button>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-extrabold text-gray-800 tracking-tight">
               {offering.course?.courseCode} — {offering.course?.courseName}
             </h1>
+            <p className="text-gray-500 font-semibold text-sm">
+              {sessionDisplay} • Batch {offering.batch?.name || 'N/A'} • {offering.course?.creditHours} Credits
+            </p>
           </div>
-          <p className="text-gray-500 font-semibold pl-9">
-            Batch {offering.batch?.name || 'N/A'} • Section {offering.section} • {offering.semester?.semesterName} ({offering.academicYear})
-          </p>
         </div>
-        <div className="flex items-center gap-2 pl-9 md:pl-0">
+        <div className="flex items-center gap-2 pl-11 md:pl-0">
           <span className="bg-purple-50 text-purple-700 border border-purple-200 text-xs px-3 py-1.5 rounded-lg font-bold">
             Level {offering.course?.level || '1'}, Term {offering.course?.term || 'I'}
           </span>
           <span className="bg-blue-50 text-blue-700 border border-blue-200 text-xs px-3 py-1.5 rounded-lg font-bold">
-            {offering.course?.creditHours} Credits
+            Section {offering.section || 'A'}
           </span>
           <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg font-bold">
             {students.length} Students

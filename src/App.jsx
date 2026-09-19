@@ -12,9 +12,9 @@ import AuthCard from "./components/auth/AuthCard";
 import ProfileAvatar from "./components/layout/ProfileAvatar";
 import { useAuth } from "./context/AuthContext";
 import { apiService } from "./services/apiService";
+import TeacherDashboard from "./components/dashboard/TeacherDashboard";
 
 const AdminDashboard = lazy(() => import("./components/admin/AdminDashboard"));
-const TeacherDashboard = lazy(() => import("./components/dashboard/TeacherDashboard"));
 const PublicSurveyForm = lazy(() => import("./components/survey/PublicSurveyForm"));
 
 
@@ -66,6 +66,21 @@ function App() {
     }
   }, [user, authLoading, selectedOffering]);
 
+  // Clean up stale offering URL parameters if no offering is actively selected
+  useEffect(() => {
+    if (!selectedOffering) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("offering") || params.has("tab") || params.has("paper")) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        const view = params.has("course") ? "course_group" : "dashboard";
+        window.history.replaceState({ view }, "", url.toString());
+      }
+    }
+  }, [selectedOffering]);
+
   // Offering active state loaded from database
   const [students, setStudents] = useState([]);
   const [courseInfo, setCourseInfo] = useState(null);
@@ -114,8 +129,8 @@ function App() {
       const params = new URLSearchParams(window.location.search);
       const urlOfferingId = state?.offeringId || params.get("offering");
 
-      if (!urlOfferingId || state?.view === "dashboard") {
-        // Navigated back to offerings dashboard
+      if (!urlOfferingId || state?.view === "dashboard" || state?.view === "course_group") {
+        // Navigated back to offerings dashboard or course group drilldown
         setSelectedOffering(null);
         localStorage.removeItem("selectedOffering");
         localStorage.removeItem("teacherActiveTab");
@@ -177,6 +192,40 @@ function App() {
     };
   }, [authLoading, user, selectedOffering]);
 
+  const handleBackToCourseSections = () => {
+    const courseCode = selectedOffering?.course?.courseCode;
+    const batchName = selectedOffering?.batch?.name;
+
+    setSelectedOffering(null);
+    localStorage.removeItem("selectedOffering");
+    localStorage.removeItem("teacherActiveTab");
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("offering");
+    url.searchParams.delete("tab");
+    url.searchParams.delete("paper");
+
+    if (courseCode) {
+      url.searchParams.set("course", courseCode);
+      if (batchName && batchName !== "N/A") {
+        url.searchParams.set("batch", batchName);
+      }
+      window.history.pushState(
+        {
+          view: "course_group",
+          courseCode: courseCode,
+          batchName: batchName,
+        },
+        "",
+        url.toString()
+      );
+    } else {
+      url.searchParams.delete("course");
+      url.searchParams.delete("batch");
+      window.history.pushState({ view: "dashboard" }, "", url.toString());
+    }
+  };
+
   // Load all data for selected course offering
   const handleSelectOffering = (offering, pushHistory = true) => {
     setSelectedOffering(offering);
@@ -184,6 +233,12 @@ function App() {
       localStorage.setItem("selectedOffering", JSON.stringify(offering));
       if (pushHistory) {
         const url = new URL(window.location.href);
+        if (offering.course?.courseCode) {
+          url.searchParams.set("course", offering.course.courseCode);
+        }
+        if (offering.batch?.name && offering.batch.name !== "N/A") {
+          url.searchParams.set("batch", offering.batch.name);
+        }
         url.searchParams.set("offering", offering._id);
         const currentTab = localStorage.getItem("teacherActiveTab") || "overview";
         url.searchParams.set("tab", currentTab);
@@ -193,6 +248,8 @@ function App() {
             view: "offering",
             offeringId: offering._id,
             tab: currentTab,
+            courseCode: offering.course?.courseCode,
+            batchName: offering.batch?.name,
             paperId: null,
           },
           "",
@@ -200,15 +257,7 @@ function App() {
         );
       }
     } else {
-      localStorage.removeItem("selectedOffering");
-      localStorage.removeItem("teacherActiveTab");
-      if (pushHistory) {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("offering");
-        url.searchParams.delete("tab");
-        url.searchParams.delete("paper");
-        window.history.pushState({ view: "dashboard" }, "", url.toString());
-      }
+      handleBackToCourseSections();
     }
   };
 
@@ -378,24 +427,18 @@ function App() {
   const renderDashboard = () => (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-green-100">
       <ProfileAvatar />
-      {selectedOffering ? (
+      {selectedOffering && (
         <main className="p-8">
-          <Suspense fallback={
-            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-              <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
-              <p className="text-gray-600 font-bold text-base">Loading Course Dashboard...</p>
-            </div>
-          }>
-            <TeacherDashboard
-              offering={selectedOffering}
-              onBackToDashboard={() => handleSelectOffering(null)}
-              user={user}
-            />
-          </Suspense>
+          <TeacherDashboard
+            offering={selectedOffering}
+            onBackToDashboard={handleBackToCourseSections}
+            user={user}
+          />
         </main>
-      ) : (
-        <Dashboard onSelectOffering={handleSelectOffering} />
       )}
+      <div className={selectedOffering ? "hidden" : "block"}>
+        <Dashboard onSelectOffering={handleSelectOffering} />
+      </div>
     </div>
   );
 
