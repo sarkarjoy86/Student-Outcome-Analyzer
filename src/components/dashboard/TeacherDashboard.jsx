@@ -44,6 +44,9 @@ import {
   Target
 } from 'lucide-react'
 import ErrorBoundary from '../ErrorBoundary'
+export const preloadQuestionPaperEditor = () => {
+  import('../marks/QuestionPaperEditor').catch(() => {})
+}
 const QuestionPaperEditor = lazy(() => import('../marks/QuestionPaperEditor'))
 const ComprehensiveReports = lazy(() => import('../reports/ComprehensiveReports'))
 const CourseSurvey = lazy(() => import('../survey/CourseSurvey'))
@@ -156,6 +159,18 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       wakeUpMLService({ silent: true })
     }
   }, [activeTab, wakeUpMLService])
+
+  // Background Pre-fetching: Silently download QuestionPaperEditor bundle during idle time
+  // so when teacher clicks "Open Q.Paper", it opens in 0ms without any loading delay
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = window.requestIdleCallback(preloadQuestionPaperEditor, { timeout: 1500 })
+      return () => window.cancelIdleCallback && window.cancelIdleCallback(handle)
+    } else {
+      const timer = setTimeout(preloadQuestionPaperEditor, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [])
 
   const fetchNotesStatus = useCallback(async () => {
     if (!activeCourseId) return
@@ -3160,8 +3175,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
                           {!isDirectMarksType ? (
                             <button
                               onClick={() => handleOpenQuestionPaper(a)}
-                              onMouseEnter={() => wakeUpMLService({ silent: true })}
-                              onFocus={() => wakeUpMLService({ silent: true })}
+                              onMouseEnter={() => {
+                                preloadQuestionPaperEditor();
+                                wakeUpMLService({ silent: true });
+                              }}
+                              onFocus={() => {
+                                preloadQuestionPaperEditor();
+                                wakeUpMLService({ silent: true });
+                              }}
                               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all cursor-pointer"
                             >
                               <Edit size={14} />

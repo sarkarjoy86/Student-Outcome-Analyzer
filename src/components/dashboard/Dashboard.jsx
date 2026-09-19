@@ -360,6 +360,9 @@ export default function Dashboard({ onSelectOffering }) {
                   <div
                     key={offering._id}
                     onClick={() => onSelectOffering(offering)}
+                    onMouseEnter={() => {
+                      import('../marks/QuestionPaperEditor').catch(() => {})
+                    }}
                     className="bg-white hover:bg-gradient-to-br hover:from-white hover:to-green-50/20 p-6 rounded-2xl shadow-md hover:shadow-xl border border-gray-200/60 hover:border-green-300 transition-all duration-300 cursor-pointer group flex flex-col justify-between"
                   >
                     <div className="space-y-4">
