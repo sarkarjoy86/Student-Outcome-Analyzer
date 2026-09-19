@@ -2,23 +2,23 @@ const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com"
 export const DEFAULT_PROD_ML_URL = "https://student-outcome-analyzer-ml.onrender.com";
 
 export function getApiBaseUrl() {
+  if (typeof window !== "undefined" && (window.location.hostname.includes("localhost") || window.location.hostname.includes("127.0.0.1"))) {
+    return "";
+  }
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
-  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1")) {
-    return DEFAULT_PROD_API_URL;
-  }
-  return "";
+  return DEFAULT_PROD_API_URL;
 }
 
 export function getMLBaseUrl() {
+  if (typeof window !== "undefined" && (window.location.hostname.includes("localhost") || window.location.hostname.includes("127.0.0.1"))) {
+    return "http://localhost:8000";
+  }
   if (import.meta.env.VITE_ML_SERVICE_URL) {
     return import.meta.env.VITE_ML_SERVICE_URL;
   }
-  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1")) {
-    return DEFAULT_PROD_ML_URL;
-  }
-  return "http://localhost:8000";
+  return DEFAULT_PROD_ML_URL;
 }
 
 let activeMLWakePromise = null;
