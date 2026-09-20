@@ -66,21 +66,19 @@ export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = nul
   const startTime = Date.now();
 
   let progressInterval = null;
+  let hasReportedWarming = false;
   if (onProgress) {
-    onProgress({
-      attempt: 1,
-      maxAttempts: 1,
-      elapsedSec: 0,
-      statusMsg: "AI service is waking up from standby (~30s)..."
-    });
     progressInterval = setInterval(() => {
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      onProgress({
-        attempt: 1,
-        maxAttempts: 1,
-        elapsedSec,
-        statusMsg: `AI service is waking up from standby (~30s)... Elapsed: ${elapsedSec}s`
-      });
+      if (elapsedSec >= 5) {
+        hasReportedWarming = true;
+        onProgress({
+          attempt: 1,
+          maxAttempts: 1,
+          elapsedSec,
+          statusMsg: `AI service is waking up from standby (~20–30s)... Elapsed: ${elapsedSec}s`
+        });
+      }
     }, 1000);
   }
 
@@ -385,7 +383,7 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
 
         stopProgressTimer();
         setMLReadyState(true);
-        if (hasReportedWarming && onProgress) {
+        if (onProgress) {
           onProgress({
             isComplete: true
           });
@@ -434,6 +432,9 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
     }
   } finally {
     stopProgressTimer();
+    if (onProgress) {
+      onProgress({ isComplete: true });
+    }
   }
 
   throw new Error('AI microservice request timed out while waking up from standby. Please try again.');

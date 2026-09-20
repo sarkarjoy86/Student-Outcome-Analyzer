@@ -1967,12 +1967,21 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [notifications, setNotifications] = useState([])
 
   const showNotification = useCallback((message, type = 'info', duration = 4500) => {
-    // Guard against duplicate connection toasts during AI warming
-    if (typeof message === 'string' && message.toLowerCase().includes('connecting to ai')) {
+    // 1. Never show AI ready / active / standby toasts (keep editor silent)
+    if (typeof message === 'string' && (
+      message.toLowerCase().includes('ai service') ||
+      message.toLowerCase().includes('connecting to ai')
+    )) {
       return
     }
     const id = Date.now() + Math.random().toString(36).substring(2, 7)
-    setNotifications(prev => [...prev, { id, message, type }])
+    setNotifications(prev => {
+      // 2. Strict deduplication: if exact same message is already visible, do not re-add!
+      if (prev.some(n => n.message === message)) return prev
+      // 3. Limit to max 3 concurrent notifications to prevent stacking floods
+      const updated = [...prev, { id, message, type }].slice(-3)
+      return updated
+    })
     if (duration > 0) {
       setTimeout(() => {
         setNotifications(prev => prev.filter(n => n.id !== id))
@@ -2361,13 +2370,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         }
       })
 
-      if (mlStatus !== 'ready' || !isMLReady()) {
-        try {
-          await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
-        } catch (wakeErr) {
-          console.warn('Similarity check wake-up notice:', wakeErr)
-        }
-      }
+
 
       const res = await apiService.checkQuestionSimilarity(
         {
@@ -3124,7 +3127,10 @@ Equation description: "${aiEquationPrompt}"`
       const data = await apiService.rteAssist(
         { prompt },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) setAiWarmingInfo(null)
+            else setAiWarmingInfo(info)
+          }
         }
       )
       if (data && data.success && data.content) {
@@ -10483,7 +10489,10 @@ Equation description: "${aiEquationPrompt}"`
       const data = await apiService.rteAssist(
         { prompt, selectedText },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) setAiWarmingInfo(null)
+            else setAiWarmingInfo(info)
+          }
         }
       )
       if (data && data.success && data.content) {
@@ -10649,7 +10658,10 @@ EXAMINATION STRUCTURE & OBE TAGGING:
       const data = await apiService.rteAssist(
         { prompt },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) setAiWarmingInfo(null)
+            else setAiWarmingInfo(info)
+          }
         }
       )
       if (data && data.success && data.content) {
@@ -10948,7 +10960,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       const data = await apiService.rteAssist(
         { prompt },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) setAiWarmingInfo(null)
+            else setAiWarmingInfo(info)
+          }
         }
       )
       if (data && data.success && data.content) {
@@ -11739,7 +11754,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           language: langToRun
         },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) setAiWarmingInfo(null)
+            else setAiWarmingInfo(info)
+          }
         }
       )
 
@@ -18965,7 +18983,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       {/* Non-Blocking Notifications Container (Top-Right Stack with Translucent Glassy Dark Emerald Aesthetic) */}
       <div className="fixed top-5 right-5 z-[99999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none no-print">
         {/* Real-Time AI Cold-Start Warming Card - Stays visible continuously while warming */}
-        {(aiWarmingInfo || mlStatus === 'warming' || isMlWarming) && (
+        {Boolean(aiWarmingInfo && !aiWarmingInfo.isComplete && aiWarmingInfo.statusMsg) && (
           <div className="pointer-events-auto px-4 py-3 rounded-2xl border shadow-xl flex items-start gap-3.5 backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-top-2 text-xs font-semibold bg-emerald-950/95 text-emerald-100 border-emerald-400/60 ring-1 ring-emerald-400/25">
             <div className="relative flex items-center justify-center shrink-0 mt-0.5">
               <Sparkles size={17} className="text-emerald-400 animate-pulse" />
