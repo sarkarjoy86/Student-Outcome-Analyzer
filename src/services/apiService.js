@@ -138,7 +138,7 @@ export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = nul
           attempt: 1,
           maxAttempts: 1,
           elapsedSec: Math.round((Date.now() - startTime) / 1000),
-          statusMsg: "✓ AI service is ready!"
+          isComplete: true
         });
       }
 
@@ -298,7 +298,9 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
     if (!onProgress || progressTimer) return;
     progressTimer = setInterval(() => {
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      if (elapsedSec >= 1) {
+      // ONLY flag as cold-start warming if request takes >= 5 seconds!
+      // Normal warm neural inference takes 1–3 seconds and should remain completely silent.
+      if (elapsedSec >= 5) {
         hasReportedWarming = true;
         onProgress({
           attempt: attempt + 1,
@@ -385,10 +387,6 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
         setMLReadyState(true);
         if (hasReportedWarming && onProgress) {
           onProgress({
-            attempt: 1,
-            maxAttempts: 1,
-            elapsedSec: Math.round((Date.now() - startTime) / 1000),
-            statusMsg: "✓ AI service is ready!",
             isComplete: true
           });
         }

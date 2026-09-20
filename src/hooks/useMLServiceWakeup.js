@@ -105,7 +105,7 @@ export function useMLServiceWakeup(options = {}) {
         lastHeartbeatTimeRef.current = now;
         setLastHeartbeat(now);
         setMLReadyState(true);
-        updateStatus('ready', null, { isComplete: true, statusMsg: '✓ AI service is ready!' });
+        updateStatus('ready');
         return res;
       }
       return res;
@@ -221,18 +221,13 @@ export function useMLServiceWakeup(options = {}) {
             try { onIdleChange(false); } catch (e) {}
           }
 
-          // If user returned after 10+ minutes of dormancy or ML not ready, Render container has spun down to sleep
+          // If user returned after 15+ minutes of dormancy, Render container has spun down to sleep
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
+          if (timeSinceLastHeartbeat >= 15 * 60 * 1000) {
             setMLReadyState(false);
-            updateStatus('warming', null, {
-              attempt: 1,
-              maxAttempts: 1,
-              elapsedSec: 0,
-              statusMsg: 'AI Service is waking up from standby (~20–30s)...'
-            });
-            wakeUp({ silent: false, force: true }).catch(() => {});
-          } else if (document.visibilityState === 'visible' && timeSinceLastHeartbeat >= 6 * 60 * 1000) {
+            updateStatus('idle');
+            wakeUp({ silent: true, force: true }).catch(() => {});
+          } else if (document.visibilityState === 'visible' && timeSinceLastHeartbeat >= 8 * 60 * 1000) {
             pingHeartbeat();
           }
         }
@@ -261,11 +256,10 @@ export function useMLServiceWakeup(options = {}) {
         return isCurrentlyIdle;
       });
 
-      // If user has been idle for >= 10 minutes (or no heartbeat in >= 10 mins),
+      // If user has been idle for >= 15 minutes (or no heartbeat in >= 15 mins),
       // the Render container has entered or is entering sleep mode.
-      // Invalidate confirmed ready state so next AI interaction prompts pre-warming.
       const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-      if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
+      if (timeSinceLastHeartbeat >= 15 * 60 * 1000) {
         setMLReadyState(false);
         if (statusRef.current === 'ready') {
           updateStatus('idle');
@@ -313,17 +307,12 @@ export function useMLServiceWakeup(options = {}) {
         const sessionElapsed = now - sessionStartRef.current;
         if (sessionElapsed <= MAX_SESSION_DURATION_MS) {
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
-            // Container slept while away in another tab!
+          if (timeSinceLastHeartbeat >= 15 * 60 * 1000) {
+            // Container slept while away in another tab: silently wake up in background
             setMLReadyState(false);
-            updateStatus('warming', null, {
-              attempt: 1,
-              maxAttempts: 1,
-              elapsedSec: 0,
-              statusMsg: 'AI Service is waking up from standby (~20–30s)...'
-            });
-            wakeUp({ silent: false, force: true }).catch(() => {});
-          } else if (timeSinceLastHeartbeat >= 6 * 60 * 1000) {
+            updateStatus('idle');
+            wakeUp({ silent: true, force: true }).catch(() => {});
+          } else if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
             pingHeartbeat();
           }
         }

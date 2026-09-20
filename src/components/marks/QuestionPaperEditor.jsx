@@ -1991,21 +1991,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const { status: mlStatus, isWarming: isMlWarming, isIdle: isUserIdle, wakeUp: wakeUpMLService } = useMLServiceWakeup({
     isEditingSession: true,
     autoWarm: true,
-    onStatusChange: (newStatus, err, info) => {
-      if (newStatus === 'warming') {
-        setAiWarmingInfo(info || {
-          attempt: 1,
-          maxAttempts: 1,
-          elapsedSec: 0,
-          statusMsg: 'AI Service is waking up from standby (~20–30s)...'
-        })
-      } else if (newStatus === 'ready') {
-        if (info?.isComplete) {
-          showNotification('✓ AI Service is active and ready!', 'success', 3500)
-        }
-        setAiWarmingInfo(null)
-      }
-    },
     onIdleChange: (idle) => {
       if (idle) {
         // Teacher has been inactive for >= 5 minutes.
@@ -2132,15 +2117,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     })
   }, [mlStatus, wakeUpMLService, showNotification, notesCourseId])
 
-  // Real-time toast alert when AI service transitions from warming to ready
-  const prevMlStatusRef = useRef(mlStatus)
-  useEffect(() => {
-    if (prevMlStatusRef.current !== 'ready' && mlStatus === 'ready') {
-      showNotification('✓ AI Service is ready! All AI features are now active.', 'success', 4500)
-      setAiWarmingInfo(null)
-    }
-    prevMlStatusRef.current = mlStatus
-  }, [mlStatus, showNotification])
+
 
   const [restoredPaperDraftInfo, setRestoredPaperDraftInfo] = useState(null)
   const [showParagraphMarks, setShowParagraphMarks] = useState(false)
@@ -2400,7 +2377,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         {
           onProgress: (info) => {
             if (info?.isComplete) {
-              showNotification('✓ AI Service is active and ready!', 'success', 3500)
               setAiWarmingInfo(null)
             } else {
               setAiWarmingInfo(info)
@@ -6004,21 +5980,6 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
 
-    const isServerCold = mlStatus !== 'ready' || !isMLReady()
-    if (isServerCold) {
-      setAiWarmingInfo({
-        attempt: 1,
-        maxAttempts: 24,
-        elapsedSec: 0,
-        statusMsg: 'AI Service is waking up from standby (~20–30s)...'
-      })
-      try {
-        await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
-      } catch (wakeErr) {
-        console.warn('AI Verify wake-up notice:', wakeErr)
-      }
-    }
-
     try {
       const outcomesPayload = (coDetails && coDetails.length > 0)
         ? coDetails
@@ -6032,7 +5993,6 @@ Equation description: "${aiEquationPrompt}"`
         {
           onProgress: (info) => {
             if (info?.isComplete) {
-              showNotification('✓ AI Service is active and ready!', 'success', 3500)
               setAiWarmingInfo(null)
             } else {
               setAiWarmingInfo(info)
@@ -6083,21 +6043,6 @@ Equation description: "${aiEquationPrompt}"`
     setAiVerifyResult(null)
     setAiVerifySuccessMsg('')
 
-    const isServerCold = mlStatus !== 'ready' || !isMLReady()
-    if (isServerCold) {
-      setAiWarmingInfo({
-        attempt: 1,
-        maxAttempts: 24,
-        elapsedSec: 0,
-        statusMsg: 'AI Service is waking up from standby (~20–30s)...'
-      })
-      try {
-        await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
-      } catch (wakeErr) {
-        console.warn('Auto AI Verify wake-up notice:', wakeErr)
-      }
-    }
-
     try {
       const outcomesPayload = (coDetails && coDetails.length > 0)
         ? coDetails
@@ -6111,7 +6056,6 @@ Equation description: "${aiEquationPrompt}"`
         {
           onProgress: (info) => {
             if (info?.isComplete) {
-              showNotification('✓ AI Service is active and ready!', 'success', 3500)
               setAiWarmingInfo(null)
             } else {
               setAiWarmingInfo(info)
