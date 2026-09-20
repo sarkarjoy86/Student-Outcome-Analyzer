@@ -1963,10 +1963,49 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [showBlobWarning, setShowBlobWarning] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Non-blocking Toast Notification State
+  const [notifications, setNotifications] = useState([])
+
+  const showNotification = useCallback((message, type = 'info', duration = 4500) => {
+    // Guard against duplicate connection toasts during AI warming
+    if (typeof message === 'string' && message.toLowerCase().includes('connecting to ai')) {
+      return
+    }
+    const id = Date.now() + Math.random().toString(36).substring(2, 7)
+    setNotifications(prev => [...prev, { id, message, type }])
+    if (duration > 0) {
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id))
+      }, duration)
+    }
+  }, [])
+
+  const dismissNotification = useCallback((id) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+  }, [])
+
+  // Non-blocking AI Cold-Start Warming Indicator Overlay
+  const [aiWarmingInfo, setAiWarmingInfo] = useState(null)
+
   // Strictly Scoped Keep-Alive Heartbeat for ML Service (Render Cold-Start Mitigation)
   const { status: mlStatus, isWarming: isMlWarming, isIdle: isUserIdle, wakeUp: wakeUpMLService } = useMLServiceWakeup({
     isEditingSession: true,
     autoWarm: true,
+    onStatusChange: (newStatus, err, info) => {
+      if (newStatus === 'warming') {
+        setAiWarmingInfo(info || {
+          attempt: 1,
+          maxAttempts: 1,
+          elapsedSec: 0,
+          statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+        })
+      } else if (newStatus === 'ready') {
+        if (info?.isComplete) {
+          showNotification('✓ AI Service is active and ready!', 'success', 3500)
+        }
+        setAiWarmingInfo(null)
+      }
+    },
     onIdleChange: (idle) => {
       if (idle) {
         // Teacher has been inactive for >= 5 minutes.
@@ -1993,30 +2032,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       }
     }
   })
-
-  // Non-blocking Toast Notification State
-  const [notifications, setNotifications] = useState([])
-
-  const showNotification = useCallback((message, type = 'info', duration = 4500) => {
-    // Guard against duplicate connection toasts during AI warming
-    if (typeof message === 'string' && message.toLowerCase().includes('connecting to ai')) {
-      return
-    }
-    const id = Date.now() + Math.random().toString(36).substring(2, 7)
-    setNotifications(prev => [...prev, { id, message, type }])
-    if (duration > 0) {
-      setTimeout(() => {
-        setNotifications(prev => prev.filter(n => n.id !== id))
-      }, duration)
-    }
-  }, [])
-
-  const dismissNotification = useCallback((id) => {
-    setNotifications(prev => prev.filter(n => n.id !== id))
-  }, [])
-
-  // Non-blocking AI Cold-Start Warming Indicator Overlay
-  const [aiWarmingInfo, setAiWarmingInfo] = useState(null)
 
   // Handle Fullscreen Toggle with 100% Content Preservation
   const handleToggleFullscreen = useCallback(() => {
@@ -2369,9 +2384,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         }
       })
 
-      if (mlStatus !== 'ready') {
+      if (mlStatus !== 'ready' || !isMLReady()) {
         try {
-          await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+          await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
         } catch (wakeErr) {
           console.warn('Similarity check wake-up notice:', wakeErr)
         }
@@ -2383,7 +2398,14 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           archivedPapers: archivedPayload
         },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) {
+              showNotification('✓ AI Service is active and ready!', 'success', 3500)
+              setAiWarmingInfo(null)
+            } else {
+              setAiWarmingInfo(info)
+            }
+          }
         }
       )
 
@@ -5991,7 +6013,7 @@ Equation description: "${aiEquationPrompt}"`
         statusMsg: 'AI Service is waking up from standby (~20–30s)...'
       })
       try {
-        await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+        await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
         console.warn('AI Verify wake-up notice:', wakeErr)
       }
@@ -6008,7 +6030,14 @@ Equation description: "${aiEquationPrompt}"`
           courseOutcomes: outcomesPayload
         },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) {
+              showNotification('✓ AI Service is active and ready!', 'success', 3500)
+              setAiWarmingInfo(null)
+            } else {
+              setAiWarmingInfo(info)
+            }
+          }
         }
       )
 
@@ -6063,7 +6092,7 @@ Equation description: "${aiEquationPrompt}"`
         statusMsg: 'AI Service is waking up from standby (~20–30s)...'
       })
       try {
-        await wakeUpMLService({ silent: false, waitForReady: true, onProgress: (info) => setAiWarmingInfo(info) })
+        await wakeUpMLService({ silent: false, waitForReady: true, force: true, onProgress: (info) => setAiWarmingInfo(info) })
       } catch (wakeErr) {
         console.warn('Auto AI Verify wake-up notice:', wakeErr)
       }
@@ -6080,7 +6109,14 @@ Equation description: "${aiEquationPrompt}"`
           courseOutcomes: outcomesPayload
         },
         {
-          onProgress: (info) => setAiWarmingInfo(info)
+          onProgress: (info) => {
+            if (info?.isComplete) {
+              showNotification('✓ AI Service is active and ready!', 'success', 3500)
+              setAiWarmingInfo(null)
+            } else {
+              setAiWarmingInfo(info)
+            }
+          }
         }
       )
 
@@ -6096,7 +6132,7 @@ Equation description: "${aiEquationPrompt}"`
       setAiVerifyLoading(false)
       setAiWarmingInfo(null)
     }
-  }, [calculateClampedPosition, coDetails, availableCOs, offering, mlStatus, wakeUpMLService])
+  }, [calculateClampedPosition, coDetails, availableCOs, offering, showNotification, mlStatus, wakeUpMLService])
 
   // Fetch reference notes status for current course on load (shared across sections of same course)
   const refreshNotesStatus = useCallback(() => {

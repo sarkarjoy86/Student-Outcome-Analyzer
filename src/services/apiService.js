@@ -23,13 +23,27 @@ export function getMLBaseUrl() {
 
 let activeMLWakePromise = null;
 let isMLServiceConfirmedReady = false;
+let lastMLSuccessTimestamp = 0;
 
 export function isMLReady() {
+  if (!isMLServiceConfirmedReady) return false;
+  // If no successful ping/response in >= 10 minutes, container on Render has likely entered standby sleep
+  if (lastMLSuccessTimestamp > 0 && (Date.now() - lastMLSuccessTimestamp >= 10 * 60 * 1000)) {
+    isMLServiceConfirmedReady = false;
+    return false;
+  }
   return isMLServiceConfirmedReady;
 }
 
 export function setMLReadyState(ready) {
   isMLServiceConfirmedReady = Boolean(ready);
+  if (ready) {
+    lastMLSuccessTimestamp = Date.now();
+  }
+}
+
+export function getLastMLSuccessTime() {
+  return lastMLSuccessTimestamp;
 }
 
 /**
@@ -39,7 +53,7 @@ export function setMLReadyState(ready) {
  * Reuses a single shared Promise across all concurrent callers so Render is never flooded.
  */
 export async function ensureMLServiceReady({ timeoutMs = 50000, onProgress = null, signal = null, force = false } = {}) {
-  if (isMLServiceConfirmedReady && !force) {
+  if (isMLReady() && !force) {
     return { online: true, status: "ready" };
   }
 
@@ -277,49 +291,125 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
 
   const startTime = Date.now();
   let attempt = 0;
+  let hasReportedWarming = false;
+  let progressTimer = null;
 
-  while (attempt <= maxRetries) {
-    if (signal && signal.aborted) {
-      const abortErr = new Error('Request cancelled by user.');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-
-    const elapsedMs = Date.now() - startTime;
-    if (elapsedMs >= maxTotalTimeMs) {
-      throw new Error(`AI operation timed out after ${Math.round(elapsedMs / 1000)}s while waiting for microservice to wake up. Please try again shortly.`);
-    }
-
-    try {
-      if (attempt > 0 && onProgress) {
+  const startProgressTimer = () => {
+    if (!onProgress || progressTimer) return;
+    progressTimer = setInterval(() => {
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      if (elapsedSec >= 1) {
+        hasReportedWarming = true;
         onProgress({
-          attempt,
+          attempt: attempt + 1,
           maxAttempts: maxRetries,
-          elapsedSec: Math.round(elapsedMs / 1000),
-          statusMsg: `Waking up AI microservice (Attempt ${attempt}/${maxRetries})...`
+          elapsedSec,
+          statusMsg: `AI service is waking up from standby (~20–30s)... Elapsed: ${elapsedSec}s`
         });
       }
+    }, 1000);
+  };
 
-      const res = await fetchWithDefaults(url, {
-        ...options,
-        signal: signal || options.signal
-      });
+  const stopProgressTimer = () => {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+  };
 
-      const data = await res.json().catch(() => ({}));
+  try {
+    startProgressTimer();
 
-      // Check if response indicates cold start / warming up
-      const isColdStart =
-        res.status === 502 ||
-        res.status === 503 ||
-        res.status === 504 ||
-        data.status === 'warming' ||
-        (typeof data.message === 'string' && data.message.toLowerCase().includes('warming'));
+    while (attempt <= maxRetries) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error('Request cancelled by user.');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
 
-      if (!res.ok || data.success === false) {
-        if (isColdStart && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
+      const elapsedMs = Date.now() - startTime;
+      if (elapsedMs >= maxTotalTimeMs) {
+        throw new Error(`AI operation timed out after ${Math.round(elapsedMs / 1000)}s while waiting for microservice to wake up. Please try again shortly.`);
+      }
+
+      try {
+        const res = await fetchWithDefaults(url, {
+          ...options,
+          signal: signal || options.signal
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        // Check if response indicates cold start / warming up
+        const isColdStart =
+          res.status === 502 ||
+          res.status === 503 ||
+          res.status === 504 ||
+          data.status === 'warming' ||
+          (typeof data.message === 'string' && data.message.toLowerCase().includes('warming'));
+
+        if (!res.ok || data.success === false) {
+          if (isColdStart && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
+            attempt++;
+            setMLReadyState(false);
+            hasReportedWarming = true;
+            if (onProgress) {
+              onProgress({
+                attempt,
+                maxAttempts: maxRetries,
+                elapsedSec: Math.round((Date.now() - startTime) / 1000),
+                statusMsg: "AI service is waking up from standby (~20–30s)..."
+              });
+            }
+            try {
+              await ensureMLServiceReady({
+                timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
+                onProgress,
+                signal,
+                force: true
+              });
+              continue;
+            } catch (wakeErr) {
+              console.warn('[fetchWithRetry] Wake-up attempt error:', wakeErr.message);
+            }
+          }
+
+          const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `Request failed with status ${res.status}`;
+          const error = new Error(errorMsg);
+          error.response = data;
+          error.status = res.status;
+          throw error;
+        }
+
+        stopProgressTimer();
+        setMLReadyState(true);
+        if (hasReportedWarming && onProgress) {
+          onProgress({
+            attempt: 1,
+            maxAttempts: 1,
+            elapsedSec: Math.round((Date.now() - startTime) / 1000),
+            statusMsg: "✓ AI service is ready!",
+            isComplete: true
+          });
+        }
+
+        return data;
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          throw err;
+        }
+
+        const isNetworkError = err.message && (
+          err.message.includes('Failed to fetch') ||
+          err.message.includes('NetworkError') ||
+          err.message.includes('ECONNREFUSED') ||
+          err.message.includes('timeout')
+        );
+
+        if (isNetworkError && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
           attempt++;
-          // Confirmed cold start: invalidate cached ready state immediately
           setMLReadyState(false);
+          hasReportedWarming = true;
           if (onProgress) {
             onProgress({
               attempt,
@@ -328,7 +418,6 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
               statusMsg: "AI service is waking up from standby (~20–30s)..."
             });
           }
-          // Cleanly await the single ML wake-up promise with force: true
           try {
             await ensureMLServiceReady({
               timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
@@ -336,59 +425,17 @@ export async function fetchWithRetry(url, options = {}, retryConfig = {}) {
               signal,
               force: true
             });
-            // Once the wake-up finishes cleanly, replay request
             continue;
           } catch (wakeErr) {
-            console.warn('[fetchWithRetry] Wake-up attempt error:', wakeErr.message);
+            console.warn('[fetchWithRetry] Network error wake-up retry failed:', wakeErr.message);
           }
         }
 
-        const errorMsg = data.message || data.error || (typeof data === 'string' ? data : null) || `Request failed with status ${res.status}`;
-        const error = new Error(errorMsg);
-        error.response = data;
-        error.status = res.status;
-        throw error;
-      }
-
-      return data;
-    } catch (err) {
-      if (err.name === 'AbortError') {
         throw err;
       }
-
-      const isNetworkError = err.message && (
-        err.message.includes('Failed to fetch') ||
-        err.message.includes('NetworkError') ||
-        err.message.includes('ECONNREFUSED') ||
-        err.message.includes('timeout')
-      );
-
-      if (isNetworkError && (attempt < 3) && ((Date.now() - startTime) < maxTotalTimeMs)) {
-        attempt++;
-        setMLReadyState(false);
-        if (onProgress) {
-          onProgress({
-            attempt,
-            maxAttempts: maxRetries,
-            elapsedSec: Math.round((Date.now() - startTime) / 1000),
-            statusMsg: "AI service is waking up from standby (~20–30s)..."
-          });
-        }
-        try {
-          await ensureMLServiceReady({
-            timeoutMs: Math.max(15000, maxTotalTimeMs - (Date.now() - startTime)),
-            onProgress,
-            signal,
-            force: true
-          });
-          continue;
-        } catch (wakeErr) {
-          console.warn('[fetchWithRetry] Network error wake-up retry failed:', wakeErr.message);
-        }
-      }
-
-      throw err;
     }
+  } finally {
+    stopProgressTimer();
   }
 
   throw new Error('AI microservice request timed out while waking up from standby. Please try again.');

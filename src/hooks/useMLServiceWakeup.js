@@ -50,14 +50,17 @@ export function useMLServiceWakeup(options = {}) {
   const lastThrottleWriteRef = useRef(0);
   const lastHeartbeatTimeRef = useRef(0);
 
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
   // Status transition helper with callback notification
-  const updateStatus = useCallback((newStatus, err = null) => {
+  const updateStatus = useCallback((newStatus, err = null, info = null) => {
     if (!isMountedRef.current) return;
     setStatus(newStatus);
     if (err) setError(err);
     if (onStatusChange) {
       try {
-        onStatusChange(newStatus, err);
+        onStatusChange(newStatus, err, info);
       } catch (cbErr) {
         console.warn('[useMLServiceWakeup] onStatusChange error:', cbErr);
       }
@@ -70,22 +73,39 @@ export function useMLServiceWakeup(options = {}) {
    * Reuses the shared singleton promise so no duplicate or aborted requests occur.
    */
   const wakeUp = useCallback(async (wakeOptions = { silent: true }) => {
-    if (status === 'ready') return { online: true, status: 'ready' };
+    if (statusRef.current === 'ready' && isMLReady() && !wakeOptions.force) {
+      return { online: true, status: 'ready' };
+    }
 
     if (!wakeOptions.silent) {
-      updateStatus('warming');
+      updateStatus('warming', null, {
+        attempt: 1,
+        maxAttempts: 1,
+        elapsedSec: 0,
+        statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+      });
     }
 
     try {
       const res = await apiService.ensureMLReady({
         timeoutMs: wakeOptions.timeoutMs || 50000,
-        onProgress: wakeOptions.onProgress || null
+        onProgress: (info) => {
+          if (wakeOptions.onProgress) wakeOptions.onProgress(info);
+          if (!wakeOptions.silent && info) {
+            updateStatus('warming', null, info);
+          }
+        },
+        force: Boolean(wakeOptions.force)
       });
 
       if (!isMountedRef.current) return res;
 
       if (res && res.online) {
-        updateStatus('ready');
+        const now = Date.now();
+        lastHeartbeatTimeRef.current = now;
+        setLastHeartbeat(now);
+        setMLReadyState(true);
+        updateStatus('ready', null, { isComplete: true, statusMsg: '✓ AI service is ready!' });
         return res;
       }
       return res;
@@ -99,7 +119,7 @@ export function useMLServiceWakeup(options = {}) {
       }
       return { online: false, status: 'warming' };
     }
-  }, [status, updateStatus]);
+  }, [updateStatus]);
 
   /**
    * Single heartbeat ping
@@ -201,12 +221,18 @@ export function useMLServiceWakeup(options = {}) {
             try { onIdleChange(false); } catch (e) {}
           }
 
-          // If user returned after 12+ minutes of dormancy, Render container has spun down to sleep
+          // If user returned after 10+ minutes of dormancy or ML not ready, Render container has spun down to sleep
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
+          if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
             setMLReadyState(false);
-            updateStatus('idle');
-          } else if (document.visibilityState === 'visible' && timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+            updateStatus('warming', null, {
+              attempt: 1,
+              maxAttempts: 1,
+              elapsedSec: 0,
+              statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+            });
+            wakeUp({ silent: false, force: true }).catch(() => {});
+          } else if (document.visibilityState === 'visible' && timeSinceLastHeartbeat >= 6 * 60 * 1000) {
             pingHeartbeat();
           }
         }
@@ -235,13 +261,13 @@ export function useMLServiceWakeup(options = {}) {
         return isCurrentlyIdle;
       });
 
-      // If user has been idle for >= 12 minutes (or no heartbeat in >= 12 mins),
+      // If user has been idle for >= 10 minutes (or no heartbeat in >= 10 mins),
       // the Render container has entered or is entering sleep mode.
       // Invalidate confirmed ready state so next AI interaction prompts pre-warming.
       const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-      if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
+      if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
         setMLReadyState(false);
-        if (status === 'ready') {
+        if (statusRef.current === 'ready') {
           updateStatus('idle');
         }
       }
@@ -287,11 +313,17 @@ export function useMLServiceWakeup(options = {}) {
         const sessionElapsed = now - sessionStartRef.current;
         if (sessionElapsed <= MAX_SESSION_DURATION_MS) {
           const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-          if (timeSinceLastHeartbeat >= 12 * 60 * 1000) {
-            // Container slept while away: invalidate ready cache
+          if (timeSinceLastHeartbeat >= 10 * 60 * 1000 || !isMLReady()) {
+            // Container slept while away in another tab!
             setMLReadyState(false);
-            updateStatus('idle');
-          } else if (timeSinceLastHeartbeat >= 8 * 60 * 1000) {
+            updateStatus('warming', null, {
+              attempt: 1,
+              maxAttempts: 1,
+              elapsedSec: 0,
+              statusMsg: 'AI Service is waking up from standby (~20–30s)...'
+            });
+            wakeUp({ silent: false, force: true }).catch(() => {});
+          } else if (timeSinceLastHeartbeat >= 6 * 60 * 1000) {
             pingHeartbeat();
           }
         }
@@ -314,7 +346,7 @@ export function useMLServiceWakeup(options = {}) {
       });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isEditingSession, wakeUp, pingHeartbeat, onIdleChange, onVisibilityChange, status, updateStatus]);
+  }, [isEditingSession, wakeUp, pingHeartbeat, onIdleChange, onVisibilityChange, updateStatus]);
 
   return {
     status,
