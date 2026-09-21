@@ -199,7 +199,10 @@ router.post("/logout", requireAuth, async (req, res) => {
   const dbReady = await ensureDatabase(res);
   if (!dbReady) return;
   try {
-    await User.findByIdAndUpdate(req.user._id, { isLoggedIn: false, lastActiveAt: null });
+    await User.findByIdAndUpdate(req.user._id, {
+      isLoggedIn: false,
+      lastActiveAt: new Date(),
+    });
     clearAuthCookie(res);
     return res.status(200).json({ message: "Logged out successfully." });
   } catch {
@@ -228,6 +231,7 @@ router.get("/me", requireAuth, (req, res) => {
       role: req.user.role || "user",
       isLoggedIn: req.user.isLoggedIn || false,
       lastLoginAt: req.user.lastLoginAt || null,
+      lastActiveAt: req.user.lastActiveAt || null,
       createdAt: req.user.createdAt,
     },
   });
@@ -301,6 +305,7 @@ router.get("/admin/users", async (req, res) => {
         role: item.role || "user",
         isLoggedIn: isActuallyOnline,
         lastLoginAt: item.lastLoginAt || null,
+        lastActiveAt: item.lastActiveAt || item.lastLoginAt || null,
         createdAt: item.createdAt,
       };
     });

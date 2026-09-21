@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { apiService } from "../../services/apiService";
+import { formatTimeAgo, formatDetailedDateTime } from "../../utils/timeAgo";
 import {
   Calendar,
   UserPlus,
@@ -1714,7 +1715,10 @@ export default function AdminDashboard() {
                                 Admin
                               </span>
                             ) : u.isLoggedIn ? (
-                              <span className="bg-emerald-100 text-emerald-800 text-[11px] px-3 py-1 rounded-full font-black inline-flex items-center gap-1.5 border border-emerald-300">
+                              <span
+                                className="bg-emerald-100 text-emerald-800 text-[11px] px-3 py-1 rounded-full font-black inline-flex items-center gap-1.5 border border-emerald-300 shadow-xs"
+                                title="Active right now"
+                              >
                                 <span className="relative flex h-2 w-2">
                                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -1722,9 +1726,27 @@ export default function AdminDashboard() {
                                 Online
                               </span>
                             ) : (
-                              <span className="bg-gray-100 text-gray-500 text-[11px] px-3 py-1 rounded-full font-bold inline-flex items-center gap-1.5 border border-gray-200">
+                              <span
+                                className="bg-gray-100 text-gray-600 text-[11px] px-3 py-1 rounded-full font-semibold inline-flex items-center gap-1.5 border border-gray-200"
+                                title={u.lastActiveAt ? `Last active: ${formatDetailedDateTime(u.lastActiveAt)}` : "No activity recorded yet"}
+                              >
                                 <span className="h-2 w-2 rounded-full bg-gray-400"></span>
-                                Offline
+                                <span>Offline</span>
+                                {u.lastActiveAt ? (
+                                  <>
+                                    <span className="text-gray-300 font-bold">·</span>
+                                    <span className="text-gray-500 font-medium">
+                                      {formatTimeAgo(u.lastActiveAt)}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-gray-300 font-bold">·</span>
+                                    <span className="text-gray-400 font-normal italic">
+                                      Never
+                                    </span>
+                                  </>
+                                )}
                               </span>
                             )}
                           </td>
