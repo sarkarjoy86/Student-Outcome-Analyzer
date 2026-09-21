@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { apiService } from "../../services/apiService";
 import { formatTimeAgo, formatDetailedDateTime } from "../../utils/timeAgo";
+import AdminProfileAvatar from "../layout/AdminProfileAvatar";
 import {
   Calendar,
   UserPlus,
@@ -39,6 +40,7 @@ import {
   ShieldCheck,
   UserCheck,
   User,
+  Search,
 } from "lucide-react";
 
 export default function AdminDashboard() {
@@ -83,6 +85,16 @@ export default function AdminDashboard() {
 
   const [editingTeacher, setEditingTeacher] = useState(null);
   const [editTeacherForm, setEditTeacherForm] = useState({ fullName: "", emailPrefix: "" });
+
+  const [facultySearchQuery, setFacultySearchQuery] = useState("");
+  const [facultySortBy, setFacultySortBy] = useState(() => {
+    return localStorage.getItem("adminFacultySort") || "recent";
+  });
+
+  const handleFacultySortChange = (newSort) => {
+    setFacultySortBy(newSort);
+    localStorage.setItem("adminFacultySort", newSort);
+  };
 
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -161,8 +173,12 @@ export default function AdminDashboard() {
   });
   const [editingOfferingId, setEditingOfferingId] = useState(null);
   const [offeringFilterSemester, setOfferingFilterSemester] = useState("current");
-  const [offeringFilterTerm, setOfferingFilterTerm] = useState("ALL");
+  const [offeringFilterSemesterName, setOfferingFilterSemesterName] = useState("ALL");
   const [offeringFilterYear, setOfferingFilterYear] = useState("ALL");
+  const [offeringFilterLevel, setOfferingFilterLevel] = useState("ALL");
+  const [offeringFilterCourseTerm, setOfferingFilterCourseTerm] = useState("ALL");
+  const [offeringCourseLevelFilter, setOfferingCourseLevelFilter] = useState("ALL");
+  const [offeringCourseTermFilter, setOfferingCourseTermFilter] = useState("ALL");
   const [offeringMode, setOfferingMode] = useState("create"); // 'create' | 'replace'
   const [replaceOfferingForm, setReplaceOfferingForm] = useState({
     offeringId: "",
@@ -267,11 +283,33 @@ export default function AdminDashboard() {
     }
     if (activeTab === "courseOfferings") {
       fetchOfferings();
+      fetchSessions();
+      fetchCourses();
+      fetchBatches();
     }
     if (activeTab === "requests") {
       fetchCOPORequests();
     }
   }, [activeTab, requestFilterStatus]);
+
+  // Keep offeringForm synced with the active session when not in edit mode
+  useEffect(() => {
+    if (!editingOfferingId && sessions.length > 0) {
+      const activeSes = sessions.find((s) => s.status === "active");
+      if (activeSes) {
+        setOfferingForm((prev) => {
+          if (prev.semesterId !== activeSes._id || prev.academicYear !== String(activeSes.academicYear)) {
+            return {
+              ...prev,
+              semesterId: activeSes._id,
+              academicYear: String(activeSes.academicYear),
+            };
+          }
+          return prev;
+        });
+      }
+    }
+  }, [sessions, editingOfferingId]);
 
   useEffect(() => {
     if (selectedCourse) {
@@ -1219,13 +1257,17 @@ export default function AdminDashboard() {
 
   const handleCreateOffering = async (e) => {
     e.preventDefault();
+    const activeSes = sessions.find((s) => s.status === "active");
+    const semesterIdToUse = offeringForm.semesterId || (activeSes ? activeSes._id : "");
+    const academicYearToUse = offeringForm.academicYear || (activeSes ? String(activeSes.academicYear) : "");
+
     if (
       !offeringForm.courseId ||
       !offeringForm.batchId ||
       !offeringForm.teacherId ||
-      !offeringForm.semesterId ||
+      !semesterIdToUse ||
       !offeringForm.section.trim() ||
-      !offeringForm.academicYear
+      !academicYearToUse
     ) {
       alert("Please fill all course offering fields.");
       return;
@@ -1241,9 +1283,9 @@ export default function AdminDashboard() {
         courseId: offeringForm.courseId,
         batchId: offeringForm.batchId,
         teacherId: offeringForm.teacherId,
-        semesterId: offeringForm.semesterId,
+        semesterId: semesterIdToUse,
         section: offeringForm.section.trim(),
-        academicYear: parseInt(offeringForm.academicYear, 10),
+        academicYear: parseInt(academicYearToUse, 10),
       };
 
       if (
@@ -1269,9 +1311,9 @@ export default function AdminDashboard() {
         courseId: "",
         batchId: "",
         teacherId: "",
-        semesterId: "",
+        semesterId: activeSes ? activeSes._id : "",
         section: "",
-        academicYear: new Date().getFullYear(),
+        academicYear: activeSes ? String(activeSes.academicYear) : new Date().getFullYear(),
       });
       setOfferingSections([]);
       fetchOfferings();
@@ -1331,7 +1373,7 @@ export default function AdminDashboard() {
     return true; // 'all'
   });
 
-  // Dynamically extract available years and terms strictly from relevant offerings!
+  // Dynamically extract available years and semesters strictly from relevant offerings!
   const availableAdminYears = Array.from(
     new Set(
       relevantAdminOfferings
@@ -1340,7 +1382,7 @@ export default function AdminDashboard() {
     )
   ).sort((a, b) => b - a);
 
-  const availableAdminTerms = Array.from(
+  const availableAdminSemesters = Array.from(
     new Set(
       relevantAdminOfferings
         .map((o) => {
@@ -1352,18 +1394,56 @@ export default function AdminDashboard() {
     )
   ).sort();
 
+  // Extract available course levels and terms from offerings
+  const availableOfferingLevels = Array.from(
+    new Set(
+      relevantAdminOfferings
+        .map((o) => {
+          const c = o.course?._id ? o.course : courses.find((crs) => String(crs._id) === String(o.course));
+          return c?.level ? String(c.level) : null;
+        })
+        .filter(Boolean)
+    )
+  ).sort((a, b) => Number(a) - Number(b));
+
+  const availableOfferingCourseTerms = Array.from(
+    new Set(
+      relevantAdminOfferings
+        .map((o) => {
+          const c = o.course?._id ? o.course : courses.find((crs) => String(crs._id) === String(o.course));
+          return c?.term ? String(c.term).toUpperCase() : null;
+        })
+        .filter(Boolean)
+    )
+  ).sort();
+
   // Final filtered list of offerings for Admin Dashboard directory view
   const filteredAdminOfferings = relevantAdminOfferings.filter((offering) => {
-    // Sub-Filter: Term (Spring, Fall, Summer, etc.)
-    if (offeringFilterSemester !== 'current' && offeringFilterTerm !== 'ALL') {
-      const termName = (offering.semester?.semesterName || '').toLowerCase();
-      if (termName !== offeringFilterTerm.toLowerCase()) return false;
+    // 1. Semester Name Filter (Spring, Fall, Summer, etc.) - only active for Completed or All Semesters
+    if (offeringFilterSemester !== 'current' && offeringFilterSemesterName !== 'ALL') {
+      const sName = (offering.semester?.semesterName || '').toLowerCase();
+      if (sName !== offeringFilterSemesterName.toLowerCase()) return false;
     }
 
-    // Sub-Filter: Year (2026, 2025, etc.)
+    // 2. Year Filter (2026, 2025, etc.) - only active for Completed or All Semesters
     if (offeringFilterSemester !== 'current' && offeringFilterYear !== 'ALL') {
       const yr = String(offering.academicYear || offering.semester?.academicYear || '');
       if (yr !== String(offeringFilterYear)) return false;
+    }
+
+    // Resolve course
+    const c = offering.course?._id ? offering.course : courses.find((crs) => String(crs._id) === String(offering.course));
+
+    // 3. Level Filter (1, 2, 3, 4) - active in ALL modes
+    if (offeringFilterLevel !== 'ALL') {
+      const lvl = String(c?.level || '');
+      if (lvl !== String(offeringFilterLevel)) return false;
+    }
+
+    // 4. Course Term Filter (I, II) - active in ALL modes
+    if (offeringFilterCourseTerm !== 'ALL') {
+      const trm = String(c?.term || '').toUpperCase();
+      if (trm !== String(offeringFilterCourseTerm).toUpperCase()) return false;
     }
 
     return true;
@@ -1382,10 +1462,50 @@ export default function AdminDashboard() {
     return true;
   });
 
+  // Filtered and sorted faculty list for Registered Faculty Accounts table
+  const processedFacultyList = useMemo(() => {
+    let list = [...users];
+
+    if (facultySearchQuery.trim()) {
+      const q = facultySearchQuery.trim().toLowerCase();
+      list = list.filter(
+        (u) =>
+          (u.fullName || "").toLowerCase().includes(q) ||
+          (u.email || "").toLowerCase().includes(q)
+      );
+    }
+
+    if (facultySortBy === "name_asc") {
+      list.sort((a, b) => (a.fullName || "").localeCompare(b.fullName || ""));
+    } else if (facultySortBy === "name_desc") {
+      list.sort((a, b) => (b.fullName || "").localeCompare(a.fullName || ""));
+    } else if (facultySortBy === "newest") {
+      list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    } else {
+      // "recent": Currently online first, then by lastActiveAt descending
+      list.sort((a, b) => {
+        if (a.isLoggedIn && !b.isLoggedIn) return -1;
+        if (!a.isLoggedIn && b.isLoggedIn) return 1;
+        const timeA = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
+        const timeB = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
+
+    return list;
+  }, [users, facultySearchQuery, facultySortBy]);
+
+  // Master courses filtered by Level & Term for Create Course Offering form
+  const selectableMasterCourses = courses.filter((c) => {
+    if (offeringCourseLevelFilter !== "ALL" && String(c.level || "1") !== String(offeringCourseLevelFilter)) return false;
+    if (offeringCourseTermFilter !== "ALL" && String(c.term || "I").toUpperCase() !== String(offeringCourseTermFilter).toUpperCase()) return false;
+    return true;
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-blue-50/20 p-8">
       <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-lg border border-gray-200/50 mb-8">
+        <div className="relative z-30 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-lg border border-gray-200/50 mb-8">
           <div>
             <h1 className="text-3xl font-extrabold bg-gradient-to-r from-blue-700 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
               OBE Admin Panel
@@ -1394,14 +1514,7 @@ export default function AdminDashboard() {
               Manage master data, course offerings, and teacher accounts
             </p>
           </div>
-          <button
-            onClick={logout}
-            disabled={actionLoading}
-            className="flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white px-5 py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50"
-          >
-            <LogOut size={18} />
-            Logout
-          </button>
+          <AdminProfileAvatar />
         </div>
 
         <div className="flex items-center justify-between gap-1 mb-8 bg-gray-200/50 p-1.5 rounded-xl border border-gray-300/30 overflow-x-auto">
@@ -1664,25 +1777,61 @@ export default function AdminDashboard() {
 
             {/* Registered Teachers Table */}
             <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-150 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-150 pb-4 gap-3">
                 <div>
                   <h2 className="text-lg font-extrabold text-gray-900">
                     Registered Faculty Accounts
                   </h2>
                   <p className="text-xs text-gray-500 font-medium">Live login status updates automatically every 5 seconds</p>
                 </div>
-                <button
-                  onClick={() => loadAdminUsers && loadAdminUsers()}
-                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold border border-gray-200 transition"
-                >
-                  Refresh Live Status
-                </button>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Search Input Box */}
+                  <div className="relative">
+                    <Search
+                      size={13}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                    />
+                    <input
+                      type="text"
+                      value={facultySearchQuery}
+                      onChange={(e) => setFacultySearchQuery(e.target.value)}
+                      placeholder="Search by name or email..."
+                      className="pl-8 pr-7 py-1.5 bg-gray-50/80 border border-gray-200 rounded-xl text-xs font-semibold text-gray-800 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400 transition w-44 sm:w-56"
+                    />
+                    {facultySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setFacultySearchQuery("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Sort Dropdown */}
+                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-gray-200 shadow-2xs">
+                    <span className="text-[11px] font-bold text-gray-500">Sort:</span>
+                    <select
+                      value={facultySortBy}
+                      onChange={(e) => handleFacultySortChange(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-gray-800 focus:outline-none cursor-pointer"
+                    >
+                      <option value="recent">Recently Active</option>
+                      <option value="name_asc">Name (A — Z)</option>
+                      <option value="name_desc">Name (Z — A)</option>
+                      <option value="newest">Newest First</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <div className="overflow-x-auto max-h-[385px] overflow-y-auto rounded-xl border border-gray-200 shadow-2xs">
                 <table className="w-full text-xs font-semibold text-gray-700">
-                  <thead>
-                    <tr className="bg-gray-100/80 border-b border-gray-200 text-gray-600 font-bold uppercase tracking-wider">
+                  <thead className="sticky top-0 bg-gray-100/95 backdrop-blur-xs z-10 shadow-2xs">
+                    <tr className="border-b border-gray-200 text-gray-600 font-bold uppercase tracking-wider">
                       <th className="text-left py-3 px-4">Faculty Member</th>
                       <th className="text-left py-3 px-4">Email Address</th>
                       <th className="text-center py-3 px-4">Live Status</th>
@@ -1690,17 +1839,17 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {users.length === 0 ? (
+                    {processedFacultyList.length === 0 ? (
                       <tr>
                         <td
                           colSpan="4"
                           className="text-center py-8 text-gray-400 italic"
                         >
-                          No teacher accounts registered yet.
+                          {facultySearchQuery ? "No faculty members match your search." : "No teacher accounts registered yet."}
                         </td>
                       </tr>
                     ) : (
-                      users.map((u) => (
+                      processedFacultyList.map((u) => (
                         <tr
                           key={u.email}
                           className="hover:bg-gray-50/50 transition-colors"
@@ -3511,9 +3660,35 @@ export default function AdminDashboard() {
                   className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
                 >
                   <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                      Master Course
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                        Master Course <span className="text-red-500">*</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={offeringCourseLevelFilter}
+                          onChange={(e) => setOfferingCourseLevelFilter(e.target.value)}
+                          className="text-[11px] font-bold bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg px-2 py-0.5 outline-none cursor-pointer"
+                          title="Filter courses by Level"
+                        >
+                          <option value="ALL">All Levels</option>
+                          <option value="1">Level 1</option>
+                          <option value="2">Level 2</option>
+                          <option value="3">Level 3</option>
+                          <option value="4">Level 4</option>
+                        </select>
+                        <select
+                          value={offeringCourseTermFilter}
+                          onChange={(e) => setOfferingCourseTermFilter(e.target.value)}
+                          className="text-[11px] font-bold bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg px-2 py-0.5 outline-none cursor-pointer"
+                          title="Filter courses by Term"
+                        >
+                          <option value="ALL">All Terms</option>
+                          <option value="I">Term I</option>
+                          <option value="II">Term II</option>
+                        </select>
+                      </div>
+                    </div>
                     <select
                       value={offeringForm.courseId}
                       onChange={(e) =>
@@ -3525,12 +3700,24 @@ export default function AdminDashboard() {
                       }
                       className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
                     >
-                      <option value="">Select course</option>
-                      {courses.map((course) => (
+                      <option value="">
+                        Select course ({selectableMasterCourses.length} available)
+                      </option>
+                      {selectableMasterCourses.map((course) => (
                         <option key={course._id} value={course._id}>
-                          {course.courseCode} — {course.courseName}
+                          {course.courseCode} — {course.courseName} (L-{course.level || 1} T-{course.term || "I"})
                         </option>
                       ))}
+                      {offeringForm.courseId && !selectableMasterCourses.some((c) => String(c._id) === String(offeringForm.courseId)) && (
+                        (() => {
+                          const currentSelected = courses.find((c) => String(c._id) === String(offeringForm.courseId));
+                          return currentSelected ? (
+                            <option key={currentSelected._id} value={currentSelected._id}>
+                              {currentSelected.courseCode} — {currentSelected.courseName} (L-{currentSelected.level || 1} T-{currentSelected.term || "I"})
+                            </option>
+                          ) : null;
+                        })()
+                      )}
                     </select>
                   </div>
 
@@ -3617,38 +3804,21 @@ export default function AdminDashboard() {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
-                        Academic Session
-                      </label>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                        Active Session Only
-                      </span>
-                    </div>
-                    <select
-                      value={offeringForm.semesterId}
-                      onChange={(e) => {
-                        const selectedSemId = e.target.value;
-                        const selectedSem = sessions.find((s) => s._id === selectedSemId);
-                        setOfferingForm({
-                          ...offeringForm,
-                          semesterId: selectedSemId,
-                          section: "", // reset section to re-validate availability
-                          academicYear: selectedSem ? String(selectedSem.academicYear) : offeringForm.academicYear,
-                        });
-                      }}
-                      className="w-full border border-gray-300 px-4 py-2.5 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-600 outline-none text-xs font-semibold bg-gray-50/30"
-                      required
-                    >
-                      <option value="">Select active session</option>
-                      {sessions
-                        .filter((s) => s.status === "active" || (editingOfferingId && s._id === offeringForm.semesterId))
-                        .map((session) => (
-                          <option key={session._id} value={session._id}>
-                            {session.semesterName} ({session.academicYear}) {session.status === "active" ? "— Active" : `— ${session.status}`}
-                          </option>
-                        ))}
-                    </select>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Academic Session
+                    </label>
+                    <input
+                      type="text"
+                      value={
+                        (() => {
+                          const ses = sessions.find((s) => s._id === offeringForm.semesterId) || sessions.find((s) => s.status === "active");
+                          return ses ? `${ses.semesterName} (${ses.academicYear})` : "No active session";
+                        })()
+                      }
+                      readOnly
+                      placeholder="Auto-assigned active session"
+                      className="w-full border border-gray-200 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 cursor-not-allowed select-none outline-none"
+                    />
                     {sessions.filter((s) => s.status === "active").length === 0 && (
                       <p className="text-[11px] text-amber-700 mt-1 font-semibold">
                         ⚠️ No active session found. Please activate a session in the Sessions tab.
@@ -3742,14 +3912,15 @@ export default function AdminDashboard() {
                       <button
                         type="button"
                         onClick={() => {
+                          const activeSes = sessions.find((s) => s.status === "active");
                           setEditingOfferingId(null);
                           setOfferingForm({
                             courseId: "",
                             batchId: "",
                             teacherId: "",
-                            semesterId: "",
+                            semesterId: activeSes ? activeSes._id : "",
                             section: "",
-                            academicYear: new Date().getFullYear(),
+                            academicYear: activeSes ? String(activeSes.academicYear) : new Date().getFullYear(),
                           });
                           setOfferingSections([]);
                         }}
@@ -3765,73 +3936,19 @@ export default function AdminDashboard() {
 
             {/* Existing Course Offerings Directory */}
             <div className="bg-white p-7 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-gray-150 pb-4">
-                <div>
-                  <h2 className="text-lg font-extrabold text-gray-900">
-                    {offeringFilterSemester === 'current'
-                      ? 'Active Course Offerings'
-                      : offeringFilterSemester === 'completed'
-                      ? 'Completed Course Offerings'
-                      : 'All Course Offerings'}
-                  </h2>
-                  <p className="text-xs text-gray-500 font-semibold">Configured offerings for student enrollment and assessment</p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Primary Filter Selector */}
-                  <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl shadow-xs border border-gray-200 text-gray-700 font-semibold focus-within:border-orange-400 transition-all select-none">
-                    <Filter className="text-orange-600" size={15} />
-                    <select
-                      value={offeringFilterSemester}
-                      onChange={(e) => {
-                        setOfferingFilterSemester(e.target.value);
-                        if (e.target.value === 'current') {
-                          setOfferingFilterTerm('ALL');
-                          setOfferingFilterYear('ALL');
-                        }
-                      }}
-                      className="bg-transparent text-xs font-extrabold focus:outline-none cursor-pointer text-gray-800"
-                    >
-                      <option value="current">Current Semesters</option>
-                      <option value="completed">Completed Semesters</option>
-                      <option value="all">All Semesters</option>
-                    </select>
+              <div className="border-b border-gray-150 pb-4 space-y-3">
+                {/* Top Row: Title + Subtitle on Left, Refresh Icon Button in the Top Corner on Right */}
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-gray-900">
+                      {offeringFilterSemester === 'current'
+                        ? 'Active Course Offerings'
+                        : offeringFilterSemester === 'completed'
+                        ? 'Completed Course Offerings'
+                        : 'All Course Offerings'}
+                    </h2>
+                    <p className="text-xs text-gray-500 font-semibold">Configured offerings for student enrollment and assessment</p>
                   </div>
-
-                  {/* Sub-Filters (Term & Year for Completed or All Semesters) */}
-                  {offeringFilterSemester !== 'current' && (
-                    <div className="flex flex-wrap items-center gap-2 animate-fadeIn">
-                      {/* Term Dropdown */}
-                      <div className="flex items-center gap-1.5 bg-orange-50/80 px-3 py-2 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
-                        <span className="text-orange-700 font-bold">Term:</span>
-                        <select
-                          value={offeringFilterTerm}
-                          onChange={(e) => setOfferingFilterTerm(e.target.value)}
-                          className="bg-transparent text-xs font-extrabold text-orange-950 focus:outline-none cursor-pointer"
-                        >
-                          <option value="ALL">All Terms</option>
-                          {availableAdminTerms.map((t) => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Year Dropdown */}
-                      <div className="flex items-center gap-1.5 bg-orange-50/80 px-3 py-2 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
-                        <span className="text-orange-700 font-bold">Year:</span>
-                        <select
-                          value={offeringFilterYear}
-                          onChange={(e) => setOfferingFilterYear(e.target.value)}
-                          className="bg-transparent text-xs font-extrabold text-orange-950 focus:outline-none cursor-pointer"
-                        >
-                          <option value="ALL">All Years</option>
-                          {availableAdminYears.map((y) => (
-                            <option key={y} value={y}>{y}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
 
                   <button
                     type="button"
@@ -3839,15 +3956,102 @@ export default function AdminDashboard() {
                       apiService.clearCache();
                       fetchOfferings();
                     }}
-                    className="p-2 bg-white hover:bg-gray-50 text-gray-700 rounded-xl border border-gray-200 shadow-xs text-xs font-bold transition flex items-center gap-1.5 cursor-pointer select-none"
+                    className="p-2 bg-gray-50 hover:bg-orange-50 text-gray-500 hover:text-orange-600 rounded-xl border border-gray-200 shadow-2xs transition cursor-pointer select-none"
                     title="Refresh Course Offerings from Database"
                   >
-                    <RefreshCw size={13} className={offeringsLoading ? "animate-spin text-orange-600" : "text-gray-500"} />
-                    <span className="text-xs font-bold">Refresh</span>
+                    <RefreshCw size={14} className={offeringsLoading ? "animate-spin text-orange-600" : ""} />
                   </button>
+                </div>
 
-                  <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1.5 rounded-full border border-orange-200">
-                    {filteredAdminOfferings.length} {offeringFilterSemester === 'current' ? 'Active' : offeringFilterSemester === 'completed' ? 'Completed' : 'Total'} Offerings
+                {/* Filter Controls Row: Semester, Term, Year and Course Count Badge */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Primary Filter Selector */}
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl shadow-xs border border-gray-200 text-gray-700 font-semibold focus-within:border-orange-400 transition-all select-none">
+                      <Filter className="text-orange-600" size={13} />
+                      <select
+                        value={offeringFilterSemester}
+                        onChange={(e) => {
+                          setOfferingFilterSemester(e.target.value);
+                          setOfferingFilterSemesterName('ALL');
+                          setOfferingFilterYear('ALL');
+                          setOfferingFilterLevel('ALL');
+                          setOfferingFilterCourseTerm('ALL');
+                        }}
+                        className="bg-transparent text-xs font-bold focus:outline-none cursor-pointer text-gray-800"
+                      >
+                        <option value="current">Current Semesters</option>
+                        <option value="completed">Completed Semesters</option>
+                        <option value="all">All Semesters</option>
+                      </select>
+                    </div>
+
+                    {/* Sub-Filters: Semester & Year Dropdowns (Only shown when Completed or All Semesters is active) */}
+                    {offeringFilterSemester !== 'current' && (
+                      <>
+                        <div className="flex items-center gap-1.5 bg-orange-50/80 px-2.5 py-1.5 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
+                          <span className="text-orange-700 font-bold">Semester:</span>
+                          <select
+                            value={offeringFilterSemesterName}
+                            onChange={(e) => setOfferingFilterSemesterName(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-orange-950 focus:outline-none cursor-pointer"
+                          >
+                            <option value="ALL">All Semesters</option>
+                            {(availableAdminSemesters.length > 0 ? availableAdminSemesters : ['Spring', 'Fall', 'Summer']).map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 bg-orange-50/80 px-2.5 py-1.5 rounded-xl border border-orange-200 text-orange-950 text-xs font-bold shadow-xs">
+                          <span className="text-orange-700 font-bold">Year:</span>
+                          <select
+                            value={offeringFilterYear}
+                            onChange={(e) => setOfferingFilterYear(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-orange-950 focus:outline-none cursor-pointer"
+                          >
+                            <option value="ALL">All Years</option>
+                            {(availableAdminYears.length > 0 ? availableAdminYears : [2026, 2025]).map((y) => (
+                              <option key={y} value={y}>{y}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Sub-Filters: Level & Term Dropdowns (Available for Current, Completed, and All Semesters) */}
+                    <div className="flex items-center gap-1.5 bg-emerald-50/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 text-emerald-950 text-xs font-bold shadow-xs">
+                      <span className="text-emerald-700 font-bold">Level:</span>
+                      <select
+                        value={offeringFilterLevel}
+                        onChange={(e) => setOfferingFilterLevel(e.target.value)}
+                        className="bg-transparent text-xs font-bold text-emerald-950 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Levels</option>
+                        {(availableOfferingLevels.length > 0 ? availableOfferingLevels : ['1', '2', '3', '4']).map((lvl) => (
+                          <option key={lvl} value={lvl}>Level {lvl}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-emerald-50/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 text-emerald-950 text-xs font-bold shadow-xs">
+                      <span className="text-emerald-700 font-bold">Term:</span>
+                      <select
+                        value={offeringFilterCourseTerm}
+                        onChange={(e) => setOfferingFilterCourseTerm(e.target.value)}
+                        className="bg-transparent text-xs font-bold text-emerald-950 focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Terms</option>
+                        {(availableOfferingCourseTerms.length > 0 ? availableOfferingCourseTerms : ['I', 'II']).map((trm) => (
+                          <option key={trm} value={trm}>Term {trm}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Course Count Badge */}
+                  <span className="bg-orange-50 text-orange-800 text-xs font-bold px-3 py-1.5 rounded-full border border-orange-200 shadow-2xs whitespace-nowrap">
+                    {filteredAdminOfferings.length} Courses
                   </span>
                 </div>
               </div>
