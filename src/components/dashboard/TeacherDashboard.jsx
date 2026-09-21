@@ -47,7 +47,15 @@ import ErrorBoundary from '../ErrorBoundary'
 export const preloadQuestionPaperEditor = () => {
   import('../marks/QuestionPaperEditor').catch(() => {})
 }
-const QuestionPaperEditor = lazy(() => import('../marks/QuestionPaperEditor'))
+const QuestionPaperEditor = lazy(async () => {
+  try {
+    return await import('../marks/QuestionPaperEditor')
+  } catch (err) {
+    console.warn('Initial QuestionPaperEditor chunk load failed, retrying in 800ms...', err)
+    await new Promise(r => setTimeout(r, 800))
+    return await import('../marks/QuestionPaperEditor')
+  }
+})
 const ComprehensiveReports = lazy(() => import('../reports/ComprehensiveReports'))
 const CourseSurvey = lazy(() => import('../survey/CourseSurvey'))
 const PORecommendationMatrix = lazy(() => import('../reports/PORecommendationMatrix'))
@@ -157,19 +165,14 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   useEffect(() => {
     if (activeTab === 'assessments') {
       wakeUpMLService({ silent: true })
+      preloadQuestionPaperEditor()
     }
   }, [activeTab, wakeUpMLService])
 
-  // Background Pre-fetching: Silently download QuestionPaperEditor bundle during idle time
+  // Background Pre-fetching: Immediately start downloading QuestionPaperEditor bundle
   // so when teacher clicks "Open Q.Paper", it opens in 0ms without any loading delay
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      const handle = window.requestIdleCallback(preloadQuestionPaperEditor, { timeout: 1500 })
-      return () => window.cancelIdleCallback && window.cancelIdleCallback(handle)
-    } else {
-      const timer = setTimeout(preloadQuestionPaperEditor, 500)
-      return () => clearTimeout(timer)
-    }
+    preloadQuestionPaperEditor()
   }, [])
 
   const fetchNotesStatus = useCallback(async () => {
@@ -2006,16 +2009,50 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     printWindow.document.close()
   }
 
+function EditorLoadingFallback() {
+  const [showSlowNotice, setShowSlowNotice] = useState(false)
+  const [showReload, setShowReload] = useState(false)
+
+  useEffect(() => {
+    const timer1 = setTimeout(() => setShowSlowNotice(true), 3000)
+    const timer2 = setTimeout(() => setShowReload(true), 10000)
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+    }
+  }, [])
+
+  return (
+    <div className="bg-white rounded-2xl shadow-md border border-gray-200/80 p-12 flex flex-col items-center justify-center gap-4 min-h-[50vh] text-center max-w-lg mx-auto my-12">
+      <div className="relative flex items-center justify-center">
+        <Loader2 className="animate-spin text-green-700" size={44} />
+      </div>
+      <div className="space-y-1">
+        <h3 className="text-gray-800 font-bold text-lg">Loading Question Paper Editor...</h3>
+        <p className="text-gray-500 text-sm font-medium">Preparing editor tools, math engines & formatting canvas</p>
+      </div>
+      {showSlowNotice && (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2.5 text-xs text-green-800 font-medium animate-fadeIn">
+          Loading editor assets from cloud. Opening shortly...
+        </div>
+      )}
+      {showReload && (
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+        >
+          Reload Page
+        </button>
+      )}
+    </div>
+  )
+}
+
   // If question paper editor is open, render it instead of the dashboard
   if (activeAssessmentForPaper) {
     return (
       <ErrorBoundary>
-        <Suspense fallback={
-          <div className="bg-white rounded-2xl shadow-md border p-16 flex flex-col items-center justify-center gap-4 min-h-[50vh]">
-            <Loader2 className="animate-spin text-green-700" size={40} />
-            <p className="text-gray-600 font-bold text-lg">Loading Question Paper Editor...</p>
-          </div>
-        }>
+        <Suspense fallback={<EditorLoadingFallback />}>
           <QuestionPaperEditor
             assessment={activeAssessmentForPaper}
             offering={offering}

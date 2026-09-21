@@ -76,7 +76,11 @@ export default function Dashboard({ onSelectOffering }) {
         .filter(Boolean)
     )
   ).sort()
- 
+  // Preload QuestionPaperEditor quietly in background so opening exams is instantaneous
+  useEffect(() => {
+    import('../marks/QuestionPaperEditor').catch(() => {})
+  }, [])
+
   // Filtering logic: In Current Semesters, it strictly locks to active offerings. In Completed or All, allows custom Term/Year filtering.
   const filteredOfferings = offerings.filter((offering) => {
     const isSemActive = offering.semester?.status === 'active';

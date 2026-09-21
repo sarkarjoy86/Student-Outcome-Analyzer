@@ -66,6 +66,16 @@ function App() {
     }
   }, [user, authLoading, selectedOffering]);
 
+  // Proactively preload QuestionPaperEditor bundle right after teacher login in background
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      const timer = setTimeout(() => {
+        import('./components/marks/QuestionPaperEditor').catch(() => {})
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [user]);
+
   // Clean up stale offering URL parameters if no offering is actively selected
   useEffect(() => {
     if (!selectedOffering) {
