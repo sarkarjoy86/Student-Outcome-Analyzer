@@ -600,7 +600,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
           </button>
           <button
             onClick={handleDownloadWordReport}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-md transition"
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs shadow-md transition border border-emerald-950/20"
           >
             <Download size={15} />
             Download Word (.doc)

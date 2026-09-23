@@ -280,7 +280,7 @@ export default function StudentManagement({ offering, onComplete }) {
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all"
+                  className="w-full bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white py-3 rounded-xl font-bold shadow-md hover:shadow-lg transition-all border border-emerald-950/20"
                 >
                   {actionLoading ? "Enrolling..." : "Enroll Student"}
                 </button>
@@ -349,7 +349,7 @@ export default function StudentManagement({ offering, onComplete }) {
                 <button
                   onClick={handleApplyImport}
                   disabled={actionLoading}
-                  className="w-full mt-4 bg-gradient-to-r from-green-600 to-green-700 text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
+                  className="w-full mt-4 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white py-3 rounded-xl font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 border border-emerald-950/20"
                 >
                   {actionLoading ? "Applying Import..." : "Apply Excel Import"}
                   <ArrowRight size={18} />
@@ -429,7 +429,7 @@ export default function StudentManagement({ offering, onComplete }) {
             <div className="flex justify-end pt-4">
               <button
                 onClick={onComplete}
-                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all font-semibold shadow-lg hover:shadow-xl transform hover:scale-102"
+                className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl transition-all font-bold shadow-md hover:shadow-lg transform hover:scale-102 border border-emerald-950/20"
               >
                 Continue to CO-PO Mapping
                 <ArrowRight size={20} />

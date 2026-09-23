@@ -815,7 +815,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
               <button
                 onClick={handleSaveNotes}
                 disabled={savingNotes}
-                className="flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-md transition active:scale-95 disabled:opacity-50"
+                className="flex items-center gap-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white font-bold px-5 py-2.5 rounded-xl shadow-md transition active:scale-95 disabled:opacity-50 border border-emerald-950/20"
               >
                 <Save className="w-4 h-4" />
                 {savingNotes ? 'Saving...' : 'Save Recommendation Remarks'}

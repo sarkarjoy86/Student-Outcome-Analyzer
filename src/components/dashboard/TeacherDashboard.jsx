@@ -2123,8 +2123,8 @@ function EditorLoadingFallback() {
               key={tab.id}
               onClick={() => handleSelectTab(tab.id)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all cursor-pointer ${isActive
-                ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-md'
-                : 'text-gray-600 hover:bg-green-50 hover:text-green-700'
+                ? 'bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 text-white shadow-md border border-emerald-950/20'
+                : 'text-gray-600 hover:bg-emerald-50 hover:text-emerald-800'
                 }`}
             >
               <Icon size={16} />
@@ -2177,7 +2177,7 @@ function EditorLoadingFallback() {
                   </div>
 
                   {/* Course Title Banner */}
-                  <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 rounded-xl p-4 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 border border-emerald-950/20">
+                  <div className="bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 rounded-xl p-4 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 border border-emerald-950/20">
                     <div className="space-y-1">
                       <div className="text-[11px] font-bold text-emerald-200 uppercase tracking-wider">Course Name & Subject</div>
                       <h4 className="text-lg font-extrabold tracking-tight text-white">{offering.course?.courseName}</h4>
@@ -3125,7 +3125,7 @@ function EditorLoadingFallback() {
                   </button>
                   <button
                     onClick={openCreateModal}
-                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl transition-all font-bold shadow-md hover:shadow-lg cursor-pointer"
+                    className="flex items-center gap-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white px-4 py-2 rounded-xl transition-all font-bold shadow-md hover:shadow-lg cursor-pointer"
                   >
                     <Plus size={16} />
                     Create Assessment
@@ -3542,7 +3542,7 @@ function EditorLoadingFallback() {
                               <button
                                 type="submit"
                                 disabled={isDisabled}
-                                className={`flex-1 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 ${isOverCourseMax ? 'bg-red-400 cursor-not-allowed text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+                                className={`flex-1 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 ${isOverCourseMax ? 'bg-red-400 cursor-not-allowed text-white' : 'bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white shadow-md border border-emerald-950/20'}`}
                                 title={isOverCourseMax ? `Total marks (${prospectiveTotal}) exceed course max (${courseMax})` : ''}
                               >
                                 {saving ? 'Creating...' : isOverCourseMax ? `Exceeds ${courseMax} Marks Limit` : 'Create'}
@@ -4152,7 +4152,7 @@ function EditorLoadingFallback() {
                             <button
                               onClick={saveSpreadsheetMarks}
                               disabled={saving}
-                              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition-all font-bold shadow-md hover:shadow-lg disabled:opacity-50"
+                              className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white px-6 py-3 rounded-xl transition-all font-bold shadow-md hover:shadow-lg disabled:opacity-50 border border-emerald-950/20"
                             >
                               <Save size={18} />
                               {saving ? 'Saving Marks...' : 'Save Spreadsheet Marks'}
@@ -4219,7 +4219,7 @@ function EditorLoadingFallback() {
                         <button
                           onClick={handleSubmitRequestToAdmin}
                           disabled={submittingRequest}
-                          className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-2 disabled:opacity-50"
+                          className="px-5 py-2.5 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-2 disabled:opacity-50 border border-emerald-950/20"
                         >
                           {submittingRequest ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                           Submit Request to Admin
@@ -4295,7 +4295,7 @@ function EditorLoadingFallback() {
                               const origVal = coMapping[coNum]?.[poNum] === 1
                               const isModified = isEditingCoMapping && (origVal !== isMapped)
 
-                              let cellBg = isMapped ? 'bg-green-500 text-white font-black shadow-xs' : 'bg-yellow-50/50 text-transparent'
+                              let cellBg = isMapped ? 'bg-emerald-700 text-white font-black shadow-xs' : 'bg-yellow-50/50 text-transparent'
                               if (isEditingCoMapping) {
                                 if (!isCoActive || isMarkedDeleted) {
                                   cellBg = 'bg-gray-100/40 text-gray-300 cursor-not-allowed select-none'
@@ -4304,7 +4304,7 @@ function EditorLoadingFallback() {
                                     ? 'bg-amber-500 text-white font-black ring-2 ring-amber-400 shadow-md animate-pulse cursor-pointer'
                                     : 'bg-amber-100 text-amber-900 font-bold ring-2 ring-amber-300 cursor-pointer'
                                 } else if (isMapped) {
-                                  cellBg = 'bg-green-500 hover:bg-green-600 text-white font-black cursor-pointer'
+                                  cellBg = 'bg-emerald-700 hover:bg-emerald-800 text-white font-black cursor-pointer shadow-xs'
                                 } else {
                                   cellBg = 'bg-gray-50 hover:bg-gray-100 text-transparent cursor-pointer'
                                 }
@@ -4819,7 +4819,7 @@ function EditorLoadingFallback() {
                     <button
                       onClick={saveKpiConfig}
                       disabled={saving}
-                      className="flex items-center gap-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white px-5 py-2.5 rounded-xl font-bold shadow-md hover:shadow-lg transition-all transform hover:scale-[1.02] disabled:opacity-50 text-sm cursor-pointer"
+                      className="flex items-center gap-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white px-5 py-2.5 rounded-xl font-bold shadow-md hover:shadow-lg transition-all transform hover:scale-[1.02] disabled:opacity-50 text-sm cursor-pointer border border-emerald-950/20"
                     >
                       <Save size={18} />
                       {saving ? 'Saving Thresholds...' : 'Save Thresholds'}

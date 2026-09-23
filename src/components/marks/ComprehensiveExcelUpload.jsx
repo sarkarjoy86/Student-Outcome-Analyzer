@@ -204,7 +204,7 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
               {!loading && (
                 <>
                   <p className="text-gray-500 mb-4">or</p>
-                  <label className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg cursor-pointer hover:from-green-700 hover:to-green-800 transition-colors shadow-lg hover:shadow-xl">
+                  <label className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 text-white rounded-xl cursor-pointer hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 transition-all font-bold shadow-md hover:shadow-lg border border-emerald-950/20">
                     <Upload className="mr-2" size={20} />
                     Browse Files
                     <input
@@ -274,9 +274,9 @@ const ComprehensiveExcelUpload = ({ onDataExtracted }) => {
             <button
               onClick={handleContinue}
               disabled={!courseCode.trim() || !courseTitle.trim()}
-              className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg transition-colors font-semibold ${!courseCode.trim() || !courseTitle.trim()
+              className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl transition-all font-bold ${!courseCode.trim() || !courseTitle.trim()
                   ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-700 hover:to-green-800 shadow-lg hover:shadow-xl'
+                  : 'bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 text-white hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 shadow-md hover:shadow-lg border border-emerald-950/20'
                 }`}
             >
               Continue to CO-PO Mapping

@@ -285,7 +285,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
         {error && <p className="text-xs text-red-650">{error}</p>}
         <button
           onClick={handleCreateTemplate}
-          className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium shadow-md transition-all text-sm inline-flex items-center gap-1.5"
+          className="px-6 py-2.5 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold shadow-md transition-all text-sm inline-flex items-center gap-1.5 border border-emerald-950/20"
         >
           <Sparkles size={16} />
           Create Survey Template
@@ -346,7 +346,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             <button
               disabled={publishing}
               onClick={handlePublish}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium shadow-md transition-all text-xs inline-flex items-center gap-1.5"
+              className="px-4 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold shadow-md transition-all text-xs inline-flex items-center gap-1.5 border border-emerald-950/20"
             >
               <Lock size={14} />
               Publish Survey
@@ -501,7 +501,7 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
                 )}
                 <button
                   onClick={handleSave}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-all"
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 shadow-md transition-all border border-emerald-950/20"
                 >
                   <Save size={14} />
                   Save Changes

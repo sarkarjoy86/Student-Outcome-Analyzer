@@ -126,6 +126,14 @@ function calculateQuestionMarkDistribution(totalMarks, numQuestions) {
   return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0))
 }
 
+// Helper: Get strictly permitted OBE marks based on assessment type (Mid/Final: 10, 15, 30; CT, Assignment, Presentation, Project Report: 10, 15)
+function getAllowedMarksForExamType(type = '') {
+  if (type === 'Mid Term Exam' || type === 'Final Exam') {
+    return [10, 15, 30]
+  }
+  return [10, 15]
+}
+
 // Helper: Bloom's Taxonomy Cognitive Hierarchy & Pedagogical Action Verbs
 const BLOOM_TAXONOMY_MAP = {
   'C1': {
@@ -2405,14 +2413,27 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   // AI Creation Tools States (Enhanced)
   const [showQuestionGenModal, setShowQuestionGenModal] = useState(false)
-  const [questionGenParams, setQuestionGenParams] = useState({
-    examType: 'Class Test (CT)',
-    totalMarks: 10,
-    bloomLevel: 'C4 - Analyze',
-    selectedCo: '',
-    numQuestions: 1,
-    topic: '',
-    sampleQuestion: ''
+  const [questionGenParams, setQuestionGenParams] = useState(() => {
+    const defaultExamType = isMidTerm
+      ? 'Mid Term Exam'
+      : isTermFinal
+      ? 'Final Exam'
+      : isAssignment
+      ? 'Assignment'
+      : isPresentation
+      ? 'Presentation'
+      : isProjectReport
+      ? 'Project Report'
+      : 'Class Test (CT)'
+    return {
+      examType: defaultExamType,
+      totalMarks: 10,
+      bloomLevel: 'C4 - Analyze',
+      selectedCo: '',
+      numQuestions: 1,
+      topic: '',
+      sampleQuestion: ''
+    }
   })
   const [questionGenResults, setQuestionGenResults] = useState([]) // Array of generated questions
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0)
@@ -2429,7 +2450,29 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (parsed.params) {
-          setQuestionGenParams(prev => ({ ...prev, ...parsed.params }))
+          const defaultExamType = isMidTerm
+            ? 'Mid Term Exam'
+            : isTermFinal
+            ? 'Final Exam'
+            : isAssignment
+            ? 'Assignment'
+            : isPresentation
+            ? 'Presentation'
+            : isProjectReport
+            ? 'Project Report'
+            : 'Class Test (CT)'
+          const type = parsed.params.examType || defaultExamType
+          const allowedMarks = getAllowedMarksForExamType(type)
+          let parsedMarks = parseInt(parsed.params.totalMarks) || 10
+          if (!allowedMarks.includes(parsedMarks)) {
+            parsedMarks = 10
+          }
+          setQuestionGenParams(prev => ({
+            ...prev,
+            ...parsed.params,
+            examType: type,
+            totalMarks: parsedMarks
+          }))
         }
         if (Array.isArray(parsed.results) && parsed.results.length > 0) {
           setQuestionGenResults(parsed.results)
@@ -10594,7 +10637,9 @@ Equation description: "${aiEquationPrompt}"`
     }
     setIsGeneratingQuestion(true)
 
-    const markDist = calculateQuestionMarkDistribution(questionGenParams.totalMarks, questionGenParams.numQuestions)
+    const allowedMarks = getAllowedMarksForExamType(questionGenParams.examType)
+    const effectiveTotalMarks = allowedMarks.includes(Number(questionGenParams.totalMarks)) ? Number(questionGenParams.totalMarks) : 10
+    const markDist = calculateQuestionMarkDistribution(effectiveTotalMarks, questionGenParams.numQuestions)
     const count = markDist.length
 
     const bloomInfo = getBloomInfo(questionGenParams.bloomLevel)
@@ -10612,9 +10657,9 @@ Equation description: "${aiEquationPrompt}"`
 EXAMINATION CONTEXT:
 - Course: ${offering?.course?.name || offering?.course?.code || 'University Course'}
 - Assessment: ${questionGenParams.examType}
-- Total Allocated Marks: ${questionGenParams.totalMarks} Marks
+- Total Allocated Marks: ${effectiveTotalMarks} Marks
 - Question Count: Exactly ${count} question(s)
-- Mark Allocation: ${markBreakdownText} (Total = ${questionGenParams.totalMarks} Marks)
+- Mark Allocation: ${markBreakdownText} (Total = ${effectiveTotalMarks} Marks)
 - Topic / Syllabus Description: ${questionGenParams.topic}
 ${questionGenParams.sampleQuestion ? `- Reference Style / Format Pattern: "${questionGenParams.sampleQuestion}"` : ''}
 
@@ -13437,7 +13482,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           <button
             onClick={savePaper}
             disabled={saving || uploadingCount > 0}
-            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl text-sm font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-950/20"
           >
             {saving ? (
               <>
@@ -13743,7 +13788,10 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
           {/* Fullscreen Overlay - Portaled directly to document.body for guaranteed zero top gap & visible status bar */}
           {isFullscreen && createPortal(
-            <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen z-[999999] flex flex-col bg-[#d6d6d6] overflow-hidden select-none">
+            <div
+              className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen z-[999999] flex flex-col bg-[#d6d6d6] overflow-hidden select-none"
+              style={{ width: '111.12vw', height: '111.12vh' }}
+            >
               {/* Fullscreen Top Bar */}
               <div className="bg-gray-800 text-white px-6 py-2 flex items-center justify-between shadow-lg shrink-0 h-[48px] z-10">
                 <div className="flex items-center gap-3">
@@ -13764,7 +13812,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     <span>{notesStatusInfo?.hasNotes ? `Ref Questions (${notesStatusInfo.totalChunks})` : 'Reference Questions'}</span>
                   </button>
 
-                  <button onClick={savePaper} disabled={saving || uploadingCount > 0} className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50">
+                  <button onClick={savePaper} disabled={saving || uploadingCount > 0} className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 border border-emerald-950/20">
                     <Save size={14} /> Save
                   </button>
                   <button onClick={handleExportWord} className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all">
@@ -13781,14 +13829,14 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               </div>
 
               {/* Middle Flex Container (CO Mapping + Editor + Similarity Checker) */}
-              <div className="flex-1 min-h-0 overflow-hidden flex justify-center items-stretch gap-4 p-3 xl:p-4">
+              <div className="flex-1 w-full min-h-0 overflow-hidden flex items-stretch gap-4 p-3 xl:p-4">
                 {/* Left: Question wise CO Mapping Container */}
                 <div className="w-[300px] xl:w-[330px] shrink-0 h-full overflow-hidden">
                   {renderQuestionCoMappingCard(true)}
                 </div>
 
                 {/* Center: Text Editor Container */}
-                <div className={`flex-1 min-w-[500px] max-w-[880px] bg-white shadow-2xl rounded-sm flex flex-col h-full overflow-hidden shrink-0 ${showParagraphMarks ? 'show-paragraph-marks' : ''}`}>
+                <div className={`flex-1 min-w-0 bg-white shadow-2xl rounded-sm flex flex-col h-full overflow-hidden ${showParagraphMarks ? 'show-paragraph-marks' : ''}`}>
                   <RichTextEditorComponent
                     ref={rteRef}
                     created={onRteCreated}
@@ -14818,12 +14866,20 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     <label className="block font-bold text-gray-700 text-xs mb-1">Assessment Type</label>
                     <select
                       value={questionGenParams.examType}
-                      onChange={(e) => setQuestionGenParams({ ...questionGenParams, examType: e.target.value })}
+                      onChange={(e) => {
+                        const newType = e.target.value
+                        const allowed = getAllowedMarksForExamType(newType)
+                        const newTotal = allowed.includes(questionGenParams.totalMarks) ? questionGenParams.totalMarks : 10
+                        setQuestionGenParams({ ...questionGenParams, examType: newType, totalMarks: newTotal })
+                      }}
                       className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
                     >
                       <option value="Class Test (CT)">Class Test (CT)</option>
                       <option value="Mid Term Exam">Mid Term Exam</option>
                       <option value="Final Exam">Final Exam</option>
+                      <option value="Assignment">Assignment</option>
+                      <option value="Presentation">Presentation</option>
+                      <option value="Project Report">Project Report</option>
                     </select>
                   </div>
 
@@ -14847,12 +14903,15 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
 
                   <div>
                     <label className="block font-bold text-gray-700 text-xs mb-1">Total Marks</label>
-                    <input
-                      type="number"
+                    <select
                       value={questionGenParams.totalMarks}
                       onChange={(e) => setQuestionGenParams({ ...questionGenParams, totalMarks: parseInt(e.target.value) || 10 })}
-                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
-                    />
+                      className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs text-gray-800"
+                    >
+                      {getAllowedMarksForExamType(questionGenParams.examType).map(m => (
+                        <option key={m} value={m}>{m} Marks</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
@@ -14998,7 +15057,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   <button
                     onClick={handleGenerateQuestion}
                     disabled={isGeneratingQuestion}
-                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow disabled:opacity-50 cursor-pointer"
+                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-md disabled:opacity-50 cursor-pointer border border-emerald-950/20"
                   >
                     {isGeneratingQuestion ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
                     {isGeneratingQuestion ? 'Generating Questions...' : '✨ Generate Questions with AI'}
@@ -15195,7 +15254,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       type="button"
                       onClick={handleInsertQuestionResult}
                       disabled={selectedQuestionIndices.length === 0}
-                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow transition-all cursor-pointer"
+                      className="px-5 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer border border-emerald-950/20"
                     >
                       <Plus size={16} />
                       {selectedQuestionIndices.length === 0
@@ -15854,7 +15913,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 <button onClick={handleCloseDiagramModal} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
                   Cancel
                 </button>
-                <button onClick={handleInsertGraph} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
+                <button onClick={handleInsertGraph} className="px-5 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border border-emerald-950/20">
                   {editingDiagramElement ? (
                     <>
                       <Check size={16} /> Update CS Diagram in Question Paper
@@ -16035,7 +16094,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 <button onClick={() => setShowTableGenModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs">
                   Cancel
                 </button>
-                <button onClick={handleInsertTable} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow">
+                <button onClick={handleInsertTable} className="px-5 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border border-emerald-950/20">
                   <Plus size={16} /> Insert Resizable Table into Question Paper
                 </button>
               </div>
@@ -17895,7 +17954,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 <button onClick={() => { setShowEquationModal(false); setShowAiEquationModal(false); setEditingEquationElement(null); }} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs cursor-pointer">
                   Cancel
                 </button>
-                <button onClick={handleInsertAiEquation} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer">
+                <button onClick={handleInsertAiEquation} className="px-5 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer border border-emerald-950/20">
                   <Plus size={16} /> {editingEquationElement ? 'Update Equation' : 'Insert Equation into Question Paper'}
                 </button>
               </div>

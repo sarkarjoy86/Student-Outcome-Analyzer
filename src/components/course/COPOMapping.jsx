@@ -172,7 +172,7 @@ const COPOMapping = ({ onComplete, existingMapping }) => {
                             key={po}
                             onClick={() => toggleMapping(co, po)}
                             className={`border border-gray-300 px-4 py-3 text-center cursor-pointer transition-all duration-150 ${isMapped
-                                ? 'bg-green-500 hover:bg-green-600 text-white font-bold shadow-inner'
+                                ? 'bg-emerald-700 hover:bg-emerald-800 text-white font-bold shadow-xs'
                                 : 'bg-yellow-50 hover:bg-yellow-100 text-gray-400'
                               }`}
                           >
@@ -215,7 +215,7 @@ const COPOMapping = ({ onComplete, existingMapping }) => {
           </button>
           <button
             onClick={handleSubmit}
-            className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.01]"
+            className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl transition-all duration-300 font-bold shadow-md hover:shadow-lg transform hover:scale-[1.01] border border-emerald-950/20"
           >
             Continue to KPI Configuration
             <ArrowRight size={20} />

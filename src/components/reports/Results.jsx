@@ -201,7 +201,7 @@ const Results = ({ students, marks, assessments, courseInfo }) => {
           </div>
           <button
             onClick={handleDownloadResults}
-            className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105"
+            className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl transition-all duration-300 font-bold shadow-md hover:shadow-lg transform hover:scale-105 border border-emerald-950/20"
             title="Download Results Report"
           >
             <Download size={20} />

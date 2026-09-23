@@ -2813,7 +2813,7 @@ export default function AdminDashboard() {
                                         }}
                                         className={`w-full py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-0.5 ${
                                           isMapped
-                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs ring-1 ring-emerald-600/30"
+                                            ? "bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs ring-1 ring-emerald-800/30"
                                             : "bg-slate-100 hover:bg-slate-200 text-slate-400 border border-slate-200/60"
                                         }`}
                                         title={`${co.code} -> ${po.code}: ${isMapped ? 'Mapped (1)' : 'Unmapped (0)'}`}
