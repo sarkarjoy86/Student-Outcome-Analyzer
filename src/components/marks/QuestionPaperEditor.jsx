@@ -228,9 +228,27 @@ function ModalPortal({ children }) {
 
 // Helper: Universal Graph / Tree Edge Line Parser (Supports negative numbers like -5, math symbols, words)
 function parseGraphLines(edgeText = '') {
-  const lines = (edgeText || '').split(/[\n,;]+/).map(l => l.trim()).filter(Boolean)
+  const lines = (edgeText || '').split(/\r?\n|;/).map(l => l.trim()).filter(Boolean)
   const nodesSet = new Set()
   const edges = []
+  const syntaxShapes = {}
+
+  // Extracts clean node label and any bracket shape syntax: [Node] -> rect, ((Node)) or (Node) -> circle
+  const cleanNode = (raw) => {
+    let s = (raw || '').trim()
+    let shape = null
+    if (s.startsWith('[') && s.endsWith(']')) {
+      shape = 'rect'
+      s = s.slice(1, -1).trim()
+    } else if (s.startsWith('((') && s.endsWith('))')) {
+      shape = 'circle'
+      s = s.slice(2, -2).trim()
+    } else if (s.startsWith('(') && s.endsWith(')')) {
+      shape = 'circle'
+      s = s.slice(1, -1).trim()
+    }
+    return { name: s, shape }
+  }
 
   lines.forEach(line => {
     // Extract optional weight: e.g. ": 10", ": a", or "= 10"
@@ -301,11 +319,34 @@ function parseGraphLines(edgeText = '') {
     }
 
     if (from && to) {
-      nodesSet.add(from)
-      nodesSet.add(to)
-      edges.push({ from, to, weight })
-      if (isBidirectional) {
-        edges.push({ from: to, to: from, weight })
+      const cFrom = cleanNode(from)
+      const cTo = cleanNode(to)
+      from = cFrom.name
+      to = cTo.name
+      if (cFrom.shape) syntaxShapes[from] = cFrom.shape
+      if (cTo.shape) syntaxShapes[to] = cTo.shape
+      if (from && to) {
+        nodesSet.add(from)
+        nodesSet.add(to)
+        edges.push({ from, to, weight })
+        if (isBidirectional) {
+          edges.push({ from: to, to: from, weight })
+        }
+      }
+    } else if (!from && !to && edgePart) {
+      // Standalone node declaration e.g. -> q0 or [NodeA] or NodeA
+      if (edgePart.startsWith('->') || edgePart.startsWith('=>')) {
+        const target = cleanNode(edgePart.replace(/^->|=>/, '').trim())
+        if (target.name) {
+          nodesSet.add(target.name)
+          if (target.shape) syntaxShapes[target.name] = target.shape
+        }
+      } else {
+        const solo = cleanNode(edgePart)
+        if (solo.name && !solo.name.includes('->') && !solo.name.includes('--')) {
+          nodesSet.add(solo.name)
+          if (solo.shape) syntaxShapes[solo.name] = solo.shape
+        }
       }
     }
   })
@@ -318,18 +359,31 @@ function parseGraphLines(edgeText = '') {
     edges.push({ from: 'C', to: 'D', weight: '8' })
   }
 
-  return { nodes: Array.from(nodesSet), edges }
+  return { nodes: Array.from(nodesSet), edges, nodeShapes: syntaxShapes }
 }
 
-// Helper: Compute positions for Graph & Tree layouts (Tree Hierarchical, Map, Circle/Polygon, Horizontal Flow, or Custom Dragged)
-function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', customPositions = {}) {
-  const width = 600
+// Helper: Resolve effective shape of a node (circle or rect)
+// Respects: (1) Explicit per-node state override -> (2) Syntax [Node] override -> (3) Category default (Map = rect, Tree/Graph/Automata = circle)
+function resolveNodeShape(nodeName, category = 'graph', customShapes = {}, syntaxShapes = {}) {
+  if (customShapes && customShapes[nodeName]) {
+    return customShapes[nodeName]
+  }
+  if (syntaxShapes && syntaxShapes[nodeName]) {
+    return syntaxShapes[nodeName]
+  }
+  if (category === 'map') {
+    return 'rect'
+  }
+  return 'circle'
+}// Helper: Compute positions for Graph & Tree layouts (Tree Hierarchical, Map, Circle/Polygon, Horizontal Flow, or Custom Dragged)
+function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', customPositions = {}, automataOptions = {}) {
+  const width = 750
   const height = 400
   const positions = {}
 
   // Keep any custom dragged positions
   nodesList.forEach(node => {
-    if (customPositions[node]) {
+    if (customPositions && customPositions[node]) {
       positions[node] = { ...customPositions[node] }
     }
   })
@@ -345,19 +399,19 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
 
     // Exact Symmetrical Coordinates crafted and approved by Teacher for the default academic tree
     const predefinedAcademicTreeCoords = {
-      '15': { x: 295, y: 55 },
-      '35': { x: 205, y: 115 },
-      '9':  { x: 295, y: 115 },
-      '40': { x: 385, y: 115 },
-      '3':  { x: 170, y: 185 },
-      '6':  { x: 240, y: 185 },
-      '5':  { x: 350, y: 185 },
-      '7':  { x: 420, y: 185 },
-      '1':  { x: 135, y: 255 },
-      '10': { x: 215, y: 255 },
-      '8':  { x: 310, y: 255 },
-      '4':  { x: 355, y: 255 },
-      '41': { x: 400, y: 255 }
+      '15': { x: 375, y: 55 },
+      '35': { x: 260, y: 115 },
+      '9':  { x: 375, y: 115 },
+      '40': { x: 490, y: 115 },
+      '3':  { x: 215, y: 185 },
+      '6':  { x: 305, y: 185 },
+      '5':  { x: 445, y: 185 },
+      '7':  { x: 535, y: 185 },
+      '1':  { x: 170, y: 255 },
+      '10': { x: 270, y: 255 },
+      '8':  { x: 395, y: 255 },
+      '4':  { x: 450, y: 255 },
+      '41': { x: 510, y: 255 }
     }
 
     const isAcademicTree = ['15', '35', '9', '40'].every(n => nodesList.includes(n))
@@ -366,7 +420,7 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
         if (predefinedAcademicTreeCoords[n]) {
           positions[n] = { ...predefinedAcademicTreeCoords[n] }
         } else {
-          positions[n] = { x: 60 + idx * 45, y: 255 }
+          positions[n] = { x: 80 + idx * 55, y: 255 }
         }
       })
     } else {
@@ -421,7 +475,7 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
 
       if (isLR || isRL) {
         // Horizontal Tree Layout (Left-to-Right or Right-to-Left)
-        const stepX = maxLevel > 0 ? Math.min(Math.floor((width - 150) / maxLevel), 110) : 110
+        const stepX = maxLevel > 0 ? Math.min(Math.floor((width - 150) / maxLevel), 125) : 125
         const slotH = Math.min((height - 70) / Math.max(totalLeaves, 1), 58)
 
         let leafCursor = 0
@@ -430,7 +484,7 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
           seen.add(node)
           const children = childrenMap[node] || []
           const lvl = nodeLevels[node] || 0
-          const x = isLR ? (75 + lvl * stepX) : ((width - 75) - lvl * stepX)
+          const x = isLR ? (85 + lvl * stepX) : ((width - 85) - lvl * stepX)
 
           if (children.length === 0) {
             const y = 45 + (leafCursor + 0.5) * slotH
@@ -479,7 +533,7 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
       } else {
         // Top-Down Hierarchical Tree Layout
         const stepY = maxLevel > 0 ? Math.min(Math.floor((height - 90) / maxLevel), 75) : 75
-        const slotW = Math.min((width - 60) / Math.max(totalLeaves, 1), 68)
+        const slotW = Math.min((width - 70) / Math.max(totalLeaves, 1), 75)
 
         let leafCursor = 0
         const placeNode = (node, seen = new Set()) => {
@@ -490,14 +544,13 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
           const y = 65 + lvl * stepY
 
           if (children.length === 0) {
-            const x = 35 + (leafCursor + 0.5) * slotW
+            const x = 45 + (leafCursor + 0.5) * slotW
             leafCursor++
             positions[node] = { x: Math.round(x), y }
             return positions[node].x
           }
 
           const childXs = children.map(c => placeNode(c, seen))
-
           let parentX
           if (children.length === 3) {
             const midChildX = childXs[1]
@@ -533,11 +586,11 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
         // Handle any orphan nodes
         nodesList.forEach((n, idx) => {
           if (!positions[n]) {
-            positions[n] = { x: 50 + idx * 50, y: 65 }
+            positions[n] = { x: 60 + idx * 55, y: 65 }
           }
         })
 
-        // Center tree horizontally around centerX = 300
+        // Center tree horizontally around centerX = width / 2
         let tMinX = Infinity, tMaxX = -Infinity
         nodesList.forEach(n => {
           if (positions[n]) {
@@ -546,10 +599,10 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
           }
         })
         if (isFinite(tMinX) && isFinite(tMaxX)) {
-          const shiftX = Math.round(300 - (tMinX + tMaxX) / 2)
+          const shiftX = Math.round(width / 2 - (tMinX + tMaxX) / 2)
           nodesList.forEach(n => {
             if (positions[n]) {
-              positions[n].x = Math.max(26, Math.min(574, positions[n].x + shiftX))
+              positions[n].x = Math.max(28, Math.min(width - 28, positions[n].x + shiftX))
             }
           })
         }
@@ -587,13 +640,13 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
     })
     const levelKeys = Object.keys(levels).map(Number).sort((a, b) => a - b)
     const maxLevel = levelKeys.length > 0 ? Math.max(...levelKeys) : 0
-    const stepX = (width - 120) / Math.max(maxLevel, 1)
+    const stepX = (width - 140) / Math.max(maxLevel, 1)
 
     levelKeys.forEach(lvl => {
       const nodesAtLvl = levels[lvl]
       const count = nodesAtLvl.length
       const stepY = height / (count + 1)
-      const x = 60 + lvl * Math.min(stepX, 130)
+      const x = 70 + lvl * Math.min(stepX, 140)
       nodesAtLvl.forEach((node, idx) => {
         if (!positions[node]) {
           positions[node] = {
@@ -608,26 +661,26 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
   // 3. Map Layout (Network & Geography Layout with clean coordinates)
   if (graphType === 'map' || graphType === 'map_directed') {
     const predefinedMapCoords = {
-      'ORADEA': { x: 215, y: 32 },
-      'ZERIND': { x: 130, y: 105 },
-      'ARAD': { x: 135, y: 215 },
-      'SIBIU': { x: 290, y: 82 },
-      'FAGARAS': { x: 345, y: 220 },
-      'RIMNICU': { x: 255, y: 225 },
-      'PITESTI': { x: 310, y: 298 },
-      'BUCHAREST': { x: 415, y: 298 },
-      'URZICENI': { x: 500, y: 220 },
-      'VASLUI': { x: 500, y: 105 },
-      'IASI': { x: 425, y: 160 },
-      'NEAMT': { x: 385, y: 88 },
-      'TIMISOARA': { x: 90, y: 295 },
-      'LUGOJ': { x: 150, y: 345 },
-      'MEHADIA': { x: 180, y: 385 },
-      'DROBETA': { x: 210, y: 385 },
-      'CRAIOVA': { x: 270, y: 385 },
-      'GIURGIU': { x: 415, y: 385 },
-      'HIRSOVA': { x: 560, y: 220 },
-      'EFORIE': { x: 570, y: 295 }
+      'ORADEA': { x: 260, y: 35 },
+      'ZERIND': { x: 170, y: 105 },
+      'ARAD': { x: 175, y: 215 },
+      'SIBIU': { x: 345, y: 82 },
+      'FAGARAS': { x: 415, y: 220 },
+      'RIMNICU': { x: 310, y: 225 },
+      'PITESTI': { x: 375, y: 298 },
+      'BUCHAREST': { x: 500, y: 298 },
+      'URZICENI': { x: 605, y: 220 },
+      'VASLUI': { x: 615, y: 105 },
+      'IASI': { x: 525, y: 160 },
+      'NEAMT': { x: 475, y: 88 },
+      'TIMISOARA': { x: 120, y: 295 },
+      'LUGOJ': { x: 190, y: 345 },
+      'MEHADIA': { x: 225, y: 385 },
+      'DROBETA': { x: 260, y: 385 },
+      'CRAIOVA': { x: 330, y: 385 },
+      'GIURGIU': { x: 505, y: 385 },
+      'HIRSOVA': { x: 675, y: 220 },
+      'EFORIE': { x: 690, y: 295 }
     }
 
     nodesList.forEach((node, idx) => {
@@ -638,7 +691,7 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
         } else {
           const angle = (2 * Math.PI * idx) / nodesList.length - Math.PI / 2
           positions[node] = {
-            x: 300 + 180 * Math.cos(angle),
+            x: 375 + 220 * Math.cos(angle),
             y: 200 + 130 * Math.sin(angle)
           }
         }
@@ -646,31 +699,147 @@ function computeGraphLayout(nodesList = [], edges = [], graphType = 'directed', 
     })
   }
 
-  // 4. Automata / State Diagram Pipeline Layout (Spaced evenly with left clearance for start arrow)
+  // 4. Automata / State Diagram Smart Pipeline & Branch Layout
+  // Accurately recognizes main state pipeline (q0 -> q1 -> q4 -> q5 -> q6) and branch/satellite states (q2 above q0, q3 above q1)
   const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType)
   if (isAutomata) {
-    const unpositioned = nodesList.filter(n => !positions[n])
-    const count = unpositioned.length
-    if (count > 0) {
-      const startX = count >= 5 ? 100 : 130 // Room for initial arrow from nowhere on the left
-      const availableW = width - startX - (count >= 5 ? 60 : 80)
-      const stepX = count > 1 ? Math.min(180, Math.max(105, Math.floor(availableW / (count - 1)))) : 0
-      unpositioned.forEach((node, idx) => {
-        positions[node] = {
-          x: count === 1 ? 300 : Math.round(startX + idx * stepX),
-          y: 195
+    const unpositionedNodes = nodesList.filter(n => !positions[n])
+    if (unpositionedNodes.length > 0) {
+      const adj = {}
+      const outEdges = {}
+      nodesList.forEach(n => { adj[n] = new Set(); outEdges[n] = [] })
+      edges.forEach(e => {
+        if (e.from !== e.to && adj[e.from] && adj[e.to]) {
+          adj[e.from].add(e.to)
+          adj[e.to].add(e.from)
+          outEdges[e.from].push(e.to)
+        }
+      })
+
+      const start = (automataOptions && automataOptions.startState && nodesList.includes(automataOptions.startState))
+        ? automataOptions.startState
+        : nodesList[0]
+
+      // Find longest directed forward chain / spine starting from start
+      let bestPath = [start]
+      const findPaths = (curr, currentPath, visited) => {
+        if (currentPath.length > bestPath.length) bestPath = [...currentPath]
+        const nexts = (outEdges[curr] || []).filter(nxt => !visited.has(nxt))
+        for (const nxt of nexts) {
+          visited.add(nxt)
+          findPaths(nxt, [...currentPath, nxt], visited)
+          visited.delete(nxt)
+        }
+      }
+      findPaths(start, [start], new Set([start]))
+
+      const spineSet = new Set(bestPath)
+      const nonSpine = nodesList.filter(n => !spineSet.has(n))
+
+      // Identify satellites attached to spine nodes (e.g. q2 attached to q0, q3 attached to q1)
+      const satellitesAbove = {}
+      const satellitesBelow = {}
+      const remainingNodes = []
+
+      nonSpine.forEach(n => {
+        const spineNeighbors = Array.from(adj[n] || []).filter(nbr => spineSet.has(nbr))
+        if (spineNeighbors.length === 1) {
+          const parent = spineNeighbors[0]
+          if (!satellitesAbove[parent]) {
+            satellitesAbove[parent] = n
+          } else if (!satellitesBelow[parent]) {
+            satellitesBelow[parent] = n
+          } else {
+            remainingNodes.push(n)
+          }
+        } else {
+          remainingNodes.push(n)
+        }
+      })
+
+      const hasSatellites = Object.keys(satellitesAbove).length > 0 || Object.keys(satellitesBelow).length > 0
+      const spineY = hasSatellites ? 240 : 200
+      const spineCount = bestPath.length
+      const startX = 110
+      const maxSpineW = width - startX - 80
+      const spineStepX = spineCount > 1
+        ? Math.min(135, Math.max(75, Math.floor(maxSpineW / (spineCount - 1))))
+        : 0
+      const totalSpineW = (spineCount - 1) * spineStepX
+      const spineOffsetX = Math.max(startX, Math.round((width - totalSpineW) / 2))
+
+      bestPath.forEach((node, idx) => {
+        if (!positions[node]) {
+          positions[node] = {
+            x: spineCount === 1 ? Math.round(width / 2) : spineOffsetX + idx * spineStepX,
+            y: spineY
+          }
+        }
+      })
+
+      // Position satellite states directly above / below their spine parents
+      Object.entries(satellitesAbove).forEach(([parent, satNode]) => {
+        if (!positions[satNode] && positions[parent]) {
+          positions[satNode] = {
+            x: positions[parent].x,
+            y: Math.max(65, positions[parent].y - 130)
+          }
+        }
+      })
+
+      Object.entries(satellitesBelow).forEach(([parent, satNode]) => {
+        if (!positions[satNode] && positions[parent]) {
+          positions[satNode] = {
+            x: positions[parent].x,
+            y: Math.min(height - 50, positions[parent].y + 120)
+          }
+        }
+      })
+
+      // Any remaining nodes placed with comfortable spacing so nothing is ever clipped
+      remainingNodes.forEach((node, idx) => {
+        if (!positions[node]) {
+          const slotStepX = Math.min(110, Math.floor((width - startX - 60) / Math.max(remainingNodes.length, 1)))
+          positions[node] = {
+            x: startX + idx * slotStepX,
+            y: 80
+          }
         }
       })
     }
   }
 
-  // 5. Default Circular / Regular Symmetrical Polygon Layout
-  if (!graphType.startsWith('tree') && !graphType.startsWith('map') && graphType !== 'horizontal' && !isAutomata) {
+  // 5. Grid / Matrix Layout (e.g. 3x3 Kruskal, 3x3 BFS/DFS, 2x2 Floyd-Warshall)
+  const isGrid = graphType === 'grid' || graphType === 'grid_directed' || graphType === 'grid_matrix'
+  if (isGrid) {
+    const unpositioned = nodesList.filter(n => !positions[n])
+    const N = nodesList.length
+    const cols = N <= 4 ? 2 : (N <= 9 ? 3 : (N <= 16 ? 4 : 5))
+    const rows = Math.ceil(N / cols)
+    const stepX = Math.min(185, Math.floor((width - 140) / Math.max(cols - 1, 1)))
+    const stepY = Math.min(130, Math.floor((height - 100) / Math.max(rows - 1, 1)))
+    const startX = Math.round((width - (cols - 1) * stepX) / 2)
+    const startY = Math.round((height - (rows - 1) * stepY) / 2)
+
+    nodesList.forEach((node, idx) => {
+      if (!positions[node]) {
+        const r = Math.floor(idx / cols)
+        const c = idx % cols
+        positions[node] = {
+          x: startX + c * stepX,
+          y: startY + r * stepY
+        }
+      }
+    })
+  }
+
+  // 6. Default Circular / Regular Symmetrical Polygon Layout
+  if (!graphType.startsWith('tree') && !graphType.startsWith('map') && graphType !== 'horizontal' && !isAutomata && !isGrid) {
     const unpositioned = nodesList.filter(n => !positions[n])
     const N = unpositioned.length || nodesList.length
     const centerX = width / 2
     const centerY = height / 2 + 10
-    const radius = Math.min(width, height) * 0.32
+    const radius = Math.min(width, height) * 0.34
 
     unpositioned.forEach((node, idx) => {
       const angle = (2 * Math.PI * idx) / N - Math.PI / 2
@@ -700,12 +869,53 @@ function getSelfLoopGeometry(u, positions, edges, subIdx = 0, options = {}) {
   const isAutomata = options.isAutomata || false
   const isStart = options.startState === u
 
+  // Collect all blocked angles around node u from incident edges and initial start arrow
+  const blockedAngles = []
+  if (isStart) {
+    blockedAngles.push(Math.PI) // Start arrow enters from the left (180 deg)
+  }
+  edges.forEach(e => {
+    const other = e.from === u ? e.to : (e.to === u ? e.from : null)
+    if (other && other !== u && positions[other]) {
+      const po = positions[other]
+      blockedAngles.push(Math.atan2(po.y - pu.y, po.x - pu.x))
+    }
+  })
+
   let finalAngle
   if (isAutomata || isStart) {
-    // In Automata / State Diagrams, self-loops standardly orient directly UPWARD (-Math.PI / 2)
-    // Symmetrically fan multiple loops if present on the same state: 0 -> center, 1 -> right, 2 -> left
+    // 8 candidate directions: UP, RIGHT, TOP-RIGHT, DOWN, BOTTOM-RIGHT, TOP-LEFT, LEFT, BOTTOM-LEFT
+    const candidates = [-Math.PI / 2, 0, -Math.PI / 4, Math.PI / 2, Math.PI / 4, -3 * Math.PI / 4, Math.PI, 3 * Math.PI / 4]
+    let bestCand = -Math.PI / 2
+    let maxScore = -1
+
+    candidates.forEach(cand => {
+      let minDist = Infinity
+      if (blockedAngles.length === 0) {
+        minDist = Math.PI
+      } else {
+        blockedAngles.forEach(ba => {
+          let diff = Math.abs(cand - ba)
+          while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI)
+          if (diff < minDist) minDist = diff
+        })
+      }
+
+      // If UP has at least 75 deg clearance (1.31 rad), prefer standard UP.
+      // Otherwise, select the candidate sector with highest angular clearance from all incident edges.
+      let score = minDist
+      if (cand === -Math.PI / 2 && minDist >= 1.3) score += 0.55
+      else if (cand === 0 && minDist >= 1.3) score += 0.35
+      else if (cand === -Math.PI / 4 && minDist >= 1.1) score += 0.25
+
+      if (score > maxScore) {
+        maxScore = score
+        bestCand = cand
+      }
+    })
+
     const fanOffset = subIdx === 0 ? 0 : (subIdx % 2 === 1 ? 1 : -1) * Math.ceil(subIdx / 2) * 0.45
-    finalAngle = -Math.PI / 2 + fanOffset
+    finalAngle = bestCand + fanOffset
   } else {
     // General Graph: Outward direction opposite of net neighbor pull
     let rx = 0
@@ -792,8 +1002,53 @@ function getSelfLoopGeometry(u, positions, edges, subIdx = 0, options = {}) {
   }
 }
 
+// Helper: Resolve collisions/overlapping between edge weight badges (deflection/repulsion)
+function resolveBadgeCollisions(badges, iterations = 8) {
+  if (!badges || badges.length < 2) return
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false
+    for (let i = 0; i < badges.length; i++) {
+      for (let j = i + 1; j < badges.length; j++) {
+        const b1 = badges[i]
+        const b2 = badges[j]
+        if (!b1 || !b2) continue
+        const w1 = b1.width || 24
+        const h1 = b1.height || 18
+        const w2 = b2.width || 24
+        const h2 = b2.height || 18
+
+        const padX = 6
+        const padY = 4
+        const minDistanceX = (w1 + w2) / 2 + padX
+        const minDistanceY = (h1 + h2) / 2 + padY
+
+        const dx = b2.midX - b1.midX
+        const dy = b2.midY - b1.midY
+        const overlapX = minDistanceX - Math.abs(dx)
+        const overlapY = minDistanceY - Math.abs(dy)
+
+        if (overlapX > 0 && overlapY > 0) {
+          moved = true
+          if (overlapX < overlapY) {
+            const shift = overlapX / 2 + 1
+            const sign = dx >= 0 ? 1 : -1
+            b1.midX -= sign * shift
+            b2.midX += sign * shift
+          } else {
+            const shift = overlapY / 2 + 1
+            const sign = dy >= 0 ? 1 : -1
+            b1.midY -= sign * shift
+            b2.midY += sign * shift
+          }
+        }
+      }
+    }
+    if (!moved) break
+  }
+}
+
 // Helper: Universal Edge Geometry & Routing Calculator
-// Specializes in Automata State Diagrams (clean straight forward spine, graceful underneath return curves, tiered non-overlapping multi-hop skip transitions)
+// Specializes in Automata State Diagrams (clean straight forward spine, parallel vertical dual transitions, graceful underneath return curves, tiered non-overlapping multi-hop skip transitions)
 // and Symmetrical Multigraph offsets for general graphs
 function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAutomata = false, pairGroups = {}) {
   const p1 = positions[edge.from]
@@ -803,29 +1058,43 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
   const isSelfLoop = edge.from === edge.to
   if (isSelfLoop) return { isSelfLoop: true }
 
-  if (isAutomata) {
-    const idx1 = nodeList.indexOf(edge.from)
-    const idx2 = nodeList.indexOf(edge.to)
-    const hasLinearIndices = idx1 !== -1 && idx2 !== -1
-    const hop = hasLinearIndices ? (idx2 - idx1) : (p2.x > p1.x ? 1 : -1)
-    const absHop = Math.abs(hop)
+  const dx = p2.x - p1.x
+  const dy = p2.y - p1.y
+  const dist = Math.hypot(dx, dy)
+  if (dist < 1) return { path: null, midX: p1.x, midY: p1.y, isStraight: true }
 
-    const isForward = p2.x > p1.x || (p2.x === p1.x && p2.y > p1.y)
-    const isBackward = p2.x < p1.x || (p2.x === p1.x && p2.y < p1.y)
+  const ux = dx / dist
+  const uy = dy / dist
+  const nx = -uy
+  const ny = ux
+
+  if (isAutomata) {
+    // Intervening node test: check if any other node lies along the direct line segment between p1 and p2
+    let interveningCount = 0
+    nodeList.forEach(n => {
+      if (n === edge.from || n === edge.to) return
+      const pK = positions[n]
+      if (!pK) return
+      const proj = (pK.x - p1.x) * ux + (pK.y - p1.y) * uy
+      const perpDist = Math.abs((pK.x - p1.x) * nx + (pK.y - p1.y) * ny)
+      if (proj > 30 && proj < dist - 30 && perpDist < 28) {
+        interveningCount++
+      }
+    })
 
     const sameDirEdges = allEdges.filter(e => e.from === edge.from && e.to === edge.to)
     const sameSubIdx = Math.max(0, sameDirEdges.indexOf(edge))
     const sameCount = sameDirEdges.length
 
-    // 1. Multi-hop Transitions (Skipping 1 or more intermediate states, e.g. q2 -> q0 or q0 -> q2)
-    const isMultiHop = hasLinearIndices && absHop >= 2
+    const oppositeDirEdges = allEdges.filter(e => e.from === edge.to && e.to === edge.from)
+    const hasOpposite = oppositeDirEdges.length > 0
 
-    if (isMultiHop) {
+    // 1. Multi-hop Transitions (physically crossing intermediate states, e.g. q4 -> q0 or q0 -> q5)
+    if (interveningCount > 0) {
+      const isBackward = p2.x < p1.x || (p2.x === p1.x && p2.y < p1.y)
       if (isBackward) {
         // Sweeps UNDERNEATH intermediate states with generous tiered clearance so it never intersects intervening nodes!
-        // hop=2 (e.g. q2 -> q0): 42 + 32 = 74px clearance below states
-        // hop=3 (e.g. q3 -> q0): 42 + 64 = 106px clearance below states
-        const arcDepth = 42 + (absHop - 1) * 32 + sameSubIdx * 24
+        const arcDepth = 42 + interveningCount * 28 + sameSubIdx * 20
         const midX = (p1.x + p2.x) / 2
         const peakY = Math.max(p1.y, p2.y) + arcDepth
         const cx = midX
@@ -840,7 +1109,7 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
         }
       } else {
         // Sweeps ABOVE intermediate states with clearance above
-        const arcHeight = 44 + (absHop - 1) * 30 + sameSubIdx * 24
+        const arcHeight = 44 + interveningCount * 28 + sameSubIdx * 20
         const midX = (p1.x + p2.x) / 2
         const peakY = Math.min(p1.y, p2.y) - arcHeight
         const cx = midX
@@ -856,49 +1125,96 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
       }
     }
 
-    // 2. Adjacent Transitions (Between neighboring states, e.g. q0 <-> q1 or q1 <-> q2)
-    if (isBackward) {
-      // Return transition: Curves gracefully UNDERNEATH!
-      // Generous clearance (46px+) so badge and arc never collide with forward path
-      const arcDepth = 46 + sameSubIdx * 24
-      const midX = (p1.x + p2.x) / 2
-      const peakY = (p1.y + p2.y) / 2 + arcDepth
-      const cx = midX
-      const cy = (p1.y + p2.y) / 2 + arcDepth * 1.55
+    // 2. Direct Transitions (No intervening nodes)
+    if (hasOpposite) {
+      // 2A. Vertical / Near-Vertical Dual Transitions (e.g. q0 <-> q2 or q1 <-> q3, like the textbook exam question)
+      // Parallel straight vertical arrows with labels positioned cleanly on outer sides!
+      if (Math.abs(dx) <= 25 && Math.abs(dy) >= 30) {
+        const offset = 12
+        if (dy < 0) {
+          // Upward transition: Shift left by offset, label on outer left
+          const lineX = p1.x - offset
+          return {
+            path: `M ${lineX} ${p1.y} L ${lineX} ${p2.y}`,
+            midX: lineX - 16,
+            midY: (p1.y + p2.y) / 2,
+            isStraight: true
+          }
+        } else {
+          // Downward transition: Shift right by offset, label on outer right
+          const lineX = p1.x + offset
+          return {
+            path: `M ${lineX} ${p1.y} L ${lineX} ${p2.y}`,
+            midX: lineX + 16,
+            midY: (p1.y + p2.y) / 2,
+            isStraight: true
+          }
+        }
+      }
+
+      // 2B. Horizontal / Near-Horizontal Dual Transitions (e.g. q2 <-> q3, like the textbook exam question)
+      // Parallel straight horizontal arrows with labels positioned cleanly above & below!
+      if (Math.abs(dy) <= 25 && Math.abs(dx) >= 30) {
+        const offset = 12
+        if (p2.x > p1.x) {
+          // Forward (pointing RIGHT): Shift UP by offset, label on outer top
+          const lineY = p1.y - offset
+          return {
+            path: `M ${p1.x} ${lineY} L ${p2.x} ${lineY}`,
+            midX: (p1.x + p2.x) / 2,
+            midY: lineY - 14,
+            isStraight: true
+          }
+        } else {
+          // Backward (pointing LEFT): Shift DOWN by offset, label on outer bottom
+          const lineY = p1.y + offset
+          return {
+            path: `M ${p1.x} ${lineY} L ${p2.x} ${lineY}`,
+            midX: (p1.x + p2.x) / 2,
+            midY: lineY + 14,
+            isStraight: true
+          }
+        }
+      }
+
+      // 2C. Diagonal Dual Transitions: Symmetrically curve away from each other along normal vector
+      const curveOffset = (p2.x > p1.x ? -1 : 1) * (26 + sameSubIdx * 18)
+      const cx = (p1.x + p2.x) / 2 + nx * curveOffset
+      const cy = (p1.y + p2.y) / 2 + ny * curveOffset
+      const midX = (p1.x + p2.x) / 2 + nx * (curveOffset * 0.7)
+      const midY = (p1.y + p2.y) / 2 + ny * (curveOffset * 0.7)
       return {
         path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
         midX,
-        midY: peakY + 8,
+        midY,
         cx,
         cy,
         isStraight: false
       }
+    }
+
+    // Direct Single Transition (No opposite edge): Clean straight line along center axis!
+    if (sameCount === 1) {
+      return {
+        path: null,
+        midX: (p1.x + p2.x) / 2,
+        midY: Math.abs(dy) <= 25 ? (p1.y + p2.y) / 2 - 14 : (p1.y + p2.y) / 2,
+        isStraight: true
+      }
     } else {
-      // Forward transition (left to right)
-      if (sameCount === 1) {
-        // Single forward transition: Clean straight horizontal line along center axis!
-        // Badge sits comfortably above line
-        return {
-          path: null,
-          midX: (p1.x + p2.x) / 2,
-          midY: (p1.y + p2.y) / 2 - 14,
-          isStraight: true
-        }
-      } else {
-        // Multiple forward transitions in same direction: Fan out above
-        const arcHeight = 36 + sameSubIdx * 24
-        const midX = (p1.x + p2.x) / 2
-        const peakY = (p1.y + p2.y) / 2 - arcHeight
-        const cx = midX
-        const cy = (p1.y + p2.y) / 2 - arcHeight * 1.55
-        return {
-          path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
-          midX,
-          midY: peakY - 8,
-          cx,
-          cy,
-          isStraight: false
-        }
+      // Multiple edges in the same direction: Fan out gracefully
+      const arcHeight = 32 + sameSubIdx * 22
+      const cx = (p1.x + p2.x) / 2 + nx * (-arcHeight)
+      const cy = (p1.y + p2.y) / 2 + ny * (-arcHeight)
+      const midX = (p1.x + p2.x) / 2 + nx * (-arcHeight * 0.7)
+      const midY = (p1.y + p2.y) / 2 + ny * (-arcHeight * 0.7)
+      return {
+        path: `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`,
+        midX,
+        midY,
+        cx,
+        cy,
+        isStraight: false
       }
     }
   }
@@ -922,7 +1238,20 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
     const ny = dx / dist
 
     const step = Math.min(54, Math.max(36, dist * 0.26))
-    const offset = (subIdx - (k - 1) / 2) * step
+    let offset = 0
+    if (k === 2) {
+      if (subIdx === 0) {
+        offset = 0 // Straight line for edge 1 (e.g. Floyd-Warshall B-C straight)
+      } else {
+        // Bend OUTWARD away from canvas center for edge 2 (e.g. Floyd-Warshall B-C curved arc)
+        const midBaseX = (pu.x + pv.x) / 2
+        const midBaseY = (pu.y + pv.y) / 2
+        const outwardSign = (nx * (midBaseX - 375) + ny * (midBaseY - 200) >= 0) ? 1 : -1
+        offset = outwardSign * step * 1.25
+      }
+    } else {
+      offset = (subIdx - (k - 1) / 2) * step
+    }
 
     if (Math.abs(offset) > 1) {
       const cx = (pu.x + pv.x) / 2 + nx * offset
@@ -936,6 +1265,19 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
         cx,
         cy,
         isStraight: false
+      }
+    } else if (k === 2 && subIdx === 0) {
+      // Straight edge for subIdx 0, shift badge slightly inward away from outer arc
+      const midBaseX = (pu.x + pv.x) / 2
+      const midBaseY = (pu.y + pv.y) / 2
+      const outwardSign = (nx * (midBaseX - 375) + ny * (midBaseY - 200) >= 0) ? 1 : -1
+      const shiftX = -outwardSign * nx * 22
+      const shiftY = -outwardSign * ny * 18
+      return {
+        path: null,
+        midX: (p1.x + p2.x) / 2 + shiftX,
+        midY: (p1.y + p2.y) / 2 + shiftY,
+        isStraight: true
       }
     }
   }
@@ -951,7 +1293,7 @@ function computeEdgeGeometry(edge, idx, allEdges, positions, nodeList = [], isAu
 // Helper: SVG Graph Diagram Generator (Supports Dynamic Auto-Crop ViewBox, B&W Print Theme, Emerald System Theme)
 function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', customPositions = {}, automataOptions = {}) {
   const { nodes: nodeList, edges } = parseGraphLines(edgeText)
-  const positions = computeGraphLayout(nodeList, edges, graphType, customPositions)
+  const positions = computeGraphLayout(nodeList, edges, graphType, customPositions, automataOptions)
 
   const nodeRadius = 22
   const isBw = theme === 'bw'
@@ -965,21 +1307,35 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
   const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType)
   const isDirected = (graphType === 'directed' || graphType === 'horizontal' || graphType.endsWith('_directed') || isAutomata)
 
-  // Calculate dynamic tight bounding box so graph NEVER has huge empty whitespace!
+  const acceptSet = new Set(automataOptions.acceptStates || [])
+  const parsedData = parseGraphLines(edgeText)
+  const syntaxShapes = parsedData.nodeShapes || {}
+
+  // Calculate dynamic responsive bounding box ensuring zero clipping across all 4 directions!
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+
   nodeList.forEach(node => {
     const p = positions[node]
-    if (p) {
-      minX = Math.min(minX, p.x)
-      maxX = Math.max(maxX, p.x)
-      minY = Math.min(minY, p.y)
-      maxY = Math.max(maxY, p.y)
-    }
+    if (!p) return
+    const isAccepting = acceptSet.has(node)
+    const shape = resolveNodeShape(node, automataOptions.category, automataOptions.nodeShapes, syntaxShapes)
+    const isRect = shape === 'rect'
+    const nodeWidth = isRect ? Math.max(node.length * 9 + 26, 48) : nodeRadius * 2
+    const nodeHeight = isRect ? 36 : nodeRadius * 2
+    // Extra safety margin for stroke (2.5px), accepting double ring/border (+8px), plus padding
+    const extraMargin = isAccepting ? 10 : 6
+    const halfW = nodeWidth / 2 + extraMargin
+    const halfH = nodeHeight / 2 + extraMargin
+
+    minX = Math.min(minX, p.x - halfW)
+    maxX = Math.max(maxX, p.x + halfW)
+    minY = Math.min(minY, p.y - halfH)
+    maxY = Math.max(maxY, p.y + halfH)
   })
 
   // Expand bounding box for Automata start state arrow
   if (automataOptions.startState && positions[automataOptions.startState]) {
-    minX = Math.min(minX, positions[automataOptions.startState].x - 50)
+    minX = Math.min(minX, positions[automataOptions.startState].x - 65)
   }
 
   // Group all edges by canonical pair of endpoints {u, v} to calculate symmetrical multigraph offsets
@@ -1002,43 +1358,82 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
     if (isSelfLoop) {
       const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, 0, { isAutomata, startState: automataOptions.startState })
       if (loopGeo) {
-        minX = Math.min(minX, loopGeo.minX)
-        maxX = Math.max(maxX, loopGeo.maxX)
-        minY = Math.min(minY, loopGeo.minY)
-        maxY = Math.max(maxY, loopGeo.maxY)
+        minX = Math.min(minX, loopGeo.minX - 12)
+        maxX = Math.max(maxX, loopGeo.maxX + 12)
+        minY = Math.min(minY, loopGeo.minY - 12)
+        maxY = Math.max(maxY, loopGeo.maxY + 12)
       }
     } else {
       const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
       if (geo) {
         if (geo.cx !== undefined) {
-          minX = Math.min(minX, geo.cx - 20)
-          maxX = Math.max(maxX, geo.cx + 20)
+          minX = Math.min(minX, geo.cx - 24)
+          maxX = Math.max(maxX, geo.cx + 24)
         }
         if (geo.cy !== undefined) {
-          minY = Math.min(minY, geo.cy - 16)
-          maxY = Math.max(maxY, geo.cy + 16)
+          minY = Math.min(minY, geo.cy - 20)
+          maxY = Math.max(maxY, geo.cy + 20)
         }
-        minX = Math.min(minX, geo.midX - 20)
-        maxX = Math.max(maxX, geo.midX + 20)
-        minY = Math.min(minY, geo.midY - 14)
-        maxY = Math.max(maxY, geo.midY + 14)
+        minX = Math.min(minX, geo.midX - 24)
+        maxX = Math.max(maxX, geo.midX + 24)
+        minY = Math.min(minY, geo.midY - 20)
+        maxY = Math.max(maxY, geo.midY + 20)
       }
     }
+
+    if (edge.weight) {
+      const weightLines = String(edge.weight).split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+      let bW = 24
+      let bH = 18
+      if (weightLines.length > 1) {
+        const lineH = 14
+        const maxLen = Math.max(...weightLines.map(l => l.length))
+        bW = Math.max(maxLen * 8 + 16, 28)
+        bH = weightLines.length * lineH + 8
+      } else {
+        bW = Math.max(String(edge.weight).length * 8 + 14, 24)
+        bH = 20
+      }
+      let midX = (p1.x + p2.x) / 2
+      let midY = (p1.y + p2.y) / 2
+      if (isSelfLoop) {
+        const loopGeo = getSelfLoopGeometry(edge.from, positions, edges, 0, { isAutomata, startState: automataOptions.startState })
+        if (loopGeo) { midX = loopGeo.midX; midY = loopGeo.midY }
+      } else {
+        const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
+        if (geo) { midX = geo.midX; midY = geo.midY }
+      }
+      minX = Math.min(minX, midX - bW / 2 - 8)
+      maxX = Math.max(maxX, midX + bW / 2 + 8)
+      minY = Math.min(minY, midY - bH / 2 - 8)
+      maxY = Math.max(maxY, midY + bH / 2 + 8)
+    }
   })
+
+  // Ensure caption width is accommodated if present
+  if (automataOptions.caption) {
+    const captionStr = automataOptions.caption.trim()
+    const captionW = captionStr.length * 8.5 + 30
+    const centerMidX = (minX + maxX) / 2
+    minX = Math.min(minX, centerMidX - captionW / 2)
+    maxX = Math.max(maxX, centerMidX + captionW / 2)
+  }
 
   if (!isFinite(minX)) {
     minX = 100; maxX = 500; minY = 50; maxY = 350;
   }
 
-  // Padding around outermost node boundaries (nodeRadius is 22, pad leaves comfortable breathing room)
-  const pad = 44
-  const cropX = Math.max(0, Math.floor(minX - pad))
-  const cropY = Math.max(0, Math.floor(minY - pad))
+  // Generous padding around the true bounding box so arrows, outlines, and borders NEVER clip.
+  // Note: Do NOT clamp cropX or cropY with Math.max(0, ...) — SVG viewBox supports negative coords!
+  const pad = 28
+  const captionPad = automataOptions.caption ? 38 : 0
+  const cropX = Math.floor(minX - pad)
+  const cropY = Math.floor(minY - pad)
   const cropW = Math.ceil((maxX + pad) - cropX)
-  const cropH = Math.ceil((maxY + pad) - cropY)
+  const cropH = Math.ceil((maxY + pad + captionPad) - cropY)
 
   const payloadAttr = automataOptions.payloadAttr || ''
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cropX} ${cropY} ${cropW} ${cropH}" ${payloadAttr ? `data-diagram-payload="${payloadAttr}"` : ''} style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cropX} ${cropY} ${cropW} ${cropH}" width="${cropW}" height="${cropH}" ${payloadAttr ? `data-diagram-payload="${payloadAttr}"` : ''} style="max-width: 100%; height: auto; font-family: 'Segoe UI', Arial, sans-serif; background-color: transparent; display: block; margin: 0 auto;">`
 
   svg += `<defs>
     <marker id="arrowhead-${theme}" viewBox="0 0 10 10" refX="27" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse">
@@ -1049,10 +1444,10 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
     </marker>
   </defs>`
 
-  edges.forEach((edge, idx) => {
+  const precomputedSvgEdges = edges.map((edge, idx) => {
     const p1 = positions[edge.from]
     const p2 = positions[edge.to]
-    if (!p1 || !p2) return
+    if (!p1 || !p2) return null
 
     const isSelfLoop = edge.from === edge.to
     const markerAttr = isDirected ? `marker-end="url(#${isSelfLoop ? `arrowhead-loop-${theme}` : `arrowhead-${theme}`})"` : ''
@@ -1077,16 +1472,49 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
       }
     }
 
-    if (edgePath) {
-      svg += `<path d="${edgePath}" fill="none" stroke="${lineStroke}" stroke-width="2.5" ${markerAttr} />`
-    } else {
-      svg += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${lineStroke}" stroke-width="2.5" ${markerAttr} />`
+    let badge = null
+    if (edge.weight) {
+      const weightLines = String(edge.weight).split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+      let bW = 24
+      let bH = 18
+      if (weightLines.length > 1) {
+        const lineH = 14
+        const maxLen = Math.max(...weightLines.map(l => l.length))
+        bW = Math.max(maxLen * 8 + 12, 26)
+        bH = weightLines.length * lineH + 6
+      } else {
+        bW = Math.max(edge.weight.length * 8 + 10, 22)
+        bH = 18
+      }
+      badge = { midX, midY, width: bW, height: bH, weightLines, weight: edge.weight }
     }
 
-    if (edge.weight) {
-      const textWidth = Math.max(edge.weight.length * 8 + 10, 22)
-      svg += `<rect x="${midX - textWidth / 2}" y="${midY - 10}" width="${textWidth}" height="18" rx="4" fill="${badgeFill}" stroke="${badgeStroke}" stroke-width="1.5" />`
-      svg += `<text x="${midX}" y="${midY + 3}" font-size="11" font-weight="bold" fill="${badgeText}" text-anchor="middle">${edge.weight}</text>`
+    return { edge, idx, p1, p2, isDirected, isSelfLoop, edgePath, markerAttr, badge }
+  }).filter(Boolean)
+
+  const allSvgBadges = precomputedSvgEdges.map(item => item.badge).filter(Boolean)
+  resolveBadgeCollisions(allSvgBadges)
+
+  precomputedSvgEdges.forEach(item => {
+    if (item.edgePath) {
+      svg += `<path d="${item.edgePath}" fill="none" stroke="${lineStroke}" stroke-width="2.5" ${item.markerAttr} />`
+    } else {
+      svg += `<line x1="${item.p1.x}" y1="${item.p1.y}" x2="${item.p2.x}" y2="${item.p2.y}" stroke="${lineStroke}" stroke-width="2.5" ${item.markerAttr} />`
+    }
+  })
+
+  precomputedSvgEdges.forEach(item => {
+    if (!item.badge) return
+    const { midX, midY, width: badgeW, height: badgeH, weightLines, weight } = item.badge
+    if (weightLines && weightLines.length > 1) {
+      svg += `<rect x="${midX - badgeW / 2}" y="${midY - badgeH / 2}" width="${badgeW}" height="${badgeH}" rx="4" fill="${badgeFill}" stroke="${badgeStroke}" stroke-width="1.5" />`
+      weightLines.forEach((wLine, lineIdx) => {
+        const lineY = (midY - badgeH / 2) + 12 + lineIdx * 14
+        svg += `<text x="${midX}" y="${lineY}" font-size="11" font-weight="bold" fill="${badgeText}" text-anchor="middle">${wLine}</text>`
+      })
+    } else {
+      svg += `<rect x="${midX - badgeW / 2}" y="${midY - 9}" width="${badgeW}" height="18" rx="4" fill="${badgeFill}" stroke="${badgeStroke}" stroke-width="1.5" />`
+      svg += `<text x="${midX}" y="${midY + 4}" font-size="11" font-weight="bold" fill="${badgeText}" text-anchor="middle">${weight}</text>`
     }
   })
 
@@ -1096,18 +1524,36 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
     svg += `<line x1="${sp.x - 48}" y1="${sp.y}" x2="${sp.x}" y2="${sp.y}" stroke="${lineStroke}" stroke-width="2.5" marker-end="url(#arrowhead-${theme})" />`
   }
 
-  const acceptSet = new Set(automataOptions.acceptStates || [])
   nodeList.forEach(node => {
     const p = positions[node]
     if (!p) return
     const isAccepting = acceptSet.has(node)
+    const shape = resolveNodeShape(node, automataOptions.category, automataOptions.nodeShapes, syntaxShapes)
+    const isRect = shape === 'rect'
     const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
-    svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius}" fill="${nodeFill}" stroke="${strokeColor}" stroke-width="2.5" />`
-    if (isAccepting) {
-      svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius - 4.5}" fill="none" stroke="${strokeColor}" stroke-width="2" />`
+    const nodeWidth = Math.max(node.length * 9 + 26, 48)
+    const nodeHeight = 36
+
+    if (isRect) {
+      svg += `<rect x="${p.x - nodeWidth / 2}" y="${p.y - nodeHeight / 2}" width="${nodeWidth}" height="${nodeHeight}" rx="6" fill="${nodeFill}" stroke="${strokeColor}" stroke-width="2.5" />`
+      if (isAccepting) {
+        svg += `<rect x="${p.x - (nodeWidth - 8) / 2}" y="${p.y - (nodeHeight - 8) / 2}" width="${nodeWidth - 8}" height="${nodeHeight - 8}" rx="4" fill="none" stroke="${strokeColor}" stroke-width="2" />`
+      }
+    } else {
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius}" fill="${nodeFill}" stroke="${strokeColor}" stroke-width="2.5" />`
+      if (isAccepting) {
+        svg += `<circle cx="${p.x}" cy="${p.y}" r="${nodeRadius - 4.5}" fill="none" stroke="${strokeColor}" stroke-width="2" />`
+      }
     }
     svg += `<text x="${p.x}" y="${p.y + 4}" font-size="${fontSize}" font-weight="extrabold" fill="${textColor}" text-anchor="middle">${node}</text>`
   })
+
+  // Centered Diagram Caption / Title (Available for all 4 modules: Tree, Map, Graph, Automata)
+  if (automataOptions.caption) {
+    const captionX = cropX + cropW / 2
+    const captionY = maxY + pad + 16
+    svg += `<text x="${captionX}" y="${captionY}" font-size="13" font-weight="bold" font-family="'Times New Roman', Times, 'Segoe UI', serif" fill="${textColor}" text-anchor="middle">${automataOptions.caption}</text>`
+  }
 
   svg += `</svg>`
   return svg
@@ -2595,6 +3041,8 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
   const [graphTheme, setGraphTheme] = useState('bw') // 'bw' or 'emerald'
   const [graphCategory, setGraphCategory] = useState('tree') // 'tree', 'map', 'graph', 'automata'
   const [graphType, setGraphType] = useState('tree') // 'tree', 'tree_directed', 'tree_lr', 'tree_lr_directed', 'tree_rl', 'tree_rl_directed', 'directed', 'undirected', 'horizontal', 'map', 'map_directed', 'dfa', 'nfa', 'enfa', 'moore', 'mealy'
+  const [graphCaption, setGraphCaption] = useState('') // Optional caption / title for diagram (e.g. Automation-X, Figure 1)
+  const [customNodeShapes, setCustomNodeShapes] = useState({}) // Per-node shape: { [nodeName]: 'circle' | 'rect' }
   const [startState, setStartState] = useState('q0') // Initial / Start state (arrow from nowhere)
   const [acceptStates, setAcceptStates] = useState(['q1']) // Accepting / Final states (concentric double circle)
   const [numNodes, setNumNodes] = useState(12)
@@ -2635,12 +3083,14 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
     setEditingDiagramElement(null)
     setEditingDiagramId(null)
+    setGraphCaption('')
     setShowGraphGenModal(true)
   }
 
   const handleCloseDiagramModal = () => {
     setEditingDiagramElement(null)
     setEditingDiagramId(null)
+    setGraphCaption('')
     setShowGraphGenModal(false)
   }
 
@@ -2684,6 +3134,7 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       if (payload.category) setGraphCategory(payload.category)
       if (payload.type) setGraphType(payload.type)
       if (payload.theme) setGraphTheme(payload.theme)
+      if (payload.caption !== undefined) setGraphCaption(payload.caption || '')
       if (payload.edgesText !== undefined) setGraphEdgesText(payload.edgesText)
       if (Array.isArray(payload.edgeRows) && payload.edgeRows.length > 0) {
         setEdgeRows(payload.edgeRows)
@@ -2695,6 +3146,11 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         setCustomNodePositions(payload.customPositions)
       } else {
         setCustomNodePositions({})
+      }
+      if (payload.nodeShapes && typeof payload.nodeShapes === 'object') {
+        setCustomNodeShapes(payload.nodeShapes)
+      } else {
+        setCustomNodeShapes({})
       }
       if (payload.startState !== undefined) setStartState(payload.startState || '')
       if (Array.isArray(payload.acceptStates)) setAcceptStates(payload.acceptStates)
@@ -2730,16 +3186,30 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
 
   const handleSvgMouseMove = (e) => {
     if (!draggingNode || !graphSvgRef.current) return
-    const rect = graphSvgRef.current.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    const scaleX = 600 / rect.width
-    const scaleY = 400 / rect.height
-    const rawX = Math.max(28, Math.min(572, mouseX * scaleX))
-    const rawY = Math.max(28, Math.min(372, mouseY * scaleY))
+    const svg = graphSvgRef.current
+    let rawX, rawY
+    if (svg.getScreenCTM) {
+      const ctm = svg.getScreenCTM()
+      if (ctm) {
+        const pt = svg.createSVGPoint()
+        pt.x = e.clientX
+        pt.y = e.clientY
+        const svgP = pt.matrixTransform(ctm.inverse())
+        rawX = svgP.x
+        rawY = svgP.y
+      }
+    }
+    if (rawX === undefined) {
+      const rect = svg.getBoundingClientRect()
+      rawX = (e.clientX - rect.left) * (750 / rect.width)
+      rawY = (e.clientY - rect.top) * (400 / rect.height)
+    }
 
     const activeData = parseGraphLines(graphEdgesText)
-    const currentPositions = computeGraphLayout(activeData.nodes, activeData.edges, graphType, customNodePositions)
+    const currentPositions = computeGraphLayout(activeData.nodes, activeData.edges, graphType, customNodePositions, {
+      startState: graphCategory === 'automata' ? startState : null,
+      acceptStates: graphCategory === 'automata' ? acceptStates : []
+    })
 
     // Snapping threshold in SVG pixels (magnetic alignment)
     const SNAP_DIST = 8
@@ -2776,9 +3246,9 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         break
       }
     }
-    if (!snappedX && Math.abs(rawX - 300) <= SNAP_DIST) {
-      finalX = 300
-      guides.push({ type: 'v', pos: 300, label: 'Center X' })
+    if (!snappedX && Math.abs(rawX - 375) <= SNAP_DIST) {
+      finalX = 375
+      guides.push({ type: 'v', pos: 375, label: 'Center X' })
     }
 
     setActiveGuideLines(guides)
@@ -9970,7 +10440,7 @@ Equation description: "${aiEquationPrompt}"`
                 display: block !important;
                 margin: 6px auto !important;
                 text-align: center !important;
-                max-width: 90% !important;
+                max-width: 98% !important;
                 height: auto !important;
                 clear: both !important;
                 float: none !important;
@@ -10806,6 +11276,8 @@ EXAMINATION STRUCTURE & OBE TAGGING:
       category: graphCategory,
       type: graphType,
       theme: graphTheme,
+      caption: graphCaption,
+      nodeShapes: customNodeShapes,
       edgesText: graphEdgesText,
       edgeRows: edgeRows,
       customPositions: customNodePositions,
@@ -10818,6 +11290,9 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     const svgMarkup = generateGraphSvg(graphEdgesText, graphType, graphTheme, customNodePositions, {
       startState: graphCategory === 'automata' ? startState : null,
       acceptStates: graphCategory === 'automata' ? acceptStates : [],
+      caption: graphCaption,
+      category: graphCategory,
+      nodeShapes: customNodeShapes,
       payloadAttr: payloadAttr
     })
     
@@ -10826,18 +11301,10 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     const dataUrl = `data:image/svg+xml;base64,${svgBase64}`
 
     // Calculate proportional width matching diagram geometry
-    const { nodes: nodeList, edges } = parseGraphLines(graphEdgesText)
-    const positions = computeGraphLayout(nodeList, edges, graphType, customNodePositions)
-    let minX = Infinity, maxX = -Infinity
-    nodeList.forEach(n => {
-      const p = positions[n]
-      if (p) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x) }
-    })
-    if (graphCategory === 'automata' && startState && positions[startState]) {
-      minX = Math.min(minX, positions[startState].x - 50)
-    }
-    const spanW = isFinite(minX) ? (maxX - minX + 68) : 340
-    const displayWidth = Math.min(Math.max(Math.round(spanW * 0.95), 180), 440)
+    const dims = parseSvgDimensions(svgMarkup)
+    const naturalW = dims.w || 400
+    // Generously display large diagrams (up to 580px width) so trees, maps, and network architectures fit beautifully
+    const displayWidth = Math.min(Math.max(Math.round(naturalW * 0.98), 200), 580)
 
     const editArea = editor.contentModule?.getEditPanel ? editor.contentModule.getEditPanel() : null
     let targetEl = editingDiagramElement
@@ -10848,6 +11315,9 @@ EXAMINATION STRUCTURE & OBE TAGGING:
     if (targetEl) {
       // In-place Update existing diagram in question paper DOM
       const prevWidth = targetEl.style?.width || targetEl.getAttribute?.('width')
+      const prevWVal = parseInt(prevWidth) || 0
+      // If previous width was set but is now too cramped compared to new natural width, adapt to displayWidth
+      const finalWidth = (prevWVal > 150 && prevWVal >= displayWidth * 0.8) ? `${prevWVal}px` : `${displayWidth}px`
       targetEl.src = dataUrl
       targetEl.setAttribute('data-diagram-payload', payloadAttr)
       targetEl.setAttribute('data-obe-diagram', 'true')
@@ -10857,7 +11327,7 @@ EXAMINATION STRUCTURE & OBE TAGGING:
         targetEl.setAttribute('data-diagram-id', editingDiagramId)
       }
       targetEl.classList.add('e-rte-image', 'obe-graph-diagram')
-      targetEl.style.width = prevWidth || `${displayWidth}px`
+      targetEl.style.width = finalWidth
       targetEl.style.height = 'auto'
       targetEl.style.minWidth = '120px'
       targetEl.style.maxWidth = '100%'
@@ -15275,7 +15745,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
       {showGraphGenModal && (
         <ModalPortal>
           <div className="fixed inset-0 z-[999999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-3xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 max-w-4xl w-full flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-green-800 text-white px-6 py-4 flex items-center justify-between shadow-md">
                 <div className="flex items-center gap-2.5">
                   <div className="p-1.5 bg-white/15 rounded-lg border border-white/20">
@@ -15298,96 +15768,125 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
               </div>
 
               <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto bg-gray-50/50 text-sm">
-                {/* Presets */}
+                {/* Diagram Classification / Category Selector */}
                 <div>
-                  <label className="block font-bold text-gray-700 text-xs mb-1.5">Quick Academic Presets</label>
-                  <div className="flex flex-wrap gap-2">
+                  <label className="block font-bold text-gray-700 text-xs mb-1.5 flex items-center justify-between">
+                    <span>Diagram Category / Classification</span>
+                    <span className="text-[11px] text-gray-500 font-normal">Choose diagram domain</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setGraphCategory('tree')
                         setGraphType('tree')
+                        setGraphCaption('')
                         setCustomNodePositions({})
+                        setCustomNodeShapes({})
                         const text = '15 -> 35\n15 -> 9\n15 -> 40\n35 -> 3\n35 -> 6\n40 -> 5\n40 -> 7\n3 -> 1\n3 -> 10\n5 -> 8\n5 -> 4\n5 -> 41'
                         setGraphEdgesText(text)
-                        setEdgeRows([
-                          { from: '15', to: '35', weight: '' }, { from: '15', to: '9', weight: '' }, { from: '15', to: '40', weight: '' },
-                          { from: '35', to: '3', weight: '' }, { from: '35', to: '6', weight: '' },
-                          { from: '40', to: '5', weight: '' }, { from: '40', to: '7', weight: '' },
-                          { from: '3', to: '1', weight: '' }, { from: '3', to: '10', weight: '' },
-                          { from: '5', to: '8', weight: '' }, { from: '5', to: '4', weight: '' }, { from: '5', to: '41', weight: '' }
-                        ])
+                        setEdgeRows(parseGraphLines(text).edges)
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all shadow-sm flex items-center justify-center gap-1.5 ${
                         graphCategory === 'tree'
                           ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
-                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                          : 'bg-white border-gray-200 text-gray-800 hover:bg-emerald-50 hover:border-emerald-300'
                       }`}
                     >
-                      🌳 Tree (Hierarchical)
+                      <span>🌳</span>
+                      <span>Tree (Hierarchical)</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setGraphCategory('map')
                         setGraphType('map')
+                        setGraphCaption('')
                         setCustomNodePositions({})
+                        setCustomNodeShapes({})
                         const text = 'ORADEA -> ZERIND: 71\nZERIND -> ARAD: 75\nARAD -> SIBIU: 140\nSIBIU -> FAGARAS: 99\nSIBIU -> RIMNICU: 80\nRIMNICU -> PITESTI: 97\nPITESTI -> BUCHAREST: 101\nBUCHAREST -> URZICENI: 85\nURZICENI -> VASLUI: 142\nVASLUI -> IASI: 92\nIASI -> NEAMT: 87'
                         setGraphEdgesText(text)
-                        setEdgeRows([
-                          { from: 'ORADEA', to: 'ZERIND', weight: '71' }, { from: 'ZERIND', to: 'ARAD', weight: '75' }, { from: 'ARAD', to: 'SIBIU', weight: '140' },
-                          { from: 'SIBIU', to: 'FAGARAS', weight: '99' }, { from: 'SIBIU', to: 'RIMNICU', weight: '80' }, { from: 'RIMNICU', to: 'PITESTI', weight: '97' },
-                          { from: 'PITESTI', to: 'BUCHAREST', weight: '101' }, { from: 'BUCHAREST', to: 'URZICENI', weight: '85' }, { from: 'URZICENI', to: 'VASLUI', weight: '142' },
-                          { from: 'VASLUI', to: 'IASI', weight: '92' }, { from: 'IASI', to: 'NEAMT', weight: '87' }
-                        ])
+                        setEdgeRows(parseGraphLines(text).edges)
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all shadow-sm flex items-center justify-center gap-1.5 ${
                         graphCategory === 'map'
                           ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
-                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                          : 'bg-white border-gray-200 text-gray-800 hover:bg-emerald-50 hover:border-emerald-300'
                       }`}
                     >
-                      🗺️ Map / Network
+                      <span>🗺️</span>
+                      <span>Map / Network</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setGraphCategory('graph')
                         setGraphType('directed')
+                        setGraphCaption('')
                         setCustomNodePositions({})
-                        setGraphEdgesText('A -> B: 10\nB -> C: 15\nC -> D: 20\nD -> A: 5')
-                        setEdgeRows([{ from: 'A', to: 'B', weight: '10' }, { from: 'B', to: 'C', weight: '15' }, { from: 'C', to: 'D', weight: '20' }, { from: 'D', to: 'A', weight: '5' }])
+                        setCustomNodeShapes({})
+                        const text = 'A -> B: 10\nB -> C: 15\nC -> D: 20\nD -> A: 5'
+                        setGraphEdgesText(text)
+                        setEdgeRows(parseGraphLines(text).edges)
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all shadow-sm flex items-center justify-center gap-1.5 ${
                         graphCategory === 'graph'
                           ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
-                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                          : 'bg-white border-gray-200 text-gray-800 hover:bg-emerald-50 hover:border-emerald-300'
                       }`}
                     >
-                      ⚖️ Graph
+                      <span>⚖️</span>
+                      <span>Graph</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setGraphCategory('automata')
                         setGraphType('dfa')
                         setStartState('q0')
                         setAcceptStates(['q1'])
+                        setGraphCaption('')
                         setCustomNodePositions({})
+                        setCustomNodeShapes({})
                         const text = 'q0 -> q0: a\nq0 -> q1: b\nq1 -> q1: b\nq1 -> q0: a'
                         setGraphEdgesText(text)
-                        setEdgeRows([
-                          { from: 'q0', to: 'q0', weight: 'a' },
-                          { from: 'q0', to: 'q1', weight: 'b' },
-                          { from: 'q1', to: 'q1', weight: 'b' },
-                          { from: 'q1', to: 'q0', weight: 'a' }
-                        ])
+                        setEdgeRows(parseGraphLines(text).edges)
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all shadow-sm ${
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all shadow-sm flex items-center justify-center gap-1.5 ${
                         graphCategory === 'automata'
                           ? 'bg-emerald-800 text-white border-emerald-900 ring-2 ring-emerald-500/30'
-                          : 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                          : 'bg-white border-gray-200 text-gray-800 hover:bg-emerald-50 hover:border-emerald-300'
                       }`}
                     >
-                      🔄 State Diagram
+                      <span>🔄</span>
+                      <span>State Diagram</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Diagram Caption / Title (Available for all 4 modules: Tree, Map, Graph, Automata) */}
+                <div className="p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-gray-700 text-xs flex items-center gap-1.5">
+                      🏷️ Diagram Name / Caption <span className="font-normal text-gray-500">(Optional — displayed centered below diagram)</span>
+                    </label>
+                    {graphCaption && (
+                      <button
+                        type="button"
+                        onClick={() => setGraphCaption('')}
+                        className="text-[11px] text-gray-400 hover:text-red-600 font-semibold"
+                      >
+                        Clear Caption
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={graphCaption}
+                    onChange={(e) => setGraphCaption(e.target.value)}
+                    placeholder="e.g. Automation-X, Automation-Y, Mealy Machine, Figure 1"
+                    className="w-full border border-gray-300 px-3 py-1.5 rounded-lg text-xs font-semibold focus:ring-1 focus:ring-emerald-500 bg-white"
+                  />
                 </div>
 
                 {/* Theme & Direction Controls */}
@@ -15413,47 +15912,348 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
 
                   <div>
-                    <label className="block font-bold text-gray-700 text-xs mb-1">
-                      {graphCategory === 'graph' ? 'Graph Structure Format' : (graphCategory === 'map' ? 'Map Structure Format' : (graphCategory === 'automata' ? 'State Diagram Format' : 'Tree Structure Format'))}
+                    <label className="block font-bold text-gray-700 text-xs mb-1 flex items-center justify-between">
+                      <span>{graphCategory === 'graph' ? 'Graph Structure Format' : (graphCategory === 'map' ? 'Map Structure Format' : (graphCategory === 'automata' ? 'State Diagram Format' : 'Tree Structure Format'))}</span>
+                      <span className="text-[10px] text-gray-400 font-normal">Formats & Exam Presets</span>
                     </label>
                     <select
-                      value={graphType}
+                      value={(() => {
+                        if (graphCategory === 'automata') {
+                          if (graphCaption === 'Automation-X') return 'preset_automation_x'
+                          if (graphCaption === 'Automation-Y') return 'preset_automation_y'
+                          if (graphCaption.includes('Moore Machine') || graphEdgesText.includes('q0/0')) return 'preset_moore_machine'
+                          if (graphCaption === 'Mealy Machine' || (graphType === 'mealy' && graphEdgesText.includes('1/a'))) return 'preset_mealy_machine'
+                          if (graphType === 'enfa' && graphEdgesText.includes('q4') && !graphEdgesText.includes('q7')) return 'preset_enfa_pipeline'
+                          return graphType
+                        }
+                        if (graphCategory === 'graph') {
+                          if (graphCaption.includes('Kruskal')) return 'preset_kruskal'
+                          if (graphCaption.includes('BFS')) return 'preset_bfs_dfs'
+                          if (graphCaption.includes('Floyd')) return 'preset_floyd_warshall'
+                          return graphType
+                        }
+                        if (graphCategory === 'tree') {
+                          if (graphCaption.includes('BST') || graphCaption.includes('Academic')) return 'preset_tree_bst'
+                          if (graphCaption.includes('AVL')) return 'preset_tree_avl'
+                          if (graphCaption.includes('Max-Heap') || graphCaption.includes('Heap Sort')) return 'preset_tree_heap'
+                          if (graphCaption.includes('Huffman')) return 'preset_tree_huffman'
+                          return graphType
+                        }
+                        if (graphCategory === 'map') {
+                          if (graphCaption.includes('Romania')) return 'preset_map_romania'
+                          if (graphCaption.includes('Dijkstra') || graphCaption.includes('Shortest Path')) return 'preset_map_dijkstra'
+                          if (graphCaption.includes('LAN') || graphCaption.includes('Campus') || graphCaption.includes('Enterprise')) return 'preset_map_lan'
+                          if (graphCaption.includes('Königsberg') || graphCaption.includes('Konigsberg') || graphCaption.includes('Seven Bridges')) return 'preset_map_konigsberg'
+                          return graphType
+                        }
+                        return graphType
+                      })()}
                       onChange={(e) => {
-                        setGraphType(e.target.value)
-                        setCustomNodePositions({})
+                        const val = e.target.value
+                        // --- Automata Presets Loaded from Dropdown ---
+                        if (val === 'preset_enfa_pipeline') {
+                          setGraphCategory('automata')
+                          setGraphType('enfa')
+                          setStartState('q0')
+                          setAcceptStates(['q6'])
+                          setGraphCaption('')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = 'q0 -> q1: ε\nq1 -> q4: ε\nq4 -> q5: 0\nq5 -> q6: 1\nq0 -> q2: 1\nq2 -> q0: 0\nq1 -> q3: 0\nq3 -> q1: 0'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_mealy_machine') {
+                          setGraphCategory('automata')
+                          setGraphType('mealy')
+                          setStartState('q0')
+                          setAcceptStates([])
+                          setGraphCaption('Mealy Machine')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = 'q0 -> q0: 1/a, 0/a\nq0 -> q1: 10/c\nq1 -> q1: 10/c, 1/b, 0/a'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_moore_machine') {
+                          setGraphCategory('automata')
+                          setGraphType('dfa')
+                          setStartState('q0/0')
+                          setAcceptStates(['q2/1'])
+                          setGraphCaption('Moore Machine (Sequence Detector 11)')
+                          setCustomNodePositions({
+                            'q0/0': { x: 220, y: 200 },
+                            'q1/0': { x: 380, y: 200 },
+                            'q2/1': { x: 540, y: 200 }
+                          })
+                          setCustomNodeShapes({})
+                          const text = 'q0/0 -> q0/0: 0\nq0/0 -> q1/0: 1\nq1/0 -> q0/0: 0\nq1/0 -> q2/1: 1\nq2/1 -> q0/0: 0\nq2/1 -> q2/1: 1'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_automation_x') {
+                          setGraphCategory('automata')
+                          setGraphType('dfa')
+                          setStartState('q1')
+                          setAcceptStates(['q1'])
+                          setGraphCaption('Automation-X')
+                          setCustomNodeShapes({})
+                          setCustomNodePositions({
+                            'q1': { x: 260, y: 150 },
+                            'q2': { x: 260, y: 280 },
+                            'q3': { x: 440, y: 280 }
+                          })
+                          const text = 'q1 -> q1: c\nq1 -> q2: d\nq2 -> q1: d\nq2 -> q3: c\nq3 -> q2: c\nq3 -> q3: d'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_automation_y') {
+                          setGraphCategory('automata')
+                          setGraphType('dfa')
+                          setStartState('q4')
+                          setAcceptStates(['q4'])
+                          setGraphCaption('Automation-Y')
+                          setCustomNodeShapes({})
+                          setCustomNodePositions({
+                            'q4': { x: 240, y: 150 },
+                            'q5': { x: 240, y: 280 },
+                            'q7': { x: 440, y: 150 },
+                            'q6': { x: 440, y: 280 }
+                          })
+                          const text = 'q4 -> q4: c\nq4 -> q5: d\nq5 -> q4: d\nq4 -> q7: d\nq5 -> q6: c\nq6 -> q7: c\nq7 -> q6: c\nq6 -> q6: d'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } 
+                        // --- Graph Presets Loaded from Dropdown ---
+                        else if (val === 'preset_kruskal') {
+                          setGraphCategory('graph')
+                          setGraphType('undirected')
+                          setGraphCaption("Figure: Kruskal's Algorithm Graph")
+                          setCustomNodeShapes({})
+                          setCustomNodePositions({
+                            'A': { x: 205, y: 70 },  'B': { x: 375, y: 70 },  'C': { x: 545, y: 70 },
+                            'D': { x: 205, y: 200 }, 'E': { x: 375, y: 200 }, 'F': { x: 545, y: 200 },
+                            'G': { x: 205, y: 330 }, 'H': { x: 375, y: 330 }, 'I': { x: 545, y: 330 }
+                          })
+                          const text = 'A -- B : 12\nB -- C : 3\nD -- E : 5\nE -- F : 3\nG -- H : 2\nH -- I : 12\nA -- D : 7\nD -- G : 8\nB -- E : 2\nE -- H : 6\nC -- F : 7\nF -- I : 12\nA -- E : 5\nA -- H : 3\nB -- I : 11\nC -- E : 4\nC -- H : 9\nE -- G : 7\nE -- I : 4\nH -- F : 10'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_bfs_dfs') {
+                          setGraphCategory('graph')
+                          setGraphType('undirected')
+                          setGraphCaption("Figure: BFS & DFS Traversal Graph")
+                          setCustomNodeShapes({})
+                          setCustomNodePositions({
+                            'A': { x: 205, y: 70 },  'D': { x: 375, y: 70 },  'G': { x: 545, y: 70 },
+                            'B': { x: 205, y: 200 }, 'E': { x: 375, y: 200 }, 'H': { x: 545, y: 200 },
+                            'C': { x: 205, y: 330 }, 'F': { x: 375, y: 330 }, 'I': { x: 545, y: 330 }
+                          })
+                          const text = 'A -- D\nD -- G\nA -- B\nD -- E\nG -- H\nB -- C\nE -- F\nH -- I\nB -- E\nE -- H\nC -- F\nF -- I\nA -- E\nB -- D\nD -- H\nE -- G\nB -- F\nC -- E\nE -- I\nF -- H'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_floyd_warshall') {
+                          setGraphCategory('graph')
+                          setGraphType('undirected')
+                          setGraphCaption("Figure: Floyd-Warshall Weighted Graph")
+                          setCustomNodeShapes({})
+                          setCustomNodePositions({
+                            'A': { x: 220, y: 110 },
+                            'B': { x: 510, y: 110 },
+                            'D': { x: 220, y: 290 },
+                            'C': { x: 510, y: 290 }
+                          })
+                          const text = 'A -- B : 5\nA -- D : 2\nD -- C : 4\nA -- C : 1\nB -- C : 3\nB -- C : 8'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        }
+                        // --- Tree Presets Loaded from Dropdown ---
+                        else if (val === 'preset_tree_bst') {
+                          setGraphCategory('tree')
+                          setGraphType('tree')
+                          setGraphCaption('Figure: Academic Binary Search Tree (BST)')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = '15 -- 35\n15 -- 9\n15 -- 40\n35 -- 3\n35 -- 8\n9 -- 1\n9 -- 10\n40 -- 4\n40 -- 12\n3 -- 20\n8 -- 30\n12 -- 5'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_tree_avl') {
+                          setGraphCategory('tree')
+                          setGraphType('tree')
+                          setGraphCaption('Figure: AVL Balanced Tree (Rotations)')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = '50 -- 30\n50 -- 70\n30 -- 20\n30 -- 40\n70 -- 60\n70 -- 80\n20 -- 10\n20 -- 25\n60 -- 55\n80 -- 90'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_tree_heap') {
+                          setGraphCategory('tree')
+                          setGraphType('tree_directed')
+                          setGraphCaption('Figure: Complete Binary Max-Heap (Heap Sort)')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = '100 -> 84\n100 -> 72\n84 -> 55\n84 -> 42\n72 -> 68\n72 -> 35\n55 -> 19\n55 -> 28\n42 -> 30'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_tree_huffman') {
+                          setGraphCategory('tree')
+                          setGraphType('tree_directed')
+                          setGraphCaption('Figure: Huffman Coding Tree (Prefix Codes)')
+                          setCustomNodePositions({})
+                          setCustomNodeShapes({})
+                          const text = '100 -> 45 : 0\n100 -> 55 : 1\n55 -> 25 : 0\n55 -> 30 : 1\n25 -> 12 : 0\n25 -> 13 : 1\n30 -> 14 : 0\n30 -> 16 : 1'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        }
+                        // --- Map Presets Loaded from Dropdown ---
+                        else if (val === 'preset_map_romania') {
+                          setGraphCategory('map')
+                          setGraphType('map')
+                          setGraphCaption('Figure: Simplified Road Map of Romania (A* Search)')
+                          setCustomNodePositions({
+                            'ORADEA': { x: 120, y: 70 },
+                            'ZERIND': { x: 100, y: 150 },
+                            'ARAD': { x: 100, y: 240 },
+                            'TIMISOARA': { x: 100, y: 350 },
+                            'LUGOJ': { x: 180, y: 380 },
+                            'SIBIU': { x: 260, y: 190 },
+                            'FAGARAS': { x: 380, y: 190 },
+                            'RIMNICU': { x: 280, y: 270 },
+                            'PITESTI': { x: 400, y: 300 },
+                            'CRAIOVA': { x: 300, y: 390 },
+                            'BUCHAREST': { x: 530, y: 310 },
+                            'GIURGIU': { x: 500, y: 400 },
+                            'URZICENI': { x: 620, y: 250 },
+                            'HIRSOVA': { x: 700, y: 250 },
+                            'EFORIE': { x: 710, y: 340 },
+                            'VASLUI': { x: 670, y: 160 },
+                            'IASI': { x: 630, y: 90 },
+                            'NEAMT': { x: 520, y: 70 }
+                          })
+                          const romShapes = {}
+                          ;['ORADEA', 'ZERIND', 'ARAD', 'SIBIU', 'FAGARAS', 'RIMNICU', 'PITESTI', 'BUCHAREST', 'URZICENI', 'VASLUI', 'IASI', 'NEAMT'].forEach(c => { romShapes[c] = 'rect' })
+                          setCustomNodeShapes(romShapes)
+                          const text = 'ORADEA -- ZERIND : 71\nZERIND -- ARAD : 75\nARAD -- SIBIU : 140\nSIBIU -- FAGARAS : 99\nSIBIU -- RIMNICU : 80\nFAGARAS -- BUCHAREST : 211\nRIMNICU -- PITESTI : 97\nPITESTI -- BUCHAREST : 101\nBUCHAREST -- URZICENI : 85\nURZICENI -- VASLUI : 142\nVASLUI -- IASI : 92\nIASI -- NEAMT : 87'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_map_dijkstra') {
+                          setGraphCategory('map')
+                          setGraphType('map_directed')
+                          setGraphCaption('Figure: Shortest Path Road Network (Dijkstra / Bellman-Ford)')
+                          setCustomNodePositions({
+                            'S': { x: 150, y: 200 },
+                            'A': { x: 280, y: 100 },
+                            'B': { x: 280, y: 300 },
+                            'C': { x: 440, y: 100 },
+                            'D': { x: 440, y: 300 },
+                            'T': { x: 580, y: 200 }
+                          })
+                          setCustomNodeShapes({ 'S': 'rect', 'A': 'circle', 'B': 'circle', 'C': 'circle', 'D': 'circle', 'T': 'rect' })
+                          const text = 'S -> A : 4\nS -> B : 2\nA -> B : 1\nA -> C : 5\nB -> D : 8\nB -> C : 10\nC -> D : 2\nC -> T : 6\nD -> T : 3'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_map_lan') {
+                          setGraphCategory('map')
+                          setGraphType('map')
+                          setGraphCaption('Figure: Campus Enterprise Network Architecture')
+                          setCustomNodePositions({
+                            'Gateway': { x: 375, y: 50 },
+                            'Firewall': { x: 375, y: 120 },
+                            'Core-Switch': { x: 375, y: 190 },
+                            'Server-Farm': { x: 180, y: 190 },
+                            'Switch-Dept-A': { x: 220, y: 275 },
+                            'Switch-Dept-B': { x: 375, y: 275 },
+                            'Wireless-AP': { x: 530, y: 275 },
+                            'Lab-PC1': { x: 160, y: 360 },
+                            'Lab-PC2': { x: 240, y: 360 },
+                            'Office-PC': { x: 375, y: 360 },
+                            'Mobile-Clients': { x: 530, y: 360 }
+                          })
+                          const lanShapes = {}
+                          ;['Gateway', 'Firewall', 'Core-Switch', 'Server-Farm', 'Switch-Dept-A', 'Switch-Dept-B', 'Wireless-AP', 'Lab-PC1', 'Lab-PC2', 'Office-PC', 'Mobile-Clients'].forEach(n => { lanShapes[n] = 'rect' })
+                          setCustomNodeShapes(lanShapes)
+                          const text = 'Gateway -- Firewall : 10 Gbps\nFirewall -- Core-Switch : 10 Gbps\nCore-Switch -- Server-Farm : 10 Gbps\nCore-Switch -- Switch-Dept-A : 1 Gbps\nCore-Switch -- Switch-Dept-B : 1 Gbps\nCore-Switch -- Wireless-AP : 1 Gbps\nSwitch-Dept-A -- Lab-PC1 : 100 Mbps\nSwitch-Dept-A -- Lab-PC2 : 100 Mbps\nSwitch-Dept-B -- Office-PC : 100 Mbps\nWireless-AP -- Mobile-Clients : WiFi-6'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else if (val === 'preset_map_konigsberg') {
+                          setGraphCategory('map')
+                          setGraphType('map')
+                          setGraphCaption('Figure: Seven Bridges of Königsberg (Euler Path Analysis)')
+                          setCustomNodePositions({
+                            'North-Bank': { x: 375, y: 70 },
+                            'Island': { x: 375, y: 200 },
+                            'South-Bank': { x: 375, y: 330 },
+                            'East-Bank': { x: 560, y: 200 }
+                          })
+                          setCustomNodeShapes({ 'North-Bank': 'rect', 'Island': 'rect', 'South-Bank': 'rect', 'East-Bank': 'rect' })
+                          const text = 'North-Bank -- Island : Bridge 1\nNorth-Bank -- Island : Bridge 2\nSouth-Bank -- Island : Bridge 3\nSouth-Bank -- Island : Bridge 4\nNorth-Bank -- East-Bank : Bridge 5\nSouth-Bank -- East-Bank : Bridge 6\nIsland -- East-Bank : Bridge 7'
+                          setGraphEdgesText(text)
+                          setEdgeRows(parseGraphLines(text).edges)
+                        } else {
+                          // Standard format selection
+                          setGraphType(val)
+                          setCustomNodePositions({})
+                        }
                       }}
                       className="w-full border border-gray-300 p-2 rounded-lg bg-white font-semibold text-xs"
                     >
                       {graphCategory === 'graph' && (
                         <>
-                          <option value="directed">Directed Graph (with Arrows)</option>
-                          <option value="undirected">Undirected Graph (Lines without Arrows)</option>
-                          <option value="horizontal">Horizontal Flow (Left to Right)</option>
+                          <optgroup label="Standard Graph Layouts">
+                            <option value="directed">Directed Graph (with Arrows)</option>
+                            <option value="undirected">Undirected Graph (Lines without Arrows)</option>
+                            <option value="grid">Grid / Matrix Layout (Undirected, e.g. Kruskal 3x3)</option>
+                            <option value="grid_directed">Grid / Matrix Layout (Directed, e.g. BFS/DFS 3x3)</option>
+                            <option value="horizontal">Horizontal Flow (Left to Right)</option>
+                          </optgroup>
+                          <optgroup label="Preset Exam Graphs">
+                            <option value="preset_kruskal">📐 Kruskal's MST Graph (9-Node Grid)</option>
+                            <option value="preset_bfs_dfs">🔄 BFS & DFS Traversal Graph (9-Node Grid)</option>
+                            <option value="preset_floyd_warshall">⚡ Floyd-Warshall Graph (Dual Arc B-C)</option>
+                          </optgroup>
                         </>
                       )}
                       {graphCategory === 'tree' && (
                         <>
-                          <option value="tree">Hierarchical Tree (Top-Down, Undirected)</option>
-                          <option value="tree_directed">Hierarchical Tree (Top-Down, Directed)</option>
-                          <option value="tree_lr">Horizontal Tree (Left-to-Right, Undirected)</option>
-                          <option value="tree_lr_directed">Horizontal Tree (Left-to-Right, Directed)</option>
-                          <option value="tree_rl">Horizontal Tree (Right-to-Left, Undirected)</option>
-                          <option value="tree_rl_directed">Horizontal Tree (Right-to-Left, Directed)</option>
+                          <optgroup label="Standard Tree Layouts">
+                            <option value="tree">Hierarchical Tree (Top-Down, Undirected)</option>
+                            <option value="tree_directed">Hierarchical Tree (Top-Down, Directed)</option>
+                            <option value="tree_lr">Horizontal Tree (Left-to-Right, Undirected)</option>
+                            <option value="tree_lr_directed">Horizontal Tree (Left-to-Right, Directed)</option>
+                            <option value="tree_rl">Horizontal Tree (Right-to-Left, Undirected)</option>
+                            <option value="tree_rl_directed">Horizontal Tree (Right-to-Left, Directed)</option>
+                          </optgroup>
+                          <optgroup label="Preset Exam Trees">
+                            <option value="preset_tree_bst">🌲 Academic BST (12-Node Default)</option>
+                            <option value="preset_tree_avl">🌳 AVL Balanced Tree (Rotations)</option>
+                            <option value="preset_tree_heap">⚡ Max-Heap Tree (Heap Sort)</option>
+                            <option value="preset_tree_huffman">📶 Huffman Coding Tree (Prefix Codes)</option>
+                          </optgroup>
                         </>
                       )}
                       {graphCategory === 'map' && (
                         <>
-                          <option value="map">Undirected Map / Network (without Arrows)</option>
-                          <option value="map_directed">Directed Map / Network (with Arrows)</option>
+                          <optgroup label="Standard Map & Network Layouts">
+                            <option value="map">Undirected Map / Network (without Arrows)</option>
+                            <option value="map_directed">Directed Map / Network (with Arrows)</option>
+                          </optgroup>
+                          <optgroup label="Preset Exam Maps & Networks">
+                            <option value="preset_map_romania">🇷🇴 Romania Map (A* Search Classic)</option>
+                            <option value="preset_map_dijkstra">🚚 Dijkstra Road Network (Cities S..T)</option>
+                            <option value="preset_map_lan">📡 Enterprise LAN Network Topology</option>
+                            <option value="preset_map_konigsberg">🌉 Seven Bridges of Königsberg (Euler Path)</option>
+                          </optgroup>
                         </>
                       )}
                       {graphCategory === 'automata' && (
                         <>
-                          <option value="dfa">DFA (Deterministic Finite Automata)</option>
-                          <option value="nfa">NFA (Non-Deterministic Finite Automata)</option>
-                          <option value="enfa">ε-NFA (with Epsilon Transitions)</option>
-                          <option value="moore">Moore Machine (State / Output q/x)</option>
-                          <option value="mealy">Mealy Machine (Input / Output a/0)</option>
+                          <optgroup label="Standard Automata Models">
+                            <option value="dfa">DFA (Deterministic Finite Automata)</option>
+                            <option value="nfa">NFA (Non-Deterministic Finite Automata)</option>
+                            <option value="enfa">ε-NFA (with Epsilon Transitions)</option>
+                          </optgroup>
+                          <optgroup label="Preset Exam Automata & Machines">
+                            <option value="preset_enfa_pipeline">⚡ ε-NFA Pipeline (q0..q6)</option>
+                            <option value="preset_mealy_machine">🏷️ Mealy Machine (q0, q1)</option>
+                            <option value="preset_moore_machine">🏷️ Moore Machine (q0..q2)</option>
+                            <option value="preset_automation_x">⚡ Automation-X (Equivalence q1..q3)</option>
+                            <option value="preset_automation_y">⚡ Automation-Y (Equivalence q4..q7)</option>
+                          </optgroup>
                         </>
                       )}
                     </select>
@@ -15542,6 +16342,90 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   )
                 })()}
 
+                {/* Per-Node Shape Selector (Circle ○ vs Rectangle ▢) */}
+                {(() => {
+                  const currentParsed = parseGraphData(graphEdgesText)
+                  if (!currentParsed.nodes || currentParsed.nodes.length === 0) return null
+                  const defaultShapeName = graphCategory === 'map' ? 'Rectangle ▢' : 'Circle ○'
+
+                  return (
+                    <div className="p-3 bg-white border border-gray-200 rounded-xl shadow-sm space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-gray-700 text-xs flex items-center gap-1">
+                            <span className="text-emerald-700 font-extrabold text-sm">▢</span> Node Shapes (Circle vs Rectangle):
+                          </span>
+                          <span className="text-[11px] text-gray-500 italic">
+                            (Default: {defaultShapeName})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newShapes = {}
+                              currentParsed.nodes.forEach(n => { newShapes[n] = 'circle' })
+                              setCustomNodeShapes(newShapes)
+                            }}
+                            className="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold"
+                            title="Set all nodes in this diagram to Circular shape"
+                          >
+                            All Circle ○
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newShapes = {}
+                              currentParsed.nodes.forEach(n => { newShapes[n] = 'rect' })
+                              setCustomNodeShapes(newShapes)
+                            }}
+                            className="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold"
+                            title="Set all nodes in this diagram to Rectangular shape"
+                          >
+                            All Rect ▢
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCustomNodeShapes({})}
+                            className="px-2 py-0.5 rounded border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-500"
+                            title="Reset all node shapes to category default"
+                          >
+                            Reset
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {currentParsed.nodes.map(node => {
+                          const currentShape = resolveNodeShape(node, graphCategory, customNodeShapes, currentParsed.nodeShapes)
+                          const isRect = currentShape === 'rect'
+                          return (
+                            <button
+                              key={node}
+                              type="button"
+                              onClick={() => {
+                                const nextShape = isRect ? 'circle' : 'rect'
+                                setCustomNodeShapes(prev => ({ ...prev, [node]: nextShape }))
+                              }}
+                              className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
+                                isRect
+                                  ? 'bg-blue-50 text-blue-800 border-blue-300 ring-1 ring-blue-400/30'
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/30'
+                              }`}
+                              title={`Click to toggle ${node} to ${isRect ? 'Circle ○' : 'Rectangle ▢'}`}
+                            >
+                              <span className="text-xs">{isRect ? '▢' : '○'}</span>
+                              <span>{node}</span>
+                              <span className="text-[10px] opacity-75 font-normal">
+                                ({isRect ? 'Rect' : 'Circle'})
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 {/* Input Mode Selector */}
                 <div className="flex justify-between items-center">
                   <label className="font-bold text-gray-700 text-xs">Graph Edge Connections</label>
@@ -15622,7 +16506,77 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 {/* Live Interactive Vector SVG Preview with Click & Drag Node Repositioning */}
                 {(() => {
                   const activeGraphData = parseGraphData(graphEdgesText)
-                  const activeGraphPositions = computeGraphLayout(activeGraphData.nodes, activeGraphData.edges, graphType, customNodePositions)
+                  const activeGraphPositions = computeGraphLayout(activeGraphData.nodes, activeGraphData.edges, graphType, customNodePositions, {
+                    startState: graphCategory === 'automata' ? startState : null,
+                    acceptStates: graphCategory === 'automata' ? acceptStates : []
+                  })
+
+                  // Compute dynamic responsive bounding box & viewBox for live preview SVG
+                  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+
+                  activeGraphData.nodes.forEach(node => {
+                    const p = activeGraphPositions[node]
+                    if (!p) return
+                    const shape = resolveNodeShape(node, graphCategory, customNodeShapes, activeGraphData.nodeShapes)
+                    const isRect = shape === 'rect'
+                    const halfW = isRect ? Math.max(node.length * 9 + 26, 48) / 2 : 24
+                    const halfH = isRect ? 20 : 24
+                    minX = Math.min(minX, p.x - halfW)
+                    maxX = Math.max(maxX, p.x + halfW)
+                    minY = Math.min(minY, p.y - halfH)
+                    maxY = Math.max(maxY, p.y + halfH)
+                  })
+
+                  if (graphCategory === 'automata' && startState && activeGraphPositions[startState]) {
+                    minX = Math.min(minX, activeGraphPositions[startState].x - 60)
+                  }
+
+                  activeGraphData.edges.forEach(edge => {
+                    const p1 = activeGraphPositions[edge.from]
+                    const p2 = activeGraphPositions[edge.to]
+                    if (p1 && p2) {
+                      minX = Math.min(minX, p1.x - 24, p2.x - 24)
+                      maxX = Math.max(maxX, p1.x + 24, p2.x + 24)
+                      minY = Math.min(minY, p1.y - 24, p2.y - 24)
+                      maxY = Math.max(maxY, p1.y + 24, p2.y + 24)
+                    }
+                    if (edge.weight && p1 && p2) {
+                      const midX = (p1.x + p2.x) / 2
+                      const midY = (p1.y + p2.y) / 2
+                      const bW = Math.max(String(edge.weight).length * 8 + 14, 24)
+                      minX = Math.min(minX, midX - bW / 2 - 8)
+                      maxX = Math.max(maxX, midX + bW / 2 + 8)
+                      minY = Math.min(minY, midY - 18)
+                      maxY = Math.max(maxY, midY + 18)
+                    }
+                  })
+
+                  if (graphCaption) {
+                    const capStr = graphCaption.trim()
+                    const capW = capStr.length * 8.5 + 30
+                    const centerMidX = (minX + maxX) / 2
+                    minX = Math.min(minX, centerMidX - capW / 2)
+                    maxX = Math.max(maxX, centerMidX + capW / 2)
+                  }
+
+                  if (!isFinite(minX)) {
+                    minX = 50; maxX = 700; minY = 50; maxY = 350;
+                  }
+
+                  const pad = 44
+                  const captionPad = graphCaption ? 38 : 0
+                  const computedMinX = Math.min(0, minX - pad)
+                  const computedMaxX = Math.max(750, maxX + pad)
+                  const computedMinY = Math.min(0, minY - pad)
+                  const computedMaxY = Math.max(400, maxY + pad + captionPad)
+
+                  const viewBoxX = Math.floor(computedMinX)
+                  const viewBoxY = Math.floor(computedMinY)
+                  const viewBoxW = Math.ceil(computedMaxX - computedMinX)
+                  const viewBoxH = Math.ceil(computedMaxY - computedMinY)
+
+                  const captionX = viewBoxX + viewBoxW / 2
+                  const captionY = maxY + pad + 14
 
                   return (
                     <div className="space-y-2">
@@ -15657,14 +16611,14 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                         <span className="text-emerald-800 font-semibold flex items-center gap-1">✨ Magnetic alignment guidelines will automatically snap & level nodes</span>
                       </div>
 
-                      <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-hidden select-none relative">
+                      <div className="p-3 bg-white border border-emerald-200 rounded-xl shadow-inner flex justify-center overflow-auto select-none relative" style={{ maxHeight: '65vh' }}>
                         <svg
                           ref={graphSvgRef}
-                          viewBox="0 0 600 400"
+                          viewBox={`${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}`}
                           onMouseMove={handleSvgMouseMove}
                           onMouseUp={handleSvgMouseUp}
                           onMouseLeave={handleSvgMouseUp}
-                          style={{ maxWidth: '100%', height: 'auto', maxHeight: '340px', cursor: draggingNode ? 'grabbing' : 'default' }}
+                          style={{ width: '100%', height: 'auto', maxHeight: '520px', cursor: draggingNode ? 'grabbing' : 'default' }}
                         >
                           <defs>
                             <marker id="arrowhead-interactive" viewBox="0 0 10 10" refX="27" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse">
@@ -15682,9 +16636,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                 <g key={`g-v-${gIdx}`} className="pointer-events-none">
                                   <line
                                     x1={guide.pos}
-                                    y1="0"
+                                    y1={viewBoxY}
                                     x2={guide.pos}
-                                    y2="400"
+                                    y2={viewBoxY + viewBoxH}
                                     stroke="#059669"
                                     strokeWidth="1.5"
                                     strokeDasharray="4,4"
@@ -15692,7 +16646,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   />
                                   <rect
                                     x={guide.pos - 40}
-                                    y="8"
+                                    y={viewBoxY + 8}
                                     width="80"
                                     height="16"
                                     rx="3"
@@ -15701,7 +16655,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   />
                                   <text
                                     x={guide.pos}
-                                    y="19"
+                                    y={viewBoxY + 19}
                                     fontSize="9"
                                     fontWeight="bold"
                                     fill="#ffffff"
@@ -15715,9 +16669,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             return (
                               <g key={`g-h-${gIdx}`} className="pointer-events-none">
                                 <line
-                                  x1="0"
+                                  x1={viewBoxX}
                                   y1={guide.pos}
-                                  x2="600"
+                                  x2={viewBoxX + viewBoxW}
                                   y2={guide.pos}
                                   stroke="#059669"
                                   strokeWidth="1.5"
@@ -15725,7 +16679,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   opacity="0.85"
                                 />
                                 <rect
-                                  x="8"
+                                  x={viewBoxX + 8}
                                   y={guide.pos - 8}
                                   width="80"
                                   height="16"
@@ -15734,7 +16688,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                   opacity="0.95"
                                 />
                                 <text
-                                  x="48"
+                                  x={viewBoxX + 48}
                                   y={guide.pos + 3}
                                   fontSize="9"
                                   fontWeight="bold"
@@ -15747,7 +16701,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             )
                           })}
 
-                          {/* Render Edges (Multigraph / Multi-edge Symmetrical Curved Arcs) */}
+                          {/* Render Edges (Curved Bezier for Multigraphs & Straight for Single with Deflection) */}
                           {(() => {
                             const pairGroups = {}
                             activeGraphData.edges.forEach((edge, idx) => {
@@ -15759,7 +16713,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             })
                             const isAutomata = ['dfa', 'nfa', 'enfa', 'moore', 'mealy'].includes(graphType) || graphCategory === 'automata'
 
-                            return activeGraphData.edges.map((edge, idx) => {
+                            // Precalculate all edge geometries & badge positions
+                            const precomputed = activeGraphData.edges.map((edge, idx) => {
                               const p1 = activeGraphPositions[edge.from]
                               const p2 = activeGraphPositions[edge.to]
                               if (!p1 || !p2) return null
@@ -15773,7 +16728,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                               if (isSelfLoop) {
                                 const loopGeo = getSelfLoopGeometry(edge.from, activeGraphPositions, activeGraphData.edges, 0, {
                                   isAutomata,
-                                  startState
+                                  startState: graphCategory === 'automata' ? startState : null
                                 })
                                 if (loopGeo) {
                                   edgePath = loopGeo.path
@@ -15789,35 +16744,95 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                 }
                               }
 
-                              const badgeW = Math.max(edge.weight.length * 8 + 10, 22)
+                              let badge = null
+                              if (edge.weight) {
+                                const weightLines = String(edge.weight).split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                                let bW = 24
+                                let bH = 18
+                                if (weightLines.length > 1) {
+                                  const maxLen = Math.max(...weightLines.map(l => l.length))
+                                  bW = Math.max(maxLen * 8 + 12, 26)
+                                  bH = weightLines.length * 14 + 6
+                                } else {
+                                  bW = Math.max(edge.weight.length * 8 + 10, 22)
+                                  bH = 18
+                                }
+                                badge = { midX, midY, width: bW, height: bH, weightLines, weight: edge.weight }
+                              }
 
-                              return (
-                                <g key={idx}>
-                                  {edgePath ? (
-                                    <path
-                                      d={edgePath}
-                                      fill="none"
-                                      stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
-                                      strokeWidth="2.5"
-                                      markerEnd={isDirected ? (isSelfLoop ? 'url(#arrowhead-loop-interactive)' : 'url(#arrowhead-interactive)') : undefined}
-                                    />
-                                  ) : (
-                                    <line
-                                      x1={p1.x}
-                                      y1={p1.y}
-                                      x2={p2.x}
-                                      y2={p2.y}
-                                      stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
-                                      strokeWidth="2.5"
-                                      markerEnd={isDirected ? 'url(#arrowhead-interactive)' : undefined}
-                                    />
-                                  )}
-                                  {edge.weight && (
-                                    <g>
+                              return { edge, idx, p1, p2, isDirected, isSelfLoop, edgePath, badge }
+                            }).filter(Boolean)
+
+                            // Resolve badge collision deflection
+                            const previewBadges = precomputed.map(item => item.badge).filter(Boolean)
+                            resolveBadgeCollisions(previewBadges)
+
+                            return (
+                              <g>
+                                {/* Draw Edge Lines */}
+                                {precomputed.map(item => (
+                                  <g key={`line-${item.idx}`}>
+                                    {item.edgePath ? (
+                                      <path
+                                        d={item.edgePath}
+                                        fill="none"
+                                        stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
+                                        strokeWidth="2.5"
+                                        markerEnd={item.isDirected ? (item.isSelfLoop ? 'url(#arrowhead-loop-interactive)' : 'url(#arrowhead-interactive)') : undefined}
+                                      />
+                                    ) : (
+                                      <line
+                                        x1={item.p1.x}
+                                        y1={item.p1.y}
+                                        x2={item.p2.x}
+                                        y2={item.p2.y}
+                                        stroke={graphTheme === 'bw' ? '#000000' : '#059669'}
+                                        strokeWidth="2.5"
+                                        markerEnd={item.isDirected ? 'url(#arrowhead-interactive)' : undefined}
+                                      />
+                                    )}
+                                  </g>
+                                ))}
+
+                                {/* Draw Deflected Badges */}
+                                {precomputed.map(item => {
+                                  if (!item.badge) return null
+                                  const { midX, midY, width: bW, height: bH, weightLines, weight } = item.badge
+                                  if (weightLines && weightLines.length > 1) {
+                                    return (
+                                      <g key={`badge-${item.idx}`}>
+                                        <rect
+                                          x={midX - bW / 2}
+                                          y={midY - bH / 2}
+                                          width={bW}
+                                          height={bH}
+                                          rx="4"
+                                          fill="#ffffff"
+                                          stroke={graphTheme === 'bw' ? '#000000' : '#10b981'}
+                                          strokeWidth="1.5"
+                                        />
+                                        {weightLines.map((wLine, lineIdx) => (
+                                          <text
+                                            key={lineIdx}
+                                            x={midX}
+                                            y={(midY - bH / 2) + 12 + lineIdx * 14}
+                                            fontSize="11"
+                                            fontWeight="bold"
+                                            fill={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                            textAnchor="middle"
+                                          >
+                                            {wLine}
+                                          </text>
+                                        ))}
+                                      </g>
+                                    )
+                                  }
+                                  return (
+                                    <g key={`badge-${item.idx}`}>
                                       <rect
-                                        x={midX - badgeW / 2}
+                                        x={midX - bW / 2}
                                         y={midY - 10}
-                                        width={badgeW}
+                                        width={bW}
                                         height={18}
                                         rx="4"
                                         fill="#ffffff"
@@ -15832,13 +16847,13 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                         fill={graphTheme === 'bw' ? '#000000' : '#047857'}
                                         textAnchor="middle"
                                       >
-                                        {edge.weight}
+                                        {weight}
                                       </text>
                                     </g>
-                                  )}
-                                </g>
-                              )
-                            })
+                                  )
+                                })}
+                              </g>
+                            )
                           })()}
 
                           {/* Automata Initial/Start State Arrow from nowhere */}
@@ -15856,13 +16871,17 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                             </g>
                           )}
 
-                          {/* Render Nodes (Interactive Drag & Drop) */}
+                          {/* Render Nodes (Interactive Drag & Drop: Circle vs Rectangle) */}
                           {activeGraphData.nodes.map(node => {
                             const p = activeGraphPositions[node]
                             if (!p) return null
                             const isDragged = draggingNode === node
                             const isAccepting = graphCategory === 'automata' && acceptStates.includes(node)
+                            const shape = resolveNodeShape(node, graphCategory, customNodeShapes, activeGraphData.nodeShapes)
+                            const isRect = shape === 'rect'
                             const fontSize = node.length > 5 ? '9' : (node.length > 3 ? '11' : '13')
+                            const nodeWidth = Math.max(node.length * 9 + 26, 48)
+                            const nodeHeight = 36
 
                             return (
                               <g
@@ -15870,23 +16889,52 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                 onMouseDown={(e) => handleSvgMouseDown(node, e)}
                                 style={{ cursor: draggingNode === node ? 'grabbing' : 'grab' }}
                               >
-                                <circle
-                                  cx={p.x}
-                                  cy={p.y}
-                                  r={22}
-                                  fill={isDragged ? (graphTheme === 'bw' ? '#e5e7eb' : '#d1fae5') : '#ffffff'}
-                                  stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
-                                  strokeWidth={isDragged ? '3.5' : '2.5'}
-                                />
-                                {isAccepting && (
-                                  <circle
-                                    cx={p.x}
-                                    cy={p.y}
-                                    r={17.5}
-                                    fill="none"
-                                    stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
-                                    strokeWidth="2"
-                                  />
+                                {isRect ? (
+                                  <>
+                                    <rect
+                                      x={p.x - nodeWidth / 2}
+                                      y={p.y - nodeHeight / 2}
+                                      width={nodeWidth}
+                                      height={nodeHeight}
+                                      rx="6"
+                                      fill={isDragged ? (graphTheme === 'bw' ? '#e5e7eb' : '#d1fae5') : '#ffffff'}
+                                      stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                      strokeWidth={isDragged ? '3.5' : '2.5'}
+                                    />
+                                    {isAccepting && (
+                                      <rect
+                                        x={p.x - (nodeWidth - 8) / 2}
+                                        y={p.y - (nodeHeight - 8) / 2}
+                                        width={nodeWidth - 8}
+                                        height={nodeHeight - 8}
+                                        rx="4"
+                                        fill="none"
+                                        stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                        strokeWidth="2"
+                                      />
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <circle
+                                      cx={p.x}
+                                      cy={p.y}
+                                      r={22}
+                                      fill={isDragged ? (graphTheme === 'bw' ? '#e5e7eb' : '#d1fae5') : '#ffffff'}
+                                      stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                      strokeWidth={isDragged ? '3.5' : '2.5'}
+                                    />
+                                    {isAccepting && (
+                                      <circle
+                                        cx={p.x}
+                                        cy={p.y}
+                                        r={17.5}
+                                        fill="none"
+                                        stroke={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                        strokeWidth="2"
+                                      />
+                                    )}
+                                  </>
                                 )}
                                 <text
                                   x={p.x}
@@ -15902,6 +16950,23 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                               </g>
                             )
                           })}
+
+                          {/* Centered Diagram Caption / Title in Live Preview */}
+                          {graphCaption && (
+                            <g className="pointer-events-none select-none">
+                              <text
+                                x={captionX}
+                                y={captionY}
+                                fontSize="13"
+                                fontWeight="bold"
+                                fontFamily="'Times New Roman', Times, 'Segoe UI', serif"
+                                fill={graphTheme === 'bw' ? '#000000' : '#047857'}
+                                textAnchor="middle"
+                              >
+                                {graphCaption}
+                              </text>
+                            </g>
+                          )}
                         </svg>
                       </div>
                     </div>

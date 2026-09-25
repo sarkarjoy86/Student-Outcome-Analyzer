@@ -63,6 +63,7 @@ import { calculateAllAttainments } from '../../utils/comprehensiveCalculations'
 import ReferenceNotesModal from './ReferenceNotesModal'
 import { getNotesStatus, getNormalizedCourseKey, getCachedNotesStatus } from '../../services/notesApi'
 import { useMLServiceWakeup } from '../../hooks/useMLServiceWakeup'
+import { exportStudentTableToExcel } from '../../utils/studentTableExcelExporter'
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge',
@@ -3035,6 +3036,28 @@ function EditorLoadingFallback() {
                   </div>
                 )
 
+                const handleExportExcel = () => {
+                  exportStudentTableToExcel({
+                    courseInfo: {
+                      courseCode: offering.course?.courseCode,
+                      courseName: offering.course?.courseName,
+                      batchName: offering.batch?.name || offering.batch,
+                      semesterName: offering.semester?.name || offering.semester,
+                      sectionName: offering.section?.name || offering.section
+                    },
+                    students,
+                    cols,
+                    studentTotals,
+                    getColMark,
+                    totalMax,
+                    credits,
+                    avgGPA,
+                    passRatePct,
+                    totalAvg,
+                    getGradeAndGP
+                  })
+                }
+
                 return (
                   <>
                     <div className="bg-white rounded-2xl shadow-lg p-6 border border-green-100 space-y-4">
@@ -3042,15 +3065,26 @@ function EditorLoadingFallback() {
                         <h3 className="text-lg font-black text-green-950 uppercase tracking-wide">
                           Student Table
                         </h3>
-                        <button
-                          type="button"
-                          onClick={() => setIsTableFullscreen(true)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-300 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer group"
-                          title="View Student Table Fullscreen"
-                        >
-                          <Maximize2 size={14} className="group-hover:scale-110 transition-transform text-green-700" />
-                          <span>Full Screen</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleExportExcel}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-extrabold transition shadow-xs hover:shadow cursor-pointer group"
+                            title="Export complete student table to styled Excel (.xlsx)"
+                          >
+                            <FileDown size={14} className="group-hover:scale-110 transition-transform text-emerald-200" />
+                            <span>Export to Excel</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsTableFullscreen(true)}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-300 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer group"
+                            title="View Student Table Fullscreen"
+                          >
+                            <Maximize2 size={14} className="group-hover:scale-110 transition-transform text-green-700" />
+                            <span>Full Screen</span>
+                          </button>
+                        </div>
                       </div>
                       {renderTableMarkup(false)}
                     </div>
@@ -3073,15 +3107,26 @@ function EditorLoadingFallback() {
                                 </p>
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => setIsTableFullscreen(false)}
-                              className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer border border-slate-300"
-                              title="Exit Full Screen (Esc)"
-                            >
-                              <Minimize2 size={16} />
-                              <span>Exit Full Screen</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={handleExportExcel}
+                                className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-extrabold transition shadow-sm hover:shadow cursor-pointer border border-emerald-800 group"
+                                title="Export complete student table to styled Excel (.xlsx)"
+                              >
+                                <FileDown size={16} className="group-hover:scale-110 transition-transform text-emerald-200" />
+                                <span>Export to Excel</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsTableFullscreen(false)}
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-extrabold transition shadow-xs cursor-pointer border border-slate-300"
+                                title="Exit Full Screen (Esc)"
+                              >
+                                <Minimize2 size={16} />
+                                <span>Exit Full Screen</span>
+                              </button>
+                            </div>
                           </div>
 
                           <div className="flex-1 min-h-0 w-full overflow-hidden">
