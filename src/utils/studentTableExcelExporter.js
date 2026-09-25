@@ -90,12 +90,29 @@ export function exportStudentTableToExcel({
   rows.push(r0)
   merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: totalColCount - 1 } })
 
+  // Helper to safely unpack string representations from potential object payloads
+  const resolveFieldString = (val, fieldType = '') => {
+    if (!val) return ''
+    if (typeof val === 'string') return val.trim()
+    if (typeof val === 'number') return String(val)
+    if (typeof val === 'object') {
+      if (fieldType === 'semester') {
+        const sName = val.semesterName || val.name || val.title || ''
+        const year = val.academicYear || ''
+        if (sName && year && !sName.includes(year)) return `${sName} ${year}`
+        return sName || year || ''
+      }
+      return val.name || val.batchName || val.sectionName || val.semesterName || val.title || val.code || ''
+    }
+    return String(val).trim()
+  }
+
   // Row 1: Course Info
-  const courseCode = courseInfo?.courseCode || 'Course'
-  const courseName = courseInfo?.courseName || courseInfo?.courseTitle || ''
-  const batchName = courseInfo?.batchName || courseInfo?.batch || ''
-  const semesterName = courseInfo?.semesterName || courseInfo?.semester || ''
-  const sectionName = courseInfo?.sectionName || courseInfo?.section || ''
+  const courseCode = resolveFieldString(courseInfo?.courseCode, 'code') || 'Course'
+  const courseName = resolveFieldString(courseInfo?.courseName || courseInfo?.courseTitle, 'name') || ''
+  const batchName = resolveFieldString(courseInfo?.batchName || courseInfo?.batch, 'batch') || ''
+  const semesterName = resolveFieldString(courseInfo?.semesterName || courseInfo?.semester, 'semester') || ''
+  const sectionName = resolveFieldString(courseInfo?.sectionName || courseInfo?.section, 'section') || ''
 
   const r1 = new Array(totalColCount).fill('')
   r1[0] = `Course: ${courseCode} — ${courseName}  |  Batch: ${batchName || 'All'}  |  Semester: ${semesterName || 'All'}  |  Section: ${sectionName || 'All'}`
@@ -417,10 +434,17 @@ export function exportStudentTableToExcel({
   // Append sheet and download
   XLSX.utils.book_append_sheet(wb, ws, 'Student Marks')
 
-  const safeCourse = (courseCode || 'Course').replace(/[^a-zA-Z0-9_-]/g, '_')
-  const safeBatch = (batchName || 'All_Batch').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const safeCourseCode = (courseCode || 'Course').trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_')
+  const safeCourseName = (courseName || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+  const safeBatch = (batchName || 'All_Batch').trim().replace(/[^a-zA-Z0-9_-]/g, '_')
   const dateStr = new Date().toISOString().split('T')[0]
-  const fileName = `Student_Table_${safeCourse}_${safeBatch}_${dateStr}.xlsx`
+
+  const fileNameParts = ['Student_Table', safeCourseCode]
+  if (safeCourseName) fileNameParts.push(safeCourseName)
+  fileNameParts.push(`Batch_${safeBatch}`)
+  fileNameParts.push(dateStr)
+
+  const fileName = `${fileNameParts.join('_')}.xlsx`
 
   XLSX.writeFile(wb, fileName)
 }

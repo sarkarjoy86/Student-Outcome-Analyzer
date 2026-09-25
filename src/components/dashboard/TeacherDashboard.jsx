@@ -3037,13 +3037,17 @@ function EditorLoadingFallback() {
                 )
 
                 const handleExportExcel = () => {
+                  const semName = offering.semester?.semesterName || offering.semester?.name || (typeof offering.semester === 'string' ? offering.semester : '')
+                  const acadYear = offering.academicYear || offering.semester?.academicYear || ''
+                  const fullSemester = (semName && acadYear && !semName.includes(acadYear)) ? `${semName} (${acadYear})` : (semName || acadYear || '')
+
                   exportStudentTableToExcel({
                     courseInfo: {
                       courseCode: offering.course?.courseCode,
-                      courseName: offering.course?.courseName,
-                      batchName: offering.batch?.name || offering.batch,
-                      semesterName: offering.semester?.name || offering.semester,
-                      sectionName: offering.section?.name || offering.section
+                      courseName: offering.course?.courseName || offering.course?.courseTitle,
+                      batchName: offering.batch?.name || offering.batch?.batchName || offering.batch,
+                      semesterName: fullSemester,
+                      sectionName: offering.section?.name || offering.section?.sectionName || offering.section
                     },
                     students,
                     cols,
