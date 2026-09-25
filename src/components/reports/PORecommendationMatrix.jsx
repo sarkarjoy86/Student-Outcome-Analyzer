@@ -299,18 +299,11 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
             <button
               onClick={handleSyncAll}
               disabled={syncingAll}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm text-xs transition duration-200 active:scale-95 disabled:opacity-50 whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold px-3 py-1.5 rounded-xl shadow-xs hover:shadow text-xs transition-all duration-200 active:scale-95 disabled:opacity-50 whitespace-nowrap cursor-pointer border border-emerald-800/20"
+              title="Synchronize and recalculate all student outcome attainments"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingAll ? 'animate-spin' : ''}`} />
-              {syncingAll ? 'Recalculating...' : 'Sync & Recalculate All'}
-            </button>
-
-            <button
-              onClick={handlePrintPDF}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-green-700 to-green-800 hover:from-green-800 hover:to-green-900 text-white font-bold px-3.5 py-1.5 rounded-lg shadow-sm text-xs transition duration-200 active:scale-95 whitespace-nowrap"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              Export PO Transcript (PDF)
+              <span>{syncingAll ? 'Recalculating...' : 'Sync & Recalculate All'}</span>
             </button>
           </div>
         </div>

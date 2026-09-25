@@ -966,11 +966,23 @@ router.get('/teacher/course-offerings/:id/marks-spreadsheet', requireAuth, async
       return docObj
     })
 
+    const sisterFilter = {
+      course: offering.course._id || offering.course,
+      batch: offering.batch._id || offering.batch
+    }
+    if (offering.semester) {
+      sisterFilter.semester = offering.semester._id || offering.semester
+    }
+    const sisterOfferings = await CourseOffering.find(sisterFilter).sort({ section: 1 })
+    const sectionNames = sisterOfferings.map(s => s.section).filter(Boolean)
+
     res.status(200).json({
       students,
       assessments: formattedAssessments,
       metadata: metadataMap,
-      marks: marksMap
+      marks: marksMap,
+      sections: sectionNames,
+      offeringCount: sisterOfferings.length
     })
   } catch (error) {
     res.status(500).json({ message: 'Error fetching marks spreadsheet data', error: error.message })

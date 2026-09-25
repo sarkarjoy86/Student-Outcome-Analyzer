@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Copy, Check, ExternalLink, Save, Edit, RotateCcw, Plus, Trash2, Calendar, Lock, Unlock, Eye, Sparkles, Loader2, AlertTriangle } from 'lucide-react'
+import { Copy, Check, ExternalLink, Save, Edit, RotateCcw, Plus, Trash2, Calendar, Lock, Unlock, Eye, Sparkles, Loader2, AlertTriangle, Share2, Clock, QrCode, ClipboardList, HelpCircle } from 'lucide-react'
 import { apiService } from '../../services/apiService'
 
 export default function SurveyManagement({ offering, onViewAnalytics }) {
@@ -313,32 +313,39 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
       )}
 
       {/* Main Info Header */}
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-150 flex flex-col md:flex-row md:items-center justify-between gap-5">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-gray-800">{survey.title}</h2>
-            <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium border ${
+      <div className="bg-white p-6 rounded-2xl shadow-md border border-emerald-100/90 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-xl font-black text-gray-900 tracking-tight">{survey.title}</h2>
+            <span className={`text-xs px-3 py-1 rounded-full font-extrabold border flex items-center gap-1.5 shadow-2xs ${
               survey.status === 'Published'
                 ? surveyClosed
-                  ? 'bg-red-50 text-red-700 border-red-200'
-                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-gray-100 text-gray-600 border-gray-200'
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-gray-100 text-gray-700 border-gray-200'
             }`}>
+              {survey.status === 'Published' && !surveyClosed && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              )}
               {survey.status === 'Published' ? (surveyClosed ? 'Closed' : 'Active') : 'Draft'}
             </span>
           </div>
-          <p className="text-xs text-gray-400">{survey.surveyId || 'DRAFT SURVEY ID'}</p>
-          <p className="text-sm text-gray-600 max-w-2xl">{survey.description}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200">
+              {survey.surveyId || 'DRAFT SURVEY ID'}
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm text-gray-600 max-w-2xl font-medium leading-relaxed pt-0.5">{survey.description}</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {survey.status === 'Published' && (
             <button
               onClick={() => onViewAnalytics(survey._id)}
-              className="px-4 py-2 border border-emerald-600 text-emerald-700 hover:bg-emerald-50 rounded-xl font-medium transition-all text-xs inline-flex items-center gap-1.5"
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-extrabold transition-all text-xs inline-flex items-center gap-1.5 shadow-xs hover:shadow cursor-pointer active:scale-95"
             >
-              <Eye size={14} />
-              View Analytics
+              <Eye size={14} className="text-emerald-200" />
+              <span>View Analytics</span>
             </button>
           )}
 
@@ -346,25 +353,25 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             <button
               disabled={publishing}
               onClick={handlePublish}
-              className="px-4 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold shadow-md transition-all text-xs inline-flex items-center gap-1.5 border border-emerald-950/20"
+              className="px-4 py-2 bg-gradient-to-r from-emerald-700 via-teal-700 to-green-800 hover:from-emerald-800 hover:to-teal-900 text-white rounded-xl font-extrabold shadow-xs hover:shadow transition-all text-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
             >
               <Lock size={14} />
-              Publish Survey
+              <span>Publish Survey</span>
             </button>
           )}
 
           {showDeleteConfirm ? (
-            <div className="flex items-center gap-2 bg-red-50 p-1.5 rounded-xl border border-red-200 animate-in fade-in duration-150">
-              <span className="text-[11px] font-semibold text-red-700">Delete all responses & survey?</span>
+            <div className="flex items-center gap-2 bg-rose-50 p-2 rounded-xl border border-rose-200 animate-in fade-in duration-150">
+              <span className="text-xs font-bold text-rose-700">Delete all responses & survey?</span>
               <button
                 onClick={handleDelete}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow"
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
               >
                 Yes, Delete
               </button>
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg text-xs font-semibold"
+                className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg text-xs font-bold cursor-pointer"
               >
                 Cancel
               </button>
@@ -372,10 +379,10 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
           ) : (
             <button
               onClick={() => setShowDeleteConfirm(true)}
-              className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl font-medium border border-red-200 transition-all text-xs inline-flex items-center gap-1.5"
+              className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold border border-rose-200 transition-all text-xs inline-flex items-center gap-1.5 cursor-pointer"
             >
               <Trash2 size={14} />
-              Delete Survey
+              <span>Delete Survey</span>
             </button>
           )}
         </div>
@@ -383,13 +390,23 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
 
       {/* Public Link Sharing Panel */}
       {survey.status === 'Published' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-800">
-              Public Link Sharing Panel
-            </h3>
+        <div className="bg-white rounded-2xl shadow-md border border-emerald-100/90 p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center border border-emerald-200">
+                <Share2 size={16} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-gray-900 uppercase tracking-wide">
+                  Public Link Sharing Panel
+                </h3>
+                <p className="text-[11px] text-gray-500 font-medium">
+                  Share this link with students so they can fill out the survey anonymously. No login is required.
+                </p>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] px-3 py-1 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 shadow-xs">
+              <span className="text-xs px-3.5 py-1.5 rounded-full font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1.5 shadow-2xs">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 {responsesCount} Response{responsesCount !== 1 ? 's' : ''} Received
               </span>
@@ -397,32 +414,28 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
                 onClick={() => refreshResponsesCount(survey._id, false)}
                 disabled={isRefreshing}
                 title="Refresh Live Responses Now"
-                className="p-1.5 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg border border-gray-200 shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center"
+                className="p-1.5 text-gray-500 hover:text-emerald-800 hover:bg-emerald-50 rounded-xl border border-gray-200 shadow-2xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center"
               >
-                <RotateCcw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                <RotateCcw size={14} className={isRefreshing ? "animate-spin text-emerald-700" : ""} />
               </button>
             </div>
           </div>
 
-          <p className="text-xs text-gray-500">
-            Share this link with students so they can fill out the survey anonymously. No login is required.
-          </p>
-
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
-            <div className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-mono text-xs text-gray-700 truncate select-all">
+            <div className="flex-1 bg-emerald-50/40 border-2 border-emerald-200/80 rounded-xl px-4 py-3 font-mono text-xs text-emerald-950 font-bold truncate select-all shadow-inner focus-within:border-emerald-600 transition-colors">
               {getDynamicPublicLink() || 'No link generated.'}
             </div>
             
             <button
               onClick={handleCopyLink}
-              className={`flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-medium text-sm shadow-sm transition-all ${
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-extrabold text-xs shadow-xs hover:shadow transition-all duration-200 active:scale-95 cursor-pointer ${
                 copied
                   ? 'bg-emerald-600 text-white'
                   : 'bg-emerald-700 hover:bg-emerald-800 text-white'
               }`}
             >
               {copied ? <Check size={16} /> : <Copy size={16} />}
-              {copied ? 'Copied!' : 'Copy Link'}
+              <span>{copied ? 'Copied Link!' : 'Copy Link'}</span>
             </button>
           </div>
 
@@ -430,22 +443,30 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
             const dynamicLink = getDynamicPublicLink()
             const dynamicQr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(dynamicLink)}`
             return (
-              <div className="flex items-center gap-6 pt-3 border-t border-gray-100">
-                <img 
-                  src={dynamicQr} 
-                  alt="Survey QR Code" 
-                  className="w-20 h-20 border p-1 bg-white rounded-lg"
-                />
+              <div className="flex items-center gap-5 pt-3 border-t border-gray-100 bg-gray-50/60 p-4 rounded-xl border border-gray-200/70">
+                <div className="p-1.5 bg-white rounded-xl border border-gray-200 shadow-2xs shrink-0">
+                  <img 
+                    src={dynamicQr} 
+                    alt="Survey QR Code" 
+                    className="w-20 h-20 rounded-lg"
+                  />
+                </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-gray-800">QR Code Access</p>
-                  <p className="text-[11px] text-gray-400 max-w-md">Students can scan this QR code with their mobile devices or tablets to open and complete the questionnaire class-wide.</p>
+                  <p className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                    <QrCode size={14} className="text-emerald-700" />
+                    QR Code Access
+                  </p>
+                  <p className="text-[11px] text-gray-500 font-medium max-w-md leading-relaxed">
+                    Students can scan this QR code with their mobile devices or tablets to open and complete the questionnaire class-wide.
+                  </p>
                   <a 
                     href={dynamicQr} 
                     target="_blank" 
                     rel="noreferrer" 
-                    className="text-xs text-emerald-700 hover:underline font-medium inline-block"
+                    className="text-xs text-emerald-700 hover:text-emerald-800 hover:underline font-bold inline-flex items-center gap-1 pt-0.5"
                   >
-                    Open QR Image Link
+                    <span>Open QR Image Link</span>
+                    <ExternalLink size={12} />
                   </a>
                 </div>
               </div>
@@ -455,14 +476,19 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
       )}
 
       {/* Submission Deadline Panel */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-0.5">
-          <h3 className="text-sm font-semibold text-gray-800">
-            Submission Deadline
-          </h3>
-          <p className="text-xs text-gray-500">
-            Set a date. The survey form will automatically block submissions after this date. (Snaps to month end)
-          </p>
+      <div className="bg-white rounded-2xl shadow-md border border-emerald-100/90 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-800 flex items-center justify-center border border-emerald-200 shrink-0">
+            <Clock size={18} />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-gray-900 uppercase tracking-wide">
+              Submission Deadline
+            </h3>
+            <p className="text-xs text-gray-500 font-medium">
+              Set a date. The survey form will automatically block submissions after this date. (Snaps to month end)
+            </p>
+          </div>
         </div>
         
         <div>
@@ -471,40 +497,49 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
               type="date"
               value={closeDate}
               onChange={e => handleDateChange(e.target.value)}
-              className="px-3.5 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-900 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
+              className="px-4 py-2 border-2 border-emerald-300 rounded-xl text-xs font-bold text-gray-900 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none shadow-2xs"
             />
           ) : (
-            <span className="text-xs px-3.5 py-1.5 rounded-lg font-medium bg-neutral-100 text-gray-700 border border-gray-200">
-              {closeDate ? (new Date(closeDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + new Date(closeDate + 'T00:00:00').getFullYear()) : 'No deadline set'}
+            <span className="text-xs px-4 py-2 rounded-xl font-extrabold bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-2xs inline-flex items-center gap-2">
+              <Calendar size={13} className="text-emerald-700" />
+              <span>{closeDate ? (new Date(closeDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }) + ', ' + new Date(closeDate + 'T00:00:00').getFullYear()) : 'No deadline set'}</span>
             </span>
           )}
         </div>
       </div>
 
       {/* Survey Question Bank */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 space-y-5">
-        <div className="flex items-center justify-between border-b border-gray-100 pb-4">
-          <h3 className="text-base font-semibold text-gray-800">
-            Survey Question Bank ({questions.length} Questions)
-          </h3>
+      <div className="bg-white rounded-2xl shadow-md border border-emerald-100/90 p-6 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center border border-emerald-200">
+              <ClipboardList size={16} />
+            </div>
+            <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+              <span>Survey Question Bank</span>
+              <span className="text-xs px-2.5 py-0.5 rounded-full font-black bg-emerald-100 text-emerald-900 border border-emerald-200">
+                {questions.length} Questions
+              </span>
+            </h3>
+          </div>
           <div className="flex items-center gap-2">
             {editing ? (
               <>
                 {hasCustomQuestions && (
                   <button
                     onClick={handleResetDefaults}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-white hover:bg-red-50 border border-red-300 transition-all"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-all cursor-pointer"
                   >
                     <RotateCcw size={13} />
-                    Reset to Defaults
+                    <span>Reset to Defaults</span>
                   </button>
                 )}
                 <button
                   onClick={handleSave}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 shadow-md transition-all border border-emerald-950/20"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold text-white bg-emerald-700 hover:bg-emerald-800 shadow-xs hover:shadow transition-all cursor-pointer"
                 >
                   <Save size={14} />
-                  Save Changes
+                  <span>Save Changes</span>
                 </button>
               </>
             ) : (
@@ -512,18 +547,18 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
                 {hasCustomQuestions && (
                   <button
                     onClick={handleResetDefaults}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-white hover:bg-red-50 border border-red-300 transition-all"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-all cursor-pointer"
                   >
                     <RotateCcw size={13} />
-                    Reset to Defaults
+                    <span>Reset to Defaults</span>
                   </button>
                 )}
                 <button
                   onClick={() => setEditing(true)}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 bg-white hover:bg-emerald-50 border border-emerald-600 transition-all"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-2xs transition-all cursor-pointer"
                 >
                   <Edit size={14} className="text-emerald-700" />
-                  Edit Settings & Questions
+                  <span>Edit Settings & Questions</span>
                 </button>
               </>
             )}
@@ -533,8 +568,8 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
         {/* Remarks description block */}
         {!editing && (
           <div className="space-y-1.5">
-            <label className="text-[11px] text-gray-400 uppercase tracking-wider block font-semibold">Remarks Guideline / Description</label>
-            <div className="text-sm text-gray-650 bg-gray-50 border border-gray-150 p-3 rounded-xl font-normal leading-relaxed">
+            <label className="text-[11px] text-gray-500 uppercase tracking-wider block font-bold">Remarks Guideline / Description</label>
+            <div className="text-sm text-gray-700 bg-emerald-50/20 border border-emerald-100 p-3.5 rounded-xl font-medium leading-relaxed">
               {description || 'No instruction guideline provided.'}
             </div>
           </div>
@@ -554,15 +589,15 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
           return (
             <div key={sec.key} className="space-y-3 pt-1">
               {/* Green section title bar */}
-              <div className="bg-[#047857] text-white px-4 py-2.5 rounded-lg text-xs flex justify-between items-center shadow-sm uppercase tracking-wide">
-                <span className="font-semibold">{sec.title}</span>
+              <div className="bg-gradient-to-r from-emerald-900 via-green-800 to-teal-900 text-white px-4 py-3 rounded-xl text-xs flex justify-between items-center shadow-xs uppercase tracking-wide font-black">
+                <span>{sec.title}</span>
                 {editing && survey.status === 'Draft' && (
                   <button
                     onClick={() => handleAddQuestion(sec.key)}
-                    className="flex items-center gap-1 text-[10px] px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-md font-semibold transition-all text-white border border-white/20"
+                    className="flex items-center gap-1 text-[11px] px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg font-bold transition-all text-white border border-white/20 cursor-pointer"
                   >
                     <Plus size={12} />
-                    Add Question
+                    <span>Add Question</span>
                   </button>
                 )}
               </div>
@@ -690,17 +725,17 @@ export default function SurveyManagement({ offering, onViewAnalytics }) {
           )
         })}
 
-        {/* Dynamic Customizable Section 6 Comment promts block */}
+        {/* Dynamic Customizable Section 6 Comment prompts block */}
         <div className="space-y-3 pt-2 mt-4">
-          <div className="bg-[#047857] text-white px-4 py-2.5 rounded-lg text-xs flex justify-between items-center shadow-sm uppercase tracking-wide">
-            <span className="font-bold">SECTION 6: STUDENT FEEDBACK (Open-Ended Questions)</span>
+          <div className="bg-gradient-to-r from-emerald-900 via-green-800 to-teal-900 text-white px-4 py-3 rounded-xl text-xs flex justify-between items-center shadow-xs uppercase tracking-wide font-black">
+            <span>SECTION 6: STUDENT FEEDBACK (Open-Ended Questions)</span>
             {editing && survey.status === 'Draft' && (
               <button
                 onClick={() => handleAddQuestion('Section 6')}
-                className="flex items-center gap-1 text-[10px] px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-md font-semibold transition-all text-white border border-white/20"
+                className="flex items-center gap-1 text-[11px] px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg font-bold transition-all text-white border border-white/20 cursor-pointer"
               >
                 <Plus size={12} />
-                Add Question
+                <span>Add Question</span>
               </button>
             )}
           </div>

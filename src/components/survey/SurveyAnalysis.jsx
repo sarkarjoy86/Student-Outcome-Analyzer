@@ -570,7 +570,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-extrabold text-gray-900">Student Course Survey Analysis & Report</h2>
+              <h2 className="text-xl font-extrabold text-gray-900">Student Course Survey Analysis</h2>
               <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full border border-emerald-200 text-[11px] font-bold shadow-xs">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 Live Sync Active
@@ -590,22 +590,6 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-2 px-4 py-2 bg-green-800 hover:bg-green-900 text-white rounded-xl font-bold text-xs shadow-md transition"
-          >
-            <Printer size={15} />
-            Print Survey Report
-          </button>
-          <button
-            onClick={handleDownloadWordReport}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 hover:from-emerald-600 hover:via-emerald-700 hover:to-teal-900 text-white rounded-xl font-bold text-xs shadow-md transition border border-emerald-950/20"
-          >
-            <Download size={15} />
-            Download Word (.doc)
-          </button>
-        </div>
       </div>
 
       {/* Executive Summary Stats */}

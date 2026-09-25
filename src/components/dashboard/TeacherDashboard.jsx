@@ -129,6 +129,50 @@ const getQBankSessionName = (paper) => {
   return name
 }
 
+const isExtraCT = (a) => Boolean(a && (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct'))))
+
+const isMatchingExtraCT = (extra, stdCT) => {
+  if (!isExtraCT(extra)) return false
+  const stdId = stdCT._id ? stdCT._id.toString() : (stdCT.id ? stdCT.id.toString() : '')
+  if (extra.parentCTId && stdId && extra.parentCTId.toString() === stdId) return true
+  if (extra.parentCTName && stdCT.name && extra.parentCTName.trim().toLowerCase() === stdCT.name.trim().toLowerCase()) return true
+  if (!extra.parentCTId && !extra.parentCTName && extra.co && stdCT.co && extra.co !== 'NONE' && extra.co === stdCT.co) return true
+  return false
+}
+
+// Helper to resolve the target CT name that an Extra CT was created to improve/replace
+const getTargetCTName = (extraAsmt, standardCTs = []) => {
+  if (!extraAsmt) return 'CT-2'
+  if (extraAsmt.parentCTName) {
+    return extraAsmt.parentCTName.replace(/^\(|\)$/g, '').trim()
+  }
+  if (extraAsmt.parentCTId) {
+    const parent = standardCTs.find(s => 
+      (s._id && s._id.toString() === extraAsmt.parentCTId.toString()) ||
+      (s.id && s.id.toString() === extraAsmt.parentCTId.toString())
+    )
+    if (parent?.name) return parent.name.replace(/^\(|\)$/g, '').trim()
+  }
+  if (extraAsmt.name) {
+    const match = extraAsmt.name.match(/\((?:for\s+)?(CT-?\s*\d+)\)/i) || extraAsmt.name.match(/\(([^)]+)\)/)
+    if (match && match[1]) {
+      const candidate = match[1].replace(/^for\s+/i, '').trim()
+      const found = standardCTs.find(s => s.name && s.name.trim().toLowerCase() === candidate.toLowerCase())
+      if (found?.name) return found.name.replace(/^\(|\)$/g, '').trim()
+      if (/^CT-?\s*\d+/i.test(candidate)) return candidate
+    }
+  }
+  const matched = standardCTs.find(s => isMatchingExtraCT(extraAsmt, s))
+  if (matched?.name) return matched.name.replace(/^\(|\)$/g, '').trim()
+
+  if (extraAsmt.co && extraAsmt.co !== 'NONE') {
+    const byCO = standardCTs.find(s => s.co === extraAsmt.co)
+    if (byCO?.name) return byCO.name.replace(/^\(|\)$/g, '').trim()
+  }
+
+  return 'CT-2'
+}
+
 export default function TeacherDashboard({ offering: propOffering, onBackToDashboard, user }) {
   const { setIsEditingActive } = useAuth()
   const [offering, setOffering] = useState(propOffering)
@@ -259,6 +303,21 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [reportScope, setReportScope] = useState('section') // 'section' or 'combined'
   const [combinedBatchSpreadsheetData, setCombinedBatchSpreadsheetData] = useState(null)
   const [loadingCombinedBatch, setLoadingCombinedBatch] = useState(false)
+
+  // Prefetch combined batch data when reports tab is visited so section count is instantly known
+  useEffect(() => {
+    if (activeTab === 'reports' && offering?._id && !combinedBatchSpreadsheetData && !loadingCombinedBatch) {
+      apiService.getCombinedBatchSpreadsheet(offering._id)
+        .then(res => {
+          if (res) {
+            setCombinedBatchSpreadsheetData(res)
+          }
+        })
+        .catch(err => {
+          console.warn('Silent prefetch of combined batch data failed:', err)
+        })
+    }
+  }, [activeTab, offering?._id, combinedBatchSpreadsheetData, loadingCombinedBatch])
 
   // CO-PO Mapping States
   const [coMapping, setCoMapping] = useState({})
@@ -2695,21 +2754,25 @@ function EditorLoadingFallback() {
                 const credits = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
                 const standardCTCount = Math.max(1, Math.floor(credits))
                 const ctAsmts = allAsmts.filter(a => a.type === 'cts')
-                const stdCTs = ctAsmts.filter(a => !a.isExtraCT && !(a.name && a.name.toLowerCase().startsWith('extra ct')))
+                const stdCTs = ctAsmts.filter(a => !isExtraCT(a))
 
                 // CTs
                 ctAsmts.forEach(a => {
                   const qMeta = meta[a._id?.toString()] || []
                   const mappedCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
-                  const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+                  const isExtra = isExtraCT(a)
                   const displayName = isExtra ? `Extra CT (CT-${standardCTCount + 1})` : a.name
+                  const targetCT = isExtra ? getTargetCTName(a, stdCTs) : null
                   cols.push({
                     id: a._id?.toString() || `cts_${a.name}`,
                     name: displayName,
                     parent: 'CT',
                     assessment: a,
                     isQuestion: false,
-                    co: mappedCO,
+                    isExtraCT: isExtra,
+                    targetCTName: targetCT,
+                    co: isExtra ? targetCT : mappedCO,
+                    rawCO: mappedCO,
                     maxMarks: parseFloat(a.maxMarks) || 0
                   })
                 })
@@ -2785,10 +2848,9 @@ function EditorLoadingFallback() {
                 const getColMark = (student, col) => {
                   if (col.isBestCTTotal) {
                     let bestSum = 0
-                    const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.slice(0, standardCTCount)
+                    const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.filter(a => !isExtraCT(a)).slice(0, standardCTCount)
                     activeStdCTs.forEach(stdCT => {
-                      const stdId = stdCT._id ? stdCT._id.toString() : ''
-                      const extraList = ctAsmts.filter(a => (a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct'))) && (a.parentCTId?.toString() === stdId || a.parentCTName === stdCT.name || true))
+                      const extraList = ctAsmts.filter(a => isMatchingExtraCT(a, stdCT))
                       const pairedGroup = [stdCT, ...extraList]
                       const marks = pairedGroup.map(asmt => parseFloat(getStudentAssessmentMark(student, asmt) || 0))
                       bestSum += Math.max(0, ...marks)
@@ -2846,6 +2908,7 @@ function EditorLoadingFallback() {
                 // Compute student totals taking Best CTs for paired CT slots
                 const studentTotals = {}
                 const nonCTs = allAsmts.filter(a => a.type !== 'cts')
+                const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.filter(a => !isExtraCT(a)).slice(0, standardCTCount)
 
                 students.forEach(s => {
                   let obtained = 0
@@ -2855,9 +2918,8 @@ function EditorLoadingFallback() {
                   })
 
                   // CT slots (Standard CT + Extra CT pair best mark)
-                  stdCTs.forEach(stdCT => {
-                    const stdId = stdCT._id ? stdCT._id.toString() : ''
-                    const extraList = ctAsmts.filter(a => a.isExtraCT && (a.parentCTId?.toString() === stdId || a.parentCTName === stdCT.name))
+                  activeStdCTs.forEach(stdCT => {
+                    const extraList = ctAsmts.filter(a => isMatchingExtraCT(a, stdCT))
                     const pairedGroup = [stdCT, ...extraList]
                     const marks = pairedGroup.map(asmt => parseFloat(getStudentAssessmentMark(s, asmt) || 0))
                     obtained += Math.max(0, ...marks)
@@ -3196,8 +3258,9 @@ function EditorLoadingFallback() {
                     const isDirectMarksType = ['attendance', 'performance', 'participation'].includes(a.type) ||
                       aTypeLower === 'attendance' || aTypeLower === 'performance' || aTypeLower === 'participation' ||
                       aNameLower.includes('attendance') || aNameLower.includes('performance') || aNameLower.includes('participation')
-                    const isExtra = Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
-                    const targetParentName = a.parentCTName || (a.name?.match(/\(([^)]+)\)/)?.[1]?.replace(/^for\s+/i, '') || '')
+                    const isExtra = isExtraCT(a)
+                    const stdCTsList = assessments.filter(c => c.type === 'cts' && !isExtraCT(c))
+                    const targetParentName = isExtra ? getTargetCTName(a, stdCTsList) : ''
                     const creditsVal = parseFloat(offering?.course?.creditHours || offering?.course?.numCredits) || 3
                     const standardCTCount = Math.max(1, Math.floor(creditsVal))
 
@@ -5177,7 +5240,9 @@ function EditorLoadingFallback() {
                     )
                   }
 
-                  const sectionsList = activeSpreadsheetData.sections || [offering.section]
+                  const sectionsList = activeSpreadsheetData?.sections || marksSpreadsheetData?.sections || (offering.section ? [offering.section] : [])
+                  const offeringCount = activeSpreadsheetData?.offeringCount || marksSpreadsheetData?.offeringCount || sectionsList.length
+                  const hasMultipleSections = sectionsList.length > 1 || offeringCount > 1
                   const sectionDisplayName = reportScope === 'combined'
                     ? (sectionsList.length > 1 ? `All Sections (${sectionsList.join(', ')})` : `Section ${offering.section}`)
                     : offering.section
@@ -5208,6 +5273,7 @@ function EditorLoadingFallback() {
                       dbProgramOutcomes={dbProgramOutcomes}
                       reportScope={reportScope}
                       onReportScopeChange={setReportScope}
+                      hasMultipleSections={hasMultipleSections}
                     />
                   )
                 })()}
@@ -5223,7 +5289,12 @@ function EditorLoadingFallback() {
                 <p className="text-gray-500 font-semibold">Loading Course Survey...</p>
               </div>
             }>
-              <CourseSurvey offering={offering} />
+              <CourseSurvey
+                offering={offering}
+                dbCourseOutcomes={dbCourseOutcomes}
+                dbProgramOutcomes={dbProgramOutcomes}
+                coMapping={coMapping}
+              />
             </Suspense>
           )}
 

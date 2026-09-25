@@ -71,24 +71,66 @@ const Results = ({ students, marks, assessments, courseInfo }) => {
       allAssessments.push({ ...assessments.performance, name: 'Performance', type: 'performance' })
     }
 
-    // Calculate total max marks by summing ALL assessment max marks from Excel
-    const totalMaxMarks = allAssessments.reduce(
-      (sum, a) => {
-        const maxMark = parseFloat(a.maxMarks) || 0
-        return sum + maxMark
-      },
-      0
-    )
+    const isExtraCT = (a) => Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+    const isMatchingExtraCT = (extra, stdCT) => {
+      if (!isExtraCT(extra)) return false
+      const stdId = stdCT._id ? stdCT._id.toString() : (stdCT.id ? stdCT.id.toString() : '')
+      if (extra.parentCTId && stdId && extra.parentCTId.toString() === stdId) return true
+      if (extra.parentCTName && stdCT.name && extra.parentCTName.trim().toLowerCase() === stdCT.name.trim().toLowerCase()) return true
+      if (!extra.parentCTId && !extra.parentCTName && extra.co && stdCT.co && extra.co !== 'NONE' && extra.co === stdCT.co) return true
+      return false
+    }
+
+    // Calculate total max marks by summing assessment max marks excluding Extra CTs
+    const totalMaxMarks = allAssessments
+      .filter(a => !(a.type === 'cts' && isExtraCT(a)))
+      .reduce((sum, a) => sum + (parseFloat(a.maxMarks) || 0), 0)
+
+    const ctAsmts = allAssessments.filter(a => a.type === 'cts')
+    const stdCTs = ctAsmts.filter(a => !isExtraCT(a))
+    const extraCTs = ctAsmts.filter(a => isExtraCT(a))
+    const nonCTs = allAssessments.filter(a => a.type !== 'cts')
 
     // Calculate results for each student
     return students.map((student) => {
-      // Calculate total obtained marks
       let totalObtainedMarks = 0
       
-      allAssessments.forEach((assessment) => {
+      nonCTs.forEach((assessment) => {
         const key = `${assessment.type}_${assessment.name}`
-        const mark = parseFloat(marks[student.id]?.[key] || 0) || 0
+        const aId = assessment._id ? assessment._id.toString() : ''
+        const studentDbId = student._id ? student._id.toString() : ''
+        const mark = parseFloat(
+          (studentDbId && marks[studentDbId]?.[aId]?.totalMark) ??
+          (marks[student.id]?.[aId]?.totalMark) ??
+          marks[student.id]?.[key] ??
+          0
+        ) || 0
         totalObtainedMarks += mark
+      })
+
+      const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.slice(0, 3)
+      activeStdCTs.forEach((stdCT) => {
+        const matchingExtras = extraCTs.filter(extra => isMatchingExtraCT(extra, stdCT))
+        const stdKey = `${stdCT.type}_${stdCT.name}`
+        const stdAId = stdCT._id ? stdCT._id.toString() : ''
+        const studentDbId = student._id ? student._id.toString() : ''
+        const stdMark = parseFloat(
+          (studentDbId && marks[studentDbId]?.[stdAId]?.totalMark) ??
+          (marks[student.id]?.[stdAId]?.totalMark) ??
+          marks[student.id]?.[stdKey] ??
+          0
+        ) || 0
+        const extraMarks = matchingExtras.map(extra => {
+          const eKey = `${extra.type}_${extra.name}`
+          const eAId = extra._id ? extra._id.toString() : ''
+          return parseFloat(
+            (studentDbId && marks[studentDbId]?.[eAId]?.totalMark) ??
+            (marks[student.id]?.[eAId]?.totalMark) ??
+            marks[student.id]?.[eKey] ??
+            0
+          ) || 0
+        })
+        totalObtainedMarks += Math.max(stdMark, ...extraMarks)
       })
 
       // Calculate percentage

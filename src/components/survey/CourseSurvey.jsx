@@ -1,10 +1,17 @@
 import { useState, useEffect } from 'react'
-import { ClipboardList, BarChart3, Loader2 } from 'lucide-react'
+import { ClipboardList, BarChart3, Loader2, Award, FileText } from 'lucide-react'
 import SurveyManagement from './SurveyManagement'
 import SurveyAnalysis from './SurveyAnalysis'
+import StudentFeedbackReport from './StudentFeedbackReport'
+import CourseEvaluationByTeacher from './CourseEvaluationByTeacher'
 import { apiService } from '../../services/apiService'
 
-export default function CourseSurvey({ offering }) {
+export default function CourseSurvey({
+  offering,
+  dbCourseOutcomes = [],
+  dbProgramOutcomes = [],
+  coMapping = {},
+}) {
   const [subTab, setSubTab] = useState('management')
   const [surveyId, setSurveyId] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -31,7 +38,9 @@ export default function CourseSurvey({ offering }) {
 
   const tabs = [
     { id: 'management', label: 'Survey Management', icon: ClipboardList },
-    { id: 'analysis', label: 'Survey Analysis & Report', icon: BarChart3 },
+    { id: 'analysis', label: 'Survey Analysis', icon: BarChart3 },
+    { id: 'feedback-report', label: 'Student Feedback Report', icon: FileText },
+    { id: 'evaluation', label: 'Course Evaluation by Teacher', icon: Award },
   ]
 
   if (loading) {
@@ -123,6 +132,28 @@ export default function CourseSurvey({ offering }) {
             </button>
           </div>
         )
+      )}
+
+      {subTab === 'feedback-report' && (
+        <StudentFeedbackReport
+          offering={offering}
+          surveyId={surveyId}
+          courseOutcomes={dbCourseOutcomes}
+          programOutcomes={dbProgramOutcomes}
+          coMapping={coMapping}
+          onBack={() => setSubTab('analysis')}
+        />
+      )}
+
+      {subTab === 'evaluation' && (
+        <CourseEvaluationByTeacher
+          offering={offering}
+          surveyId={surveyId}
+          courseOutcomes={dbCourseOutcomes}
+          programOutcomes={dbProgramOutcomes}
+          coMapping={coMapping}
+          onBack={() => setSubTab('management')}
+        />
       )}
     </div>
   )

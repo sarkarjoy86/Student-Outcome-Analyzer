@@ -58,6 +58,17 @@ const getAllAssessments = (assessments) => {
   return all
 }
 
+const isExtraCT = (a) => Boolean(a.isExtraCT || (a.name && a.name.toLowerCase().startsWith('extra ct')))
+
+const isMatchingExtraCT = (extra, stdCT) => {
+  if (!isExtraCT(extra)) return false
+  const stdId = stdCT._id ? stdCT._id.toString() : (stdCT.id ? stdCT.id.toString() : '')
+  if (extra.parentCTId && stdId && extra.parentCTId.toString() === stdId) return true
+  if (extra.parentCTName && stdCT.name && extra.parentCTName.trim().toLowerCase() === stdCT.name.trim().toLowerCase()) return true
+  if (!extra.parentCTId && !extra.parentCTName && extra.co && stdCT.co && extra.co !== 'NONE' && extra.co === stdCT.co) return true
+  return false
+}
+
 /**
  * Calculate CO percentage for a single student
  * Excel Formula: Sum of ((Student Mark / Max Mark) * (Assessment Max / Total CO Max)) * 100
@@ -67,9 +78,81 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
   const allAssessments = getAllAssessments(assessments)
   const normCo = co.replace(/\s+/g, '').toUpperCase()
 
-  // 1. Calculate total max marks for this CO
+  const ctAsmts = allAssessments.filter(a => a.type === 'cts')
+  const stdCTs = ctAsmts.filter(a => !isExtraCT(a))
+  const extraCTs = ctAsmts.filter(a => isExtraCT(a))
+  const nonCTs = allAssessments.filter(a => a.type !== 'cts')
+
+  // Helper to extract obtained mark for any assessment
+  const getObtainedFromAssessment = (a) => {
+    const aId = a._id ? a._id.toString() : ''
+    let sMarks = null
+    if (studentDbId && marks[studentDbId]?.[aId]) {
+      sMarks = marks[studentDbId][aId]
+    } else if (marks[studentId]?.[aId]) {
+      sMarks = marks[studentId][aId]
+    } else {
+      const key = `${a.type}_${a.name}`
+      return parseFloat(marks[studentId]?.[key] || 0) || 0
+    }
+    if (!sMarks) return 0
+
+    const questions = metadataMap[aId]
+    if (questions && questions.length > 0) {
+      let qTotal = 0
+      questions.forEach(q => {
+        const qCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (qCo === normCo) {
+          const rawNum = q.questionNumber
+          const plainNum = String(rawNum || '').replace(/^Q/i, '')
+          const val = parseFloat(
+            sMarks.questionMarks?.[rawNum] ??
+            sMarks.questionMarks?.[plainNum] ??
+            sMarks.questionMarks[`Q${plainNum}`] ??
+            0
+          ) || 0
+          qTotal += val
+        }
+      })
+      if (qTotal === 0 && questions.length === 1) {
+        const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (coKey === normCo) {
+          qTotal = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+        }
+      }
+      return qTotal
+    } else {
+      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (coKey === normCo) {
+        return parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
+      }
+      return 0
+    }
+  }
+
+  // 1. Calculate total max marks for this CO (Excluding Extra CTs to avoid inflating syllabus total)
   let totalCOMaxMarks = 0
-  allAssessments.forEach(a => {
+
+  nonCTs.forEach(a => {
+    const aId = a._id ? a._id.toString() : ''
+    const questions = metadataMap[aId]
+    if (questions && questions.length > 0) {
+      questions.forEach(q => {
+        const qCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
+        if (qCo === normCo) {
+          totalCOMaxMarks += parseFloat(q.maxMarks) || 0
+        }
+      })
+    } else {
+      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (coKey === normCo) {
+        totalCOMaxMarks += parseFloat(a.maxMarks) || 0
+      }
+    }
+  })
+
+  const activeStdCTs = stdCTs.length > 0 ? stdCTs : ctAsmts.slice(0, 3)
+  activeStdCTs.forEach(a => {
     const aId = a._id ? a._id.toString() : ''
     const questions = metadataMap[aId]
     if (questions && questions.length > 0) {
@@ -91,55 +174,19 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
 
   // 2. Calculate obtained marks for this CO for this student
   let totalObtained = 0
-  allAssessments.forEach(a => {
-    const aId = a._id ? a._id.toString() : ''
-    
-    // Check marks using either database ObjectId (studentDbId) or student roll/id (studentId)
-    let sMarks = null
-    if (studentDbId && marks[studentDbId]?.[aId]) {
-      sMarks = marks[studentDbId][aId]
-    } else if (marks[studentId]?.[aId]) {
-      sMarks = marks[studentId][aId]
-    } else {
-      // Fallback: maybe flat marks mapped by assessment type & name
-      const key = `${a.type}_${a.name}`
-      const studentMark = parseFloat(marks[studentId]?.[key] || 0) || 0
-      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
-      if (coKey === normCo) {
-        totalObtained += studentMark
-      }
-      return
-    }
 
-    const questions = metadataMap[aId]
-    if (questions && questions.length > 0) {
-      questions.forEach(q => {
-        const qCo = (q.co || a.co || '').replace(/\s+/g, '').toUpperCase()
-        if (qCo === normCo) {
-          let obtainedMark = 0
-          if (sMarks.questionMarks) {
-            const rawNum = q.questionNumber
-            const plainNum = String(rawNum || '').replace(/^Q/i, '')
-            obtainedMark = parseFloat(
-              sMarks.questionMarks[rawNum] ??
-              sMarks.questionMarks[plainNum] ??
-              sMarks.questionMarks[`Q${plainNum}`] ??
-              0
-            ) || 0
-          }
-          if (obtainedMark === 0 && questions.length === 1) {
-            obtainedMark = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
-          }
-          totalObtained += obtainedMark
-        }
-      })
-    } else {
-      const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
-      if (coKey === normCo) {
-        const obtainedMark = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
-        totalObtained += obtainedMark
-      }
-    }
+  // Non-CT assessments
+  nonCTs.forEach(a => {
+    totalObtained += getObtainedFromAssessment(a)
+  })
+
+  // CT assessments (with paired Extra CT best-mark replacement)
+  activeStdCTs.forEach(stdCT => {
+    const matchingExtras = extraCTs.filter(extra => isMatchingExtraCT(extra, stdCT))
+    const stdMark = getObtainedFromAssessment(stdCT)
+    const extraMarks = matchingExtras.map(extra => getObtainedFromAssessment(extra))
+    const bestMark = Math.max(stdMark, ...extraMarks)
+    totalObtained += bestMark
   })
 
   return (totalObtained / totalCOMaxMarks) * 100
@@ -359,6 +406,9 @@ export const getCOMarkAllocations = (assessments, metadataMap = {}) => {
     
     let totalCOMaxMarks = 0
     allAssessments.forEach(a => {
+      // Extra CTs are replacement/improvement tests that do NOT add extra syllabus marks
+      if (a.type === 'cts' && isExtraCT(a)) return
+
       const aId = a._id ? a._id.toString() : ''
       const questions = metadataMap[aId]
       if (questions && questions.length > 0) {
