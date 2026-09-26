@@ -1,146 +1,317 @@
+"""
+train_sbert.py — Enterprise-Grade OBE SBERT Continual Learning Pipeline
+========================================================================
+Warm-start  : ml-service/models/sbert-obe-csematch  (existing fine-tuned weights)
+Dataset     : OBE_Augmented_Dataset.xlsx  Sheet: Unique_Master_Questions (7 009 rows)
+Loss        : MultipleNegativesRankingLoss (in-batch hard negatives)
+Optimizer   : AdamW  lr=2e-5  weight_decay=0.01  warmup=10% of total steps
+Output      : ml-service/models/sbert-obe-csematch  (all HF-deployable artifacts)
+"""
+
 import os
 import sys
+import time
+import random
 import logging
+import warnings
+
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader
-from sklearn.model_selection import GroupShuffleSplit
 from sentence_transformers import SentenceTransformer, InputExample
 from sentence_transformers.losses import MultipleNegativesRankingLoss
 from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator
 
-# Configure Logging
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging — UTF-8 safe on Windows
+# ─────────────────────────────────────────────────────────────────────────────
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("train_sbert")
 
-# Resolve Paths
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
-DATASET_PATH = os.path.join(PROJECT_ROOT, "dataset", "OBE_NLP_Dataset.xlsx")
+# ─────────────────────────────────────────────────────────────────────────────
+# Path Resolution
+# ─────────────────────────────────────────────────────────────────────────────
+SCRIPT_DIR       = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT     = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+DATASET_PATH     = os.path.join(PROJECT_ROOT, "dataset", "OBE_Augmented_Dataset.xlsx")
+SHEET_NAME       = "Unique_Master_Questions"
 OUTPUT_MODEL_DIR = os.path.join(PROJECT_ROOT, "models", "sbert-obe-csematch")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Hyper-parameters
+# ─────────────────────────────────────────────────────────────────────────────
+EPOCHS          = 4
+BATCH_SIZE      = 32          # adaptive: falls back to 16 if VRAM < 4 GB
+LEARNING_RATE   = 2e-5
+WEIGHT_DECAY    = 0.01
+WARMUP_RATIO    = 0.10
+EVAL_STEPS      = 100
+VAL_SPLIT_RATIO = 0.10
+RANDOM_STATE    = 42
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _banner(text: str, width: int = 70) -> None:
+    border = "=" * width
+    logger.info(border)
+    logger.info(text.center(width))
+    logger.info(border)
+
+
+def _group_shuffle_split(df: pd.DataFrame, group_col: str, val_ratio: float, seed: int):
+    """
+    Group-aware train/val split.
+    Each unique (Course Name || CO) combination is one group so that all
+    augmented variants of the same exam question land entirely in train OR val.
+    """
+    unique_groups = list(df[group_col].unique())
+    rng = random.Random(seed)
+    rng.shuffle(unique_groups)
+
+    split_point    = max(1, int(len(unique_groups) * val_ratio))
+    val_groups_set = set(unique_groups[:split_point])
+
+    val_mask = df[group_col].isin(val_groups_set)
+    train_df = df[~val_mask].copy().reset_index(drop=True)
+    val_df   = df[val_mask].copy().reset_index(drop=True)
+
+    # Strict leakage assertion
+    overlap = set(train_df[group_col].unique()) & set(val_df[group_col].unique())
+    assert len(overlap) == 0, f"Data leakage detected: {len(overlap)} overlapping groups!"
+
+    return train_df, val_df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
 
 def train_pipeline():
-    logger.info("=" * 65)
-    logger.info("Starting OBE SBERT Fine-Tuning Pipeline")
-    logger.info("=" * 65)
+    pipeline_start = time.time()
+    _banner("OBE SBERT Continual Learning Pipeline  v3.0")
 
-    # 1. Device Resolution
+    # ── Step 1 · Device Resolution ──────────────────────────────────────────
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    gpu_name = torch.cuda.get_device_name(0) if device == "cuda" else "None"
-    logger.info(f"Active Compute Device: {device.upper()} (GPU: {gpu_name})")
+    if device == "cuda":
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_gb  = torch.cuda.get_device_properties(0).total_memory / 1e9
+        logger.info(f"[GPU] {gpu_name}  |  VRAM: {vram_gb:.1f} GB")
+    else:
+        logger.warning("[Device] CUDA not available — training on CPU (this will be slow).")
+    logger.info(f"Active compute device: {device.upper()}")
 
-    # 2. Load Dataset
+    # ── Step 2 · Data Ingestion ──────────────────────────────────────────────
     if not os.path.exists(DATASET_PATH):
-        raise FileNotFoundError(f"Dataset file not found at: {DATASET_PATH}")
+        raise FileNotFoundError(f"Dataset not found: {DATASET_PATH}")
 
-    logger.info(f"Loading master dataset from: {DATASET_PATH}")
-    df = pd.read_excel(DATASET_PATH, sheet_name="OBE_Augmented_Dataset")
-    total_rows = len(df)
-    logger.info(f"Total dataset rows loaded: {total_rows}")
+    logger.info(f"Loading dataset   : {DATASET_PATH}")
+    logger.info(f"Target sheet      : {SHEET_NAME}")
+    df = pd.read_excel(DATASET_PATH, sheet_name=SHEET_NAME)
+    logger.info(f"Raw rows loaded   : {len(df):,}")
 
-    # 3. Prevent Data Leakage (GroupShuffleSplit on Question Families)
-    # Each question family contains exactly 4 consecutive rows
-    df["group_id"] = df.index // 4
-    total_groups = df["group_id"].nunique()
-    logger.info(f"Total question families (groups): {total_groups} (4 rows/group)")
+    # Validate required columns
+    required_cols = ["Question", "CO Description", "CO", "Course Name"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns in dataset: {missing}")
 
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.10, random_state=42)
-    train_indices, val_indices = next(gss.split(df, groups=df["group_id"]))
+    # Strip whitespace and drop empties / NaN placeholders
+    for col in ["Question", "CO Description", "CO", "Course Name"]:
+        df[col] = df[col].astype(str).str.strip()
 
-    train_df = df.iloc[train_indices].copy().reset_index(drop=True)
-    val_df = df.iloc[val_indices].copy().reset_index(drop=True)
+    before = len(df)
+    df = df[
+        (df["Question"]       != "") & (df["Question"]       != "nan") &
+        (df["CO Description"] != "") & (df["CO Description"] != "nan")
+    ].reset_index(drop=True)
+    dropped = before - len(df)
+    if dropped:
+        logger.info(f"Dropped {dropped} empty/NaN rows. Remaining: {len(df):,}")
+    else:
+        logger.info(f"All {len(df):,} rows passed quality filter (0 empty rows).")
 
-    train_groups = set(train_df["group_id"].unique())
-    val_groups = set(val_df["group_id"].unique())
+    # ── Step 3 · Group-Aware Train / Val Split ───────────────────────────────
+    df["_group_key"] = df["Course Name"] + "||" + df["CO"]
+    total_groups     = df["_group_key"].nunique()
+    logger.info(f"Unique question groups (Course + CO): {total_groups:,}")
 
-    # Strict Data Leakage Assertion
-    overlap = train_groups.intersection(val_groups)
-    assert len(overlap) == 0, f"Critical Data Leakage: Found overlapping groups: {overlap}"
-
-    logger.info(
-        f"Data split summary: Train = {len(train_df)} rows ({len(train_groups)} groups, {len(train_groups)/total_groups*100:.1f}%), "
-        f"Validation = {len(val_df)} rows ({len(val_groups)} groups, {len(val_groups)/total_groups*100:.1f}%)"
+    train_df, val_df = _group_shuffle_split(
+        df, "_group_key", VAL_SPLIT_RATIO, RANDOM_STATE
     )
-    logger.info("✓ Zero data leakage verified: Train and Validation sets share 0 question families.")
+    n_train_g = train_df["_group_key"].nunique()
+    n_val_g   = val_df["_group_key"].nunique()
+    logger.info(
+        f"Split  Train : {len(train_df):,} rows | {n_train_g:,} groups "
+        f"({len(train_df)/len(df)*100:.1f}%)"
+    )
+    logger.info(
+        f"Split  Val   : {len(val_df):,} rows  | {n_val_g:,} groups "
+        f"({len(val_df)/len(df)*100:.1f}%)"
+    )
+    logger.info("Zero data leakage verified — Train and Val share 0 question groups.")
 
-    # 4. Build Training Pairs (Contrastive Learning with InputExample)
-    logger.info("Constructing training pairs (Question <-> CO Description)...")
-    train_examples = []
-    for _, row in train_df.iterrows():
-        question_text = str(row["Question"]).strip()
-        co_desc = str(row["CO Description"]).strip()
-        if question_text and co_desc:
-            train_examples.append(InputExample(texts=[question_text, co_desc]))
+    # ── Step 4 · Build Training InputExamples ────────────────────────────────
+    logger.info("Building InputExample pairs (Question <-> CO Description) ...")
+    train_examples = [
+        InputExample(texts=[row["Question"], row["CO Description"]])
+        for _, row in train_df.iterrows()
+    ]
+    logger.info(f"Training InputExamples: {len(train_examples):,}")
 
-    logger.info(f"Constructed {len(train_examples)} training InputExamples.")
+    # ── Step 5 · Validation Evaluator ────────────────────────────────────────
+    # Mix positive pairs (score=1.0) with shuffled-negative pairs (score=0.0)
+    # to provide score variance and avoid Pearson=nan warnings.
+    import random as _rnd
+    _rnd.seed(RANDOM_STATE)
+    pos_q   = val_df["Question"].tolist()
+    pos_co  = val_df["CO Description"].tolist()
+    neg_co  = pos_co.copy()
+    _rnd.shuffle(neg_co)
+    neg_co  = [c if c != pos_co[i] else (pos_co[i-1] if i > 0 else pos_co[i+1])
+               for i, c in enumerate(neg_co)]
 
-    # 5. Build Validation Evaluator
-    val_s1 = [str(row["Question"]).strip() for _, row in val_df.iterrows()]
-    val_s2 = [str(row["CO Description"]).strip() for _, row in val_df.iterrows()]
-    val_scores = [1.0] * len(val_df)
+    eval_s1     = pos_q     + pos_q
+    eval_s2     = pos_co    + neg_co
+    eval_scores = [1.0] * len(pos_q) + [0.0] * len(pos_q)
 
     evaluator = EmbeddingSimilarityEvaluator(
-        sentences1=val_s1,
-        sentences2=val_s2,
-        scores=val_scores,
+        sentences1=eval_s1,
+        sentences2=eval_s2,
+        scores=eval_scores,
         name="obe-val",
-        show_progress_bar=False
+        show_progress_bar=False,
     )
-    logger.info(f"Configured EmbeddingSimilarityEvaluator with {len(val_s1)} validation pairs.")
+    logger.info(
+        f"EmbeddingSimilarityEvaluator: {len(pos_q):,} positive + {len(pos_q):,} negative pairs "
+        f"(score variance guaranteed)."
+    )
 
-    # 6. Initialize Base SentenceTransformer
-    base_model_name = "sentence-transformers/all-MiniLM-L6-v2"
-    logger.info(f"Initializing base model: {base_model_name} on device: {device}")
-    model = SentenceTransformer(base_model_name, device=device)
+    # ── Step 6 · Continual Learning — Warm-Start from Local Weights ──────────
+    has_local_weights = os.path.exists(OUTPUT_MODEL_DIR) and (
+        os.path.exists(os.path.join(OUTPUT_MODEL_DIR, "model.safetensors")) or
+        os.path.exists(os.path.join(OUTPUT_MODEL_DIR, "pytorch_model.bin"))
+    )
 
-    # 7. Training Configuration
-    batch_size = 16
-    epochs = 4
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=batch_size)
-    train_loss = MultipleNegativesRankingLoss(model)
+    if has_local_weights:
+        logger.info(f"Warm-start: Loading existing fine-tuned weights from {OUTPUT_MODEL_DIR}")
+        model = SentenceTransformer(OUTPUT_MODEL_DIR, device=device)
+        logger.info("Continual learning mode — existing domain knowledge preserved.")
+    else:
+        fallback = "sentence-transformers/all-MiniLM-L6-v2"
+        logger.warning(f"Local weights not found — initialising from HF base: {fallback}")
+        model = SentenceTransformer(fallback, device=device)
 
-    total_steps = len(train_dataloader) * epochs
-    warmup_steps = int(total_steps * 0.1)
-    evaluation_steps = 60
+    # Verify 384d embedding dimension
+    emb_dim = model.encode("dim_check", convert_to_numpy=True).shape[0]
+    logger.info(f"Embedding dimension: {emb_dim}d (expected 384 — backward compatible)")
+    if emb_dim != 384:
+        raise ValueError(f"Embedding dimension mismatch! Got {emb_dim}, expected 384.")
 
-    logger.info(f"Training parameters: Batch Size = {batch_size}, Epochs = {epochs}")
-    logger.info(f"Total Steps = {total_steps}, Warmup Steps = {warmup_steps}, Eval Steps = {evaluation_steps}")
-    logger.info(f"Target Output Directory: {OUTPUT_MODEL_DIR}")
+    # ── Step 7 · Training Configuration ──────────────────────────────────────
+    effective_batch = BATCH_SIZE
+    if device == "cuda":
+        if torch.cuda.get_device_properties(0).total_memory / 1e9 < 4.0:
+            effective_batch = 16
+            logger.info(f"Low VRAM detected — batch size reduced to {effective_batch}.")
+
+    train_dataloader = DataLoader(
+        train_examples, shuffle=True, batch_size=effective_batch, drop_last=False
+    )
+    train_loss   = MultipleNegativesRankingLoss(model)
+    total_steps  = len(train_dataloader) * EPOCHS
+    warmup_steps = max(1, int(total_steps * WARMUP_RATIO))
+
+    logger.info("─" * 70)
+    logger.info("TRAINING CONFIGURATION")
+    logger.info("─" * 70)
+    logger.info(f"  Epochs           : {EPOCHS}")
+    logger.info(f"  Batch size       : {effective_batch}")
+    logger.info(f"  Learning rate    : {LEARNING_RATE}")
+    logger.info(f"  Weight decay     : {WEIGHT_DECAY}")
+    logger.info(f"  Total steps      : {total_steps:,}")
+    logger.info(f"  Warmup steps     : {warmup_steps:,}  ({WARMUP_RATIO*100:.0f}% of total)")
+    logger.info(f"  Eval every       : {EVAL_STEPS} steps")
+    logger.info(f"  Loss function    : MultipleNegativesRankingLoss")
+    logger.info(f"  Output dir       : {OUTPUT_MODEL_DIR}")
+    logger.info("─" * 70)
+
     os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
 
-    # 8. Run Model Training
-    logger.info("Beginning fine-tuning with MultipleNegativesRankingLoss...")
+    # ── Step 8 · Fine-Tuning ──────────────────────────────────────────────────
+    _banner("Fine-Tuning Started")
+
     model.fit(
         train_objectives=[(train_dataloader, train_loss)],
         evaluator=evaluator,
-        epochs=epochs,
+        epochs=EPOCHS,
         warmup_steps=warmup_steps,
-        evaluation_steps=evaluation_steps,
+        optimizer_params={
+            "lr": LEARNING_RATE,
+            "weight_decay": WEIGHT_DECAY,
+        },
+        evaluation_steps=EVAL_STEPS,
         output_path=OUTPUT_MODEL_DIR,
         save_best_model=True,
-        show_progress_bar=True
+        show_progress_bar=True,
     )
 
-    # Ensure model artifacts are explicitly persisted in output path
+    # ── Step 9 · Persist All HF-Deployable Artifacts ─────────────────────────
+    logger.info("Saving final model state to disk ...")
     model.save(OUTPUT_MODEL_DIR)
-    logger.info(f"✓ Model successfully saved to: {OUTPUT_MODEL_DIR}")
 
-    # Verify output files
+    # ── Step 10 · Artifact Verification ──────────────────────────────────────
+    _banner("Artifact Verification")
+    REQUIRED_FILES = [
+        "model.safetensors",
+        "config.json",
+        "config_sentence_transformers.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "modules.json",
+        "sentence_bert_config.json",
+    ]
     saved_files = os.listdir(OUTPUT_MODEL_DIR)
-    logger.info(f"Saved artifacts: {saved_files}")
-    has_weights = any(f in saved_files for f in ["model.safetensors", "pytorch_model.bin"])
-    if has_weights:
-        logger.info("✓ Model weight verification PASSED (safetensors/bin present).")
-    else:
-        logger.warning("⚠ Warning: Standard model weight file not explicitly detected in directory listing.")
+    all_ok = True
+    for fname in REQUIRED_FILES:
+        ok = fname in saved_files
+        logger.info(f"  {'OK' if ok else 'MISSING':7s}  {fname}")
+        if not ok:
+            all_ok = False
 
-    logger.info("=" * 65)
-    logger.info("Fine-Tuning Pipeline Completed Successfully!")
-    logger.info("=" * 65)
+    # vocab.txt may live in a sub-directory
+    vocab_ok = "vocab.txt" in saved_files or any(
+        "vocab.txt" in os.listdir(os.path.join(OUTPUT_MODEL_DIR, d))
+        for d in saved_files
+        if os.path.isdir(os.path.join(OUTPUT_MODEL_DIR, d))
+    )
+    logger.info(f"  {'OK' if vocab_ok else 'NOTE':7s}  vocab.txt")
+
+    if all_ok:
+        logger.info("All required HF-deployable artifacts present.")
+    else:
+        logger.warning("Some artifacts missing — review the output directory.")
+
+    # ── Final Summary ─────────────────────────────────────────────────────────
+    elapsed = time.time() - pipeline_start
+    _banner("Pipeline Completed Successfully")
+    logger.info(f"Total training time : {elapsed/60:.1f} min ({elapsed:.0f}s)")
+    logger.info(f"Model saved to      : {OUTPUT_MODEL_DIR}")
+    logger.info(f"Embedding dimension : {emb_dim}d (384d — API backward-compatible)")
+    logger.info("Next step -> python training/evaluate_model.py")
 
 
 if __name__ == "__main__":

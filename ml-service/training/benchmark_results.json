@@ -1,0 +1,40 @@
+{
+    "config": {
+        "sample_size": 500,
+        "random_seed": 42,
+        "device": "cuda",
+        "base_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "fine_tuned": "D:\\Codes With Joy\\Capstone Project Main Folder\\Capstone Project Updated x22\\ml-service\\models\\sbert-obe-csematch",
+        "dataset": "D:\\Codes With Joy\\Capstone Project Main Folder\\Capstone Project Updated x22\\ml-service\\dataset\\OBE_Augmented_Dataset.xlsx"
+    },
+    "base_model": {
+        "label": "Base Model (all-MiniLM-L6-v2)",
+        "total": 500,
+        "top1_acc": 54.6,
+        "top3_acc": 88.6,
+        "macro_prec": 47.76225815259791,
+        "macro_rec": 48.711172692732084,
+        "macro_f1": 47.90192746058232,
+        "weighted_prec": 54.83122992220761,
+        "weighted_rec": 54.6,
+        "weighted_f1": 54.456933580271496,
+        "mean_pos": 0.3455578208426541,
+        "mean_neg": 0.2564975403094141,
+        "margin": 0.08906028053324
+    },
+    "fine_tuned_model": {
+        "label": "Fine-Tuned Model (sbert-obe-csematch)",
+        "total": 500,
+        "top1_acc": 82.39999999999999,
+        "top3_acc": 95.39999999999999,
+        "macro_prec": 75.80095037926363,
+        "macro_rec": 86.48035514802292,
+        "macro_f1": 79.56767230525969,
+        "weighted_prec": 82.81980826077212,
+        "weighted_rec": 82.39999999999999,
+        "weighted_f1": 82.3762790929558,
+        "mean_pos": 0.5147777279717867,
+        "mean_neg": 0.3012348054928627,
+        "margin": 0.21354292247892398
+    }
+}

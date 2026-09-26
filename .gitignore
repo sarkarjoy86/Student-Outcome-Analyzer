@@ -50,6 +50,8 @@ ml-service/.cache/
 models/
 ml-service/models/
 ml-service/cache/
+checkpoints/
+ml-service/checkpoints/
 *.bin
 *.safetensors
 *.pt
