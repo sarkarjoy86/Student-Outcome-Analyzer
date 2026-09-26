@@ -946,6 +946,17 @@ export const apiService = {
     );
   },
 
+  async generateQuestionRubrics(payload, options = {}) {
+    return fetchWithRetry(
+      `${API_BASE}/api/ai/rubrics-generate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      options
+    );
+  },
+
   async rteAssist(payload, options = {}) {
     return fetchWithRetry(
       `${API_BASE}/api/ai/rte-assist`,

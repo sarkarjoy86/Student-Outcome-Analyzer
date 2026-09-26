@@ -117,8 +117,8 @@ function computeLocalSimilarityFallback(currentPaperText, archiveText) {
     const cleanCurrent = String(currentPaperText || '').toLowerCase().replace(/\[\d+\]|\[CO\d+[-\w]*\]/gi, '').trim()
     const cleanArchive = String(archiveText || '').toLowerCase().replace(/\[\d+\]|\[CO\d+[-\w]*\]/gi, '').trim()
 
-    const currentQuestions = cleanCurrent.split(/(?=\b\d+\.|\b[a-c]\.|\bOR\b)/i).map(s => s.trim()).filter(s => s.length > 15)
-    const archiveQuestions = cleanArchive.split(/(?=\b\d+\.|\b[a-c]\.|\bOR\b)/i).map(s => s.trim()).filter(s => s.length > 15)
+    const currentQuestions = cleanCurrent.split(/(?=\bQuestion\s*\d+\b|\bQ\d+\b|\b\d+[\.\)]\s*[a-z][\.\)]|\b\d+[\.\)]|\b[a-c][\.\)]|\bOR\b)/i).map(s => s.trim()).filter(s => s.length > 15)
+    const archiveQuestions = cleanArchive.split(/(?=\bQuestion\s*\d+\b|\bQ\d+\b|\b\d+[\.\)]\s*[a-z][\.\)]|\b\d+[\.\)]|\b[a-c][\.\)]|\bOR\b)/i).map(s => s.trim()).filter(s => s.length > 15)
 
     const stopWords = new Set(['the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'in', 'with', 'using', 'explain', 'compare', 'analyze', 'illustrate', 'describe', 'suitable', 'examples', 'real-life', 'for', 'to', 'of', 'how', 'what', 'why', 'your', 'their'])
 
@@ -354,6 +354,270 @@ router.post('/swot-generate', async (req, res) => {
     return res.json({ success: true, content: aiContent })
   } catch (error) {
     console.error('SWOT AI handler error:', error)
+    return res.status(500).json({ success: false, message: `Server error: ${error.message}` })
+  }
+})
+
+/**
+ * POST /api/ai/rubrics-generate
+ * Generates question-wise 5-column OBE assessment rubrics using Gemini AI.
+ */
+router.post('/rubrics-generate', async (req, res) => {
+  try {
+    const { questions, assessmentName, courseCode, courseTitle, department, totalMarks } = req.body
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ success: false, message: 'No questions provided for rubrics generation.' })
+    }
+
+    const apiKey = (process.env.GEMINI_API_KEY || '').trim()
+    if (!apiKey) {
+      return res.status(533).json({
+        success: false,
+        message: 'GEMINI_API_KEY is missing in server .env file.'
+      })
+    }
+
+    // Format the prompt with full question details, scenarios, formulas, diagrams
+    const questionsFormatted = questions.map((q, idx) => {
+      const qNum = q.qNo || `Question ${idx + 1}`
+      const qMarks = q.marks ? ` [${q.marks} Marks]` : ''
+      return `### ${qNum}${qMarks}:\n${q.text || q.questionText || ''}`
+    }).join('\n\n')
+
+    const promptText = `You are an expert academic assessment specialist, university professor, and OBE (Outcome-Based Education) accreditation rubric designer.
+Your task is to generate official, outcome-based assessment rubrics for each of the examination questions provided below.
+
+EXAM DETAILS:
+- Course Code: ${courseCode || 'N/A'}
+- Course Title: ${courseTitle || 'N/A'}
+- Assessment: ${assessmentName || 'Examination'}
+- Department: ${department || 'Department of Computer Science and Engineering'}
+${totalMarks ? `- Total Marks: ${totalMarks}` : ''}
+
+EXAMINATION QUESTIONS TO EVALUATE:
+${questionsFormatted}
+
+CRITICAL PEDAGOGICAL & STYLE GUIDELINES (MODELED AFTER UNIVERSITY FACULTY RUBRICS):
+1. Focus on what the STUDENT demonstrates (e.g., "Clearly explains...", "Accurately states and justifies...", "Correctly compares...", "Provides rigorous step-by-step calculation...", "Draws and accurately labels..."). DO NOT merely quote textbook paragraphs.
+2. For each question, construct 3 to 4 focused criteria rows capturing the core concepts, derivations, formulas, diagrams, or comparisons demanded by the question.
+3. The FINAL criterion row for EVERY question MUST ALWAYS BE "Clarity and Organization".
+4. Follow this natural 4-tier graduation pattern matching standard academic assessment rubrics:
+   - "excellent" (80-100% marks): Clearly explains/identifies/solves all required elements with accurate concepts, logical reasoning, and complete depth.
+   - "good" (60-79% marks): Explains/solves correctly but with limited details, minor conceptual gaps, or slight omissions.
+   - "average" (40-59% marks): Shows basic or partial understanding; mentions some concepts correctly with noticeable errors, superficial explanation, or incomplete analysis.
+   - "poor" (below 40% marks): Fails to explain/solve, provides fundamentally incorrect concepts, or misses the description entirely.
+
+CRITICAL MATHEMATICAL & SCIENTIFIC NOTATION RULE:
+- NEVER USE RAW LATEX DOLLAR SIGNS (DO NOT OUTPUT $ OR $$).
+- This document is exported directly to Microsoft Word (.docx). Raw LaTeX like $r(x,y)$ or $\infty$ appears as raw unformatted code in Word!
+- Write clean, readable mathematical expressions using standard symbols:
+  * Write "i(x, y)" instead of "$i(x,y)$"
+  * Write "0 < i(x, y) < ∞" instead of "$0 < i(x,y) < \\infty$"
+  * Write "0 < r(x, y) < 1" instead of "$0 < r(x,y) < 1$"
+  * Write "f(x, y) = i(x, y) · r(x, y)" instead of "$f(x,y) = i(x,y)r(x,y)$"
+  * Use standard unicode symbols: ×, ·, ≤, ≥, ≠, ±, √, π, θ, λ, Σ, ∞, superscripts/subscripts.
+- NEVER output single or double dollar signs ($) anywhere in your text!
+
+Output MUST BE valid JSON only, without any markdown backticks or commentary, in this exact format:
+{
+  "rubrics": [
+    {
+      "questionNumber": "Question 1",
+      "questionTitle": "Brief topic summary",
+      "rows": [
+        {
+          "criteria": "Understanding of ...",
+          "excellent": "Clearly explains ... with accurate concepts and proper reasoning.",
+          "good": "Explains ... correctly but with limited details or minor conceptual gaps.",
+          "average": "Describes ... with some errors, partial understanding, or incomplete details.",
+          "poor": "Incorrect explanation or missing description of ..."
+        },
+        {
+          "criteria": "Clarity and Organization",
+          "excellent": "The answer is well-structured, clear, and logically organized with appropriate technical terms.",
+          "good": "Mostly clear with minor issues in organization or explanation.",
+          "average": "Somewhat disorganized or difficult to follow.",
+          "poor": "Poorly structured and unclear answer."
+        }
+      ]
+    }
+  ]
+}`
+
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-3.5-flash-lite'
+    ]
+
+    const endpointsToTry = modelsToTry.map(model => ({
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      body: {
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json'
+        }
+      }
+    }))
+
+    let aiContent = ''
+    let lastErrorMsg = ''
+
+    for (const ep of endpointsToTry) {
+      try {
+        const response = await fetch(ep.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify(ep.body)
+        })
+
+        const data = await response.json()
+
+        if (response.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          aiContent = data.candidates[0].content.parts[0].text.trim()
+          if (aiContent) break
+        } else {
+          lastErrorMsg = data?.error?.message || data?.message || `HTTP ${response.status}`
+          console.warn(`Gemini rubrics endpoint failed (${response.status}):`, lastErrorMsg)
+        }
+      } catch (fetchErr) {
+        lastErrorMsg = fetchErr.message
+      }
+    }
+
+    if (!aiContent) {
+      return res.status(502).json({
+        success: false,
+        message: `Gemini API Error: ${lastErrorMsg}`
+      })
+    }
+
+    // Robust JSON Parser with trailing comma removal and bracket-stack auto-healer
+    const robustParseJson = (rawText) => {
+      if (!rawText) return null
+      let cleaned = String(rawText).replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim()
+
+      // 1. Direct parse
+      try { return JSON.parse(cleaned) } catch (e1) {}
+
+      // 2. Remove trailing commas before brackets
+      let fixed = cleaned.replace(/,\s*([\]}])/g, '$1')
+      try { return JSON.parse(fixed) } catch (e2) {}
+
+      // 3. Extract JSON object or array substring
+      const match = fixed.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
+      if (match) {
+        try { return JSON.parse(match[0].replace(/,\s*([\]}])/g, '$1')) } catch (e3) {}
+      }
+
+      // 4. Auto-heal truncated JSON using bracket stack
+      try {
+        let s = (match ? match[0] : fixed).trim()
+        s = s.replace(/,\s*$/, '').replace(/:\s*$/, ': ""')
+
+        const stack = []
+        let inString = false
+        let escape = false
+
+        for (let i = 0; i < s.length; i++) {
+          const ch = s[i]
+          if (escape) {
+            escape = false
+            continue
+          }
+          if (ch === '\\') {
+            escape = true
+            continue
+          }
+          if (ch === '"') {
+            inString = !inString
+            continue
+          }
+          if (inString) continue
+
+          if (ch === '{') stack.push('}')
+          else if (ch === '[') stack.push(']')
+          else if (ch === '}' || ch === ']') {
+            if (stack.length > 0 && stack[stack.length - 1] === ch) {
+              stack.pop()
+            }
+          }
+        }
+
+        if (inString) s += '"'
+        while (stack.length > 0) {
+          s += stack.pop()
+        }
+        return JSON.parse(s.replace(/,\s*([\]}])/g, '$1'))
+      } catch (e4) {}
+
+      return null
+    }
+
+    const parsedResult = robustParseJson(aiContent)
+    let rubricsList = null
+
+    if (Array.isArray(parsedResult)) {
+      rubricsList = parsedResult
+    } else if (parsedResult && typeof parsedResult === 'object') {
+      rubricsList = parsedResult.rubrics || parsedResult.questions || parsedResult.data || Object.values(parsedResult).find(v => Array.isArray(v))
+    }
+
+    if (!rubricsList || !Array.isArray(rubricsList) || rubricsList.length === 0) {
+      return res.status(500).json({
+        success: false,
+        message: 'AI returned an invalid JSON response structure.',
+        raw: aiContent
+      })
+    }
+
+    // Helper: Sanitize LaTeX and remove dollar signs from generated rubrics
+    const sanitizeRubricMath = (text) => {
+      if (!text) return ''
+      let s = String(text)
+      s = s.replace(/\\infty\b/g, '∞')
+      s = s.replace(/\\times\b/g, '×')
+      s = s.replace(/\\cdot\b/g, '·')
+      s = s.replace(/\\le\b|\\leq\b/g, '≤')
+      s = s.replace(/\\ge\b|\\geq\b/g, '≥')
+      s = s.replace(/\\ne\b|\\neq\b/g, '≠')
+      s = s.replace(/\\pm\b/g, '±')
+      s = s.replace(/\\approx\b/g, '≈')
+      s = s.replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+      s = s.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)')
+      s = s.replace(/\$\$([^$]+)\$\$/g, '$1')
+      s = s.replace(/\$([^$]+)\$/g, '$1')
+      s = s.replace(/\$([a-zA-Z0-9_\(\)\{\}\\\+\-\*\/\^=<>]+)\$/g, '$1')
+      s = s.replace(/\$/g, '')
+      return s.trim()
+    }
+
+    const sanitizedRubrics = parsedResult.rubrics.map(q => ({
+      ...q,
+      questionTitle: sanitizeRubricMath(q.questionTitle || ''),
+      rows: Array.isArray(q.rows) ? q.rows.map(r => ({
+        criteria: sanitizeRubricMath(r.criteria || ''),
+        excellent: sanitizeRubricMath(r.excellent || ''),
+        good: sanitizeRubricMath(r.good || ''),
+        average: sanitizeRubricMath(r.average || ''),
+        poor: sanitizeRubricMath(r.poor || '')
+      })) : []
+    }))
+
+    return res.json({ success: true, rubrics: sanitizedRubrics })
+  } catch (error) {
+    console.error('Rubrics AI handler error:', error)
     return res.status(500).json({ success: false, message: `Server error: ${error.message}` })
   }
 })

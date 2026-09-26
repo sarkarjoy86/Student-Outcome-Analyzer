@@ -15,7 +15,7 @@ import {
   PasteCleanup,
   Count
 } from '@syncfusion/ej2-react-richtexteditor'
-import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Trash2, GripHorizontal, Code2, Terminal, AlignCenter, AlignLeft, Copy, CheckSquare, ListOrdered, Square, Edit3, BookOpen, Play, Undo2, Redo2 } from 'lucide-react'
+import { ArrowLeft, Save, FileDown, Printer, Loader2, AlertCircle, Plus, Minus, X, Maximize2, Sparkles, ChevronRight, Check, Target, Share2, Grid, RefreshCw, ClipboardList, ShieldCheck, Search, FileText, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, Trash2, GripHorizontal, Code2, Terminal, AlignCenter, AlignLeft, Copy, CheckSquare, ListOrdered, Square, Edit3, BookOpen, Play, Undo2, Redo2, Award } from 'lucide-react'
 import mammoth from 'mammoth'
 import html2canvas from 'html2canvas'
 
@@ -24,6 +24,7 @@ import 'katex/dist/katex.min.css'
 import { BAIUST_LOGO } from './baiustLogo'
 import { getNotesStatus, suggestQuestionsFromNotes, stripQuestionLeadingNumber, getNormalizedCourseKey, getCachedNotesStatus, syncNotesBlobToBackend } from '../../services/notesApi'
 import { smartFormatCode, isCodeLikelySingleLine, detectEmbeddedCodeInQuestion } from '../../utils/codeFormatter'
+import { extractQuestionsFromEditorContent, exportRubricsToWord, callClientGeminiRubrics, parseHeaderMetadataFromContent } from '../../utils/rubricsHelper'
 import ReferenceNotesModal from '../dashboard/ReferenceNotesModal'
 import TableDesignModal from './TableDesignModal'
 
@@ -2708,6 +2709,157 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
     loadPaperData()
   }
 
+  // Question Rubrics Generator States & Handlers
+  const [rubricsLoading, setRubricsLoading] = useState(false)
+  const [rubricsError, setRubricsError] = useState('')
+  const [showRubricsConfirmModal, setShowRubricsConfirmModal] = useState(false)
+  const [pendingQuestionsForRubrics, setPendingQuestionsForRubrics] = useState([])
+  const [rubricsStatusText, setRubricsStatusText] = useState('')
+  const [detectedRubricsMetadata, setDetectedRubricsMetadata] = useState(null)
+
+  const handleInitiateRubricsGeneration = () => {
+    setRubricsError('')
+    const currentContent = rteRef.current ? rteRef.current.value : editorValue
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = currentContent || ''
+    const currentPlainText = (tempDiv.textContent || tempDiv.innerText || '').trim()
+
+    if (!currentPlainText || currentPlainText.length < 15) {
+      setRubricsError('Please write some question content in the paper editor first before generating rubrics.')
+      showNotification('Please write some question content in the editor first.', 'warning', 3500)
+      return
+    }
+
+    const detected = extractQuestionsFromEditorContent(currentContent)
+    if (!detected || detected.length === 0) {
+      setRubricsError('Could not detect any questions in the editor content. Please ensure questions are formatted properly.')
+      showNotification('Could not detect discrete questions. Check question format.', 'warning', 3500)
+      return
+    }
+
+    // Resolve comprehensive metadata from content, custom header, offering, and assessment
+    const parsedMeta = parseHeaderMetadataFromContent(currentContent)
+    const resolvedCourseCode = headerCustom.courseCode || offering?.course?.courseCode || offering?.courseCode || parsedMeta.courseCode || 'CSE 411'
+    const resolvedCourseTitle = headerCustom.courseTitle || offering?.course?.courseTitle || offering?.course?.courseName || offering?.course?.title || offering?.courseName || parsedMeta.courseTitle || 'Machine Learning'
+
+    // Determine university standard exam marks based on credit hours:
+    // Midterm: 2 Credit = 60 Marks, 3 Credit = 90 Marks
+    // Final:   2 Credit = 100 Marks, 3 Credit = 150 Marks
+    // CT:      10 Marks
+    const creditsVal = parseFloat(headerCustom.creditHours || offering?.course?.creditHour || offering?.course?.creditHours || offering?.course?.credits) || 3
+    const isTwoCredit = creditsVal <= 2.5
+    let defaultExamMarks = 10
+    if (isCT) defaultExamMarks = 10
+    else if (isMidTerm) defaultExamMarks = isTwoCredit ? 60 : 90
+    else if (isTermFinal) defaultExamMarks = isTwoCredit ? 100 : 150
+
+    // Sum detected question marks if available from paper
+    const detectedTotalMarks = detected.reduce((acc, q) => acc + (q.marks || 0), 0)
+
+    const resolvedTotalMarks = headerCustom.fullMarks || assessment?.totalMarks || assessment?.maxMarks || assessment?.marks || (detectedTotalMarks > 0 ? detectedTotalMarks : parsedMeta.totalMarks) || defaultExamMarks
+    const resolvedDuration = headerCustom.duration || examDuration || parsedMeta.duration || (isCT ? '20 Minutes' : isMidTerm ? '1 Hour 30 Minutes' : '3 Hours')
+    const resolvedAssessmentName = assessment?.name || headerCustom.examTitle || parsedMeta.assessmentName || (isCT ? 'CT-1' : isMidTerm ? 'Midterm Examination' : 'Term Final Examination')
+    const resolvedCreditHours = headerCustom.creditHours || offering?.course?.creditHour || offering?.course?.creditHours || offering?.course?.credits || parsedMeta.creditHour || (isTwoCredit ? '2' : '3')
+    const resolvedSemester = offering?.semester?.semesterName || offering?.semester?.name || offering?.semesterName || 'Spring 2026'
+    const resolvedDept = headerCustom.deptName ? ('Department of ' + headerCustom.deptName) : (offering?.department?.name || parsedMeta.department || 'Department of Computer Science and Engineering')
+
+    setDetectedRubricsMetadata({
+      courseCode: resolvedCourseCode,
+      courseTitle: resolvedCourseTitle,
+      totalMarks: resolvedTotalMarks,
+      examDuration: resolvedDuration,
+      assessmentName: resolvedAssessmentName,
+      creditHour: resolvedCreditHours,
+      semester: resolvedSemester,
+      department: resolvedDept
+    })
+
+    setPendingQuestionsForRubrics(detected)
+    setShowRubricsConfirmModal(true)
+  }
+
+  const handleConfirmAndGenerateRubrics = async () => {
+    if (!pendingQuestionsForRubrics || pendingQuestionsForRubrics.length === 0) return
+    setRubricsLoading(true)
+    setRubricsError('')
+    setRubricsStatusText('Analyzing question context & requesting AI rubrics...')
+
+    try {
+      const meta = detectedRubricsMetadata || {
+        courseCode: headerCustom.courseCode || offering?.course?.courseCode || offering?.courseCode || 'CSE 411',
+        courseTitle: headerCustom.courseTitle || offering?.course?.courseTitle || offering?.course?.courseName || 'Digital Image Processing',
+        totalMarks: headerCustom.fullMarks || assessment?.totalMarks || assessment?.marks || 10,
+        examDuration: headerCustom.duration || examDuration || '20 Minutes',
+        assessmentName: assessment?.name || headerCustom.examTitle || 'Class Test',
+        creditHour: headerCustom.creditHours || offering?.course?.creditHour || '3',
+        semester: offering?.semester?.semesterName || 'Spring 2026',
+        department: headerCustom.deptName ? ('Department of ' + headerCustom.deptName) : (offering?.department?.name || 'Department of Computer Science and Engineering')
+      }
+
+      const payload = {
+        questions: pendingQuestionsForRubrics,
+        assessmentName: meta.assessmentName,
+        courseCode: meta.courseCode,
+        courseTitle: meta.courseTitle,
+        department: meta.department,
+        totalMarks: meta.totalMarks
+      }
+
+      setRubricsStatusText('Synthesizing criteria & 4-level descriptors via Gemini AI...')
+      let rubricsData = null
+
+      try {
+        const res = await apiService.generateQuestionRubrics(payload)
+        if (res && res.success && res.rubrics) {
+          rubricsData = res.rubrics
+        } else {
+          throw new Error(res?.message || 'Failed to generate rubrics from server.')
+        }
+      } catch (backendErr) {
+        console.warn('Backend rubrics generation failed, checking client fallback:', backendErr)
+        const localKey = localStorage.getItem('OBE_GEMINI_API_KEY')
+        if (localKey) {
+          setRubricsStatusText('Generating via direct client Gemini connection...')
+          const clientRes = await callClientGeminiRubrics(payload, localKey)
+          if (clientRes && clientRes.rubrics) {
+            rubricsData = clientRes.rubrics
+          } else {
+            throw backendErr
+          }
+        } else {
+          throw backendErr
+        }
+      }
+
+      if (!rubricsData || rubricsData.length === 0) {
+        throw new Error('AI could not produce rubrics data. Please try again.')
+      }
+
+      setRubricsStatusText('Building official Word document (.docx)...')
+
+      const exportedFileName = exportRubricsToWord({
+        rubrics: rubricsData,
+        assessmentName: meta.assessmentName,
+        courseCode: meta.courseCode,
+        courseTitle: meta.courseTitle,
+        department: meta.department,
+        creditHour: meta.creditHour,
+        examDuration: meta.examDuration,
+        totalMarks: meta.totalMarks,
+        semester: meta.semester
+      })
+
+      showNotification(`✓ Rubrics generated and downloaded as ${exportedFileName}!`, 'success', 5000)
+      setShowRubricsConfirmModal(false)
+    } catch (err) {
+      console.error('Error generating rubrics:', err)
+      setRubricsError(err.message || 'Error occurred while generating rubrics.')
+    } finally {
+      setRubricsLoading(false)
+      setRubricsStatusText('')
+    }
+  }
+
   // Question Similarity Checker States & Handler
   const [similarityResults, setSimilarityResults] = useState(null)
   const [similarityLoading, setSimilarityLoading] = useState(false)
@@ -2797,10 +2949,20 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       const curSemName = (curSem?.semesterName || '').toLowerCase().trim()
       const curSemYear = String(curSem?.academicYear || offering?.academicYear || '').toLowerCase().trim()
 
+      const currentQuestions = extractQuestionsFromEditorContent(currentContent)
+      const currentPaperStructuredText = currentQuestions.length > 0
+        ? currentQuestions.map(q => `${q.qNo}: ${q.text}`).join('\n\n')
+        : currentPlainText
+
       const archivedPayload = availableArchives.map(p => {
         const div = document.createElement('div')
         div.innerHTML = p.content || ''
         const text = (div.textContent || div.innerText || '').trim()
+        const pQuestions = extractQuestionsFromEditorContent(p.content || '')
+        const pStructuredText = pQuestions.length > 0
+          ? pQuestions.map(q => `${q.qNo}: ${q.text}`).join('\n\n')
+          : text
+
         const sem = p.courseOffering?.semester
         const pSemId = String(sem?._id || sem || '')
         const semName = sem ? (sem.semesterName || '') : ''
@@ -2820,15 +2982,13 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           section: p.courseOffering?.section || 'A',
           batch: p.courseOffering?.batch?.name || '',
           isCurrentSemester,
-          text
+          text: pStructuredText
         }
       })
 
-
-
       const res = await apiService.checkQuestionSimilarity(
         {
-          currentPaperText: currentPlainText,
+          currentPaperText: currentPaperStructuredText,
           archivedPapers: archivedPayload
         },
         {
@@ -13561,6 +13721,57 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
     )
   }
 
+  const renderRubricsGeneratorCard = (inFullscreen = false) => {
+    return (
+      <div className={`bg-white rounded-2xl shadow-md border border-gray-150 ${
+        inFullscreen ? 'p-5 space-y-3.5 shrink-0 shadow-lg' : 'p-6 space-y-4'
+      }`}>
+        <div className="flex items-center justify-between border-b pb-3 font-sans shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-teal-50 text-teal-700 rounded-xl border border-teal-200/80 shadow-xs">
+              <Award size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-gray-800">Question Rubrics Generator</h3>
+              <p className="text-[11px] text-gray-500 font-medium">OBE outcome-based marking rubrics (.docx)</p>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-600 font-medium leading-relaxed shrink-0">
+          Automatically extract all questions, sub-parts, scenarios, diagrams, and equations from the paper to generate official 5-column university rubrics in Word format.
+        </p>
+
+        {rubricsError && !showRubricsConfirmModal && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2 animate-fadeIn shrink-0">
+            <AlertCircle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+            <span>{rubricsError}</span>
+          </div>
+        )}
+
+        {/* Generate Action Button */}
+        <button
+          type="button"
+          onClick={handleInitiateRubricsGeneration}
+          disabled={rubricsLoading}
+          className="w-full bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 hover:from-teal-800 hover:to-emerald-900 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+        >
+          {rubricsLoading ? (
+            <>
+              <Loader2 size={16} className="animate-spin text-teal-200" />
+              <span>Generating Rubrics...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles size={16} className="text-teal-300" />
+              <span>Generate &amp; Export Rubrics (.docx)</span>
+            </>
+          )}
+        </button>
+      </div>
+    )
+  }
+
   const renderSimilarityCheckerCard = (inFullscreen = false) => {
     const hasActiveNotes = Boolean(notesStatusInfo?.hasNotes)
 
@@ -14342,6 +14553,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                     : 'overflow-hidden flex flex-col'
                 }`}>
                   {notesStatusInfo?.hasNotes && renderReferenceNotesCard(true)}
+                  {renderRubricsGeneratorCard(true)}
                   {renderSimilarityCheckerCard(true)}
                 </div>
               </div>
@@ -14451,6 +14663,8 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           {/* Reference Notes Card with Integrated Real-time Suggestions (Above Question Similarity Checker) */}
           {renderReferenceNotesCard(false)}
 
+          {/* Question Rubrics Generator Card */}
+          {renderRubricsGeneratorCard(false)}
 
           {/* Question Similarity Checker Card (Normal View Sidebar) */}
           {renderSimilarityCheckerCard(false)}
@@ -20081,6 +20295,168 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           }
         }
       `}</style>
+
+      {/* Rubrics Confirmation & Live NLP Breakdown Modal */}
+      {showRubricsConfirmModal && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-[999999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-gray-200 overflow-hidden animate-scaleIn">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-teal-800 via-emerald-800 to-teal-900 text-white px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/10 rounded-lg backdrop-blur-sm">
+                    <Award size={20} className="text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold tracking-tight">Confirm Rubrics Generation</h3>
+                    <p className="text-xs text-teal-100 font-medium">
+                      {detectedRubricsMetadata?.courseCode || 'CSE'} &bull; {detectedRubricsMetadata?.assessmentName || 'Assessment'} &bull; {detectedRubricsMetadata?.totalMarks || 10} Marks
+                    </p>
+                  </div>
+                </div>
+                {!rubricsLoading && (
+                  <button
+                    type="button"
+                    onClick={() => setShowRubricsConfirmModal(false)}
+                    className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4">
+                <div>
+                  <h4 className="text-sm font-extrabold text-gray-900">
+                    Have you finished preparing the complete question paper?
+                  </h4>
+                  <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                    AI will generate a dedicated 5-column outcome-based evaluation rubric table for each question currently detected in your editor.
+                  </p>
+                </div>
+
+                {/* Detected Course & Exam Metadata Pill Bar */}
+                {detectedRubricsMetadata && (
+                  <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-700 font-medium">
+                    <span className="bg-emerald-100/80 text-emerald-900 border border-emerald-300/60 px-2 py-0.5 rounded-md font-bold">
+                      {detectedRubricsMetadata.courseCode}: {detectedRubricsMetadata.courseTitle}
+                    </span>
+                    <span className="bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+                      Duration: {detectedRubricsMetadata.examDuration}
+                    </span>
+                    <span className="bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+                      Total Marks: {detectedRubricsMetadata.totalMarks}
+                    </span>
+                  </div>
+                )}
+
+                {/* NLP Detection Breakdown Card */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      NLP Question Parser Breakdown
+                    </span>
+                    <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[11px] font-extrabold">
+                      {pendingQuestionsForRubrics.length} Main Question{pendingQuestionsForRubrics.length > 1 ? 's' : ''} Detected
+                    </span>
+                  </div>
+
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    {pendingQuestionsForRubrics.map((q, idx) => (
+                      <div key={idx} className="bg-white border border-slate-200/90 rounded-lg p-2.5 text-xs shadow-2xs space-y-1">
+                        <div className="flex items-center justify-between font-bold text-slate-800">
+                          <span>{q.qNo || `Question ${idx + 1}`}</span>
+                          <div className="flex items-center gap-1">
+                            {q.marks && (
+                              <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
+                                {q.marks} Marks
+                              </span>
+                            )}
+                            {q.hasEquation && (
+                              <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">
+                                Math Formula
+                              </span>
+                            )}
+                            {q.hasDiagram && (
+                              <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">
+                                Diagram
+                              </span>
+                            )}
+                            {q.hasTable && (
+                              <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">
+                                Table
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-gray-600 line-clamp-2 leading-snug">
+                          {q.text.replace(/\[(?:Diagram|Table|Code|Context)[^\]]*\]/g, '').trim() || q.text}
+                        </p>
+                        {q.subparts && q.subparts.length > 0 && (
+                          <div className="text-[10px] text-teal-700 font-semibold pt-0.5">
+                            &bull; Contains {q.subparts.length} sub-question{q.subparts.length > 1 ? 's' : ''} (grouped under {q.qNo})
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Progress / Status feedback when generating */}
+                {rubricsLoading && (
+                  <div className="bg-teal-50/80 border border-teal-200 rounded-xl p-3.5 flex items-center gap-3 animate-fadeIn">
+                    <Loader2 size={20} className="animate-spin text-teal-700 shrink-0" />
+                    <div className="text-xs">
+                      <p className="font-bold text-teal-900">{rubricsStatusText || 'Generating assessment rubrics...'}</p>
+                      <p className="text-teal-700 text-[11px] mt-0.5">Constructing pedagogical criteria and 4-tier achievement bands...</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Banner */}
+                {rubricsError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2">
+                    <AlertCircle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+                    <span>{rubricsError}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-gray-50 px-6 py-3.5 border-t border-gray-150 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRubricsConfirmModal(false)}
+                  disabled={rubricsLoading}
+                  className="px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-200 rounded-xl transition disabled:opacity-50 cursor-pointer"
+                >
+                  Keep Editing
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmAndGenerateRubrics}
+                  disabled={rubricsLoading}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 hover:from-teal-800 hover:to-emerald-900 rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {rubricsLoading ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" />
+                      <span>Generating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={15} className="text-teal-300" />
+                      <span>Yes, Generate Rubrics</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
 
       {/* Teacher's Reference Notes Modal */}
       <ReferenceNotesModal
