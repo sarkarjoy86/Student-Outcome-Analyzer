@@ -694,7 +694,7 @@ export function exportRubricsToWord({
                 <tr>
                   <td style="border:none; text-align:left; font-size:9pt; color:#444444; padding:0;">
                     <p class="MsoFooter" style="text-align:left; margin:0;">
-                      BAIUST ${escapeHtml(safeDept)} &bull; OBE Outcome-Based Assessment Rubrics (${escapeHtml(safeCourseCode)})
+                      OBE Outcome-Based Assessment Rubrics${safeCourseCode ? ` (${escapeHtml(safeCourseCode)})` : ''}
                     </p>
                   </td>
                   <td style="border:none; text-align:right; font-size:9pt; color:#444444; padding:0;">
