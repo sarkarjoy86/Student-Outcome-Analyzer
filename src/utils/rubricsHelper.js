@@ -4,7 +4,7 @@
  * Specifically engineered for OBE Assessment Rubrics in QuestionPaperEditor.
  */
 
-import { BAIUST_LOGO } from '../components/marks/baiustLogo'
+import { BAIUST_LOGO } from '../components/marks/baiustLogo.js'
 
 /**
  * Sanitizes math formulas and LaTeX notation into clean Unicode text suitable for Microsoft Word.
@@ -591,20 +591,39 @@ export function exportRubricsToWord({
     <head>
       <meta charset="utf-8">
       <title>${escapeHtml(safeAssessment)} Assessment Rubrics</title>
+      <!--[if gte mso 9]>
+      <xml>
+        <w:WordDocument>
+          <w:View>Print</w:View>
+          <w:Zoom>100</w:Zoom>
+          <w:DoNotOptimizeForBrowser/>
+        </w:WordDocument>
+      </xml>
+      <![endif]-->
       <style>
         @page Section1 {
-          size: 8.5in 11.0in;
-          margin: 0.6in 0.6in 0.6in 0.6in;
-          mso-header-margin: 0.4in;
-          mso-footer-margin: 0.4in;
+          size: 210mm 297mm; /* A4 Standard */
+          margin: 18mm 16mm 20mm 16mm;
+          mso-header-margin: 8mm;
+          mso-footer-margin: 8mm;
           mso-footer: f1;
         }
-        div.Section1 { page: Section1; }
+        div.Section1 {
+          page: Section1;
+        }
+        table#hrdftrtbl {
+          margin: 0in 0in 0in 900in;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+        }
         body {
           font-family: 'Times New Roman', Times, serif;
           font-size: 10pt;
           line-height: 1.25;
           color: #000000;
+          margin: 0;
+          padding: 0;
         }
         table {
           border-collapse: collapse;
@@ -616,8 +635,7 @@ export function exportRubricsToWord({
           margin: 0;
           font-family: 'Times New Roman', Times, serif;
           font-size: 9pt;
-          text-align: center;
-          font-weight: bold;
+          color: #444444;
         }
       </style>
     </head>
@@ -665,18 +683,34 @@ export function exportRubricsToWord({
 
         <!-- Question-wise Rubric Tables -->
         ${rubricTablesHtml}
-
-        <!-- Word Document Page Numbering Footer -->
-        <table style="width: 100%; border: none; margin-top: 20px;">
-          <tr>
-            <td style="border: none; text-align: center; font-size: 8.5pt; font-family: 'Times New Roman', serif; color: #64748b;">
-              BAIUST Department of CSE &bull; OBE Outcome-Based Assessment Rubrics
-            </td>
-          </tr>
-        </table>
       </div>
+
+      <!-- Word Running Footer (Assigned to Section1 via mso-footer: f1) -->
+      <table id="hrdftrtbl" border="0" cellspacing="0" cellpadding="0">
+        <tr>
+          <td>
+            <div style="mso-element:footer" id="f1">
+              <table border="0" cellspacing="0" cellpadding="0" style="width:100%; border:none; border-top:0.5pt solid #cccccc; padding-top:4pt; font-family:'Times New Roman',Times,serif; font-size:9pt; color:#444444;">
+                <tr>
+                  <td style="border:none; text-align:left; font-size:9pt; color:#444444; padding:0;">
+                    <p class="MsoFooter" style="text-align:left; margin:0;">
+                      BAIUST ${escapeHtml(safeDept)} &bull; OBE Outcome-Based Assessment Rubrics (${escapeHtml(safeCourseCode)})
+                    </p>
+                  </td>
+                  <td style="border:none; text-align:right; font-size:9pt; color:#444444; padding:0;">
+                    <p class="MsoFooter" style="text-align:right; margin:0;">
+                      Page <!--[if supportFields]><span style='mso-element:field-begin'></span><span style='mso-spacerun:yes'> </span>PAGE <span style='mso-element:field-separator'></span><![endif]--><span style='mso-field-code:" PAGE "'><span style='mso-no-proof:yes'>1</span></span><!--[if supportFields]><span style='mso-element:field-end'></span><![endif]--> of <!--[if supportFields]><span style='mso-element:field-begin'></span><span style='mso-spacerun:yes'> </span>NUMPAGES <span style='mso-element:field-separator'></span><![endif]--><span style='mso-field-code:" NUMPAGES "'><span style='mso-no-proof:yes'>1</span></span><!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </td>
+        </tr>
+      </table>
     </body>
     </html>
+
   `
 
   // Trigger download
