@@ -14437,7 +14437,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
           {/* Syncfusion Editor (Inline Normal View) */}
           {!isFullscreen && (
             <div className={`bg-white rounded-2xl shadow-md border border-gray-150 p-4 ${showParagraphMarks ? 'show-paragraph-marks' : ''}`}>
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Question Paper Content</h3>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Question Paper Writer</h3>
               <RichTextEditorComponent
                 ref={rteRef}
                 created={onRteCreated}
@@ -14457,9 +14457,9 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 imageUploadFailed={onImageUploadFailed}
                 imageRemoving={onImageRemoving}
                 dialogOpen={onDialogOpen}
-                height={780}
+                height={1020}
                 showCharCount={true}
-                maxLength={50000}
+                maxLength={999999}
                 pasteCleanupSettings={pasteCleanupConfig}
               >
                 <Inject services={[Toolbar, HtmlEditor, Link, Image, QuickToolbar, Table, PasteCleanup, Count]} />

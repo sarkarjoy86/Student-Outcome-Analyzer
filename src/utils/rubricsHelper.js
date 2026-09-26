@@ -747,82 +747,8 @@ function escapeHtml(str = '') {
  */
 export async function callClientGeminiRubrics(payload, apiKey) {
   const { questions, assessmentName, courseCode, courseTitle, department, totalMarks } = payload
-  const questionsFormatted = questions.map((q, idx) => {
-    const qNum = q.qNo || `Question ${idx + 1}`
-    const qMarks = q.marks ? ` [${q.marks} Marks]` : ''
-    return `### ${qNum}${qMarks}:\n${q.text || ''}`
-  }).join('\n\n')
 
-  const promptText = `You are an expert academic assessment specialist, university professor, and OBE (Outcome-Based Education) accreditation rubric designer.
-Generate official 5-column outcome-based assessment rubrics for each examination question below.
-
-COURSE: ${courseCode || 'N/A'} - ${courseTitle || 'N/A'} (${department || 'Department of CSE'})
-ASSESSMENT: ${assessmentName || 'Examination'}
-${totalMarks ? `TOTAL MARKS: ${totalMarks}` : ''}
-
-EXAMINATION QUESTIONS TO EVALUATE:
-${questionsFormatted}
-
-CRITICAL PEDAGOGICAL & STYLE GUIDELINES (MODELED AFTER UNIVERSITY FACULTY RUBRICS):
-1. Focus on what the STUDENT demonstrates (e.g., "Clearly explains...", "Accurately states and justifies...", "Correctly compares...", "Provides rigorous step-by-step calculation...", "Draws and accurately labels..."). DO NOT merely quote textbook paragraphs.
-2. For each question, construct 3 to 4 focused criteria rows capturing the core concepts, derivations, formulas, diagrams, or comparisons demanded by the question.
-3. The FINAL criterion row for EVERY question MUST ALWAYS BE "Clarity and Organization".
-4. Follow this natural 4-tier graduation pattern matching standard academic assessment rubrics:
-   - "excellent" (80-100% marks): Clearly explains/identifies/solves all required elements with accurate concepts, logical reasoning, and complete depth.
-   - "good" (60-79% marks): Explains/solves correctly but with limited details, minor conceptual gaps, or slight omissions.
-   - "average" (40-59% marks): Shows basic or partial understanding; mentions some concepts correctly with noticeable errors, superficial explanation, or incomplete analysis.
-   - "poor" (below 40% marks): Fails to explain/solve, provides fundamentally incorrect concepts, or misses the description entirely.
-
-CRITICAL MATHEMATICAL & SCIENTIFIC NOTATION RULE:
-- NEVER USE RAW LATEX DOLLAR SIGNS (DO NOT OUTPUT $ OR $$).
-- This document is exported directly to Microsoft Word (.docx). Raw LaTeX like $r(x,y)$ or $\infty$ appears as raw unformatted code in Word!
-- Write clean, readable mathematical expressions using standard symbols:
-  * Write "i(x, y)" instead of "$i(x,y)$"
-  * Write "0 < i(x, y) < ∞" instead of "$0 < i(x,y) < \\infty$"
-  * Write "0 < r(x, y) < 1" instead of "$0 < r(x,y) < 1$"
-  * Write "f(x, y) = i(x, y) · r(x, y)" instead of "$f(x,y) = i(x,y)r(x,y)$"
-  * Use standard unicode symbols: ×, ·, ≤, ≥, ≠, ±, √, π, θ, λ, Σ, ∞, superscripts/subscripts.
-- NEVER output single or double dollar signs ($) anywhere in your text!
-
-Output MUST BE valid JSON only, without any markdown backticks or commentary:
-{
-  "rubrics": [
-    {
-      "questionNumber": "Question 1",
-      "questionTitle": "Brief topic summary",
-      "rows": [
-        {
-          "criteria": "Understanding of ...",
-          "excellent": "Clearly explains ... with accurate concepts and proper reasoning.",
-          "good": "Explains ... correctly but with limited details or minor conceptual gaps.",
-          "average": "Describes ... with some errors, partial understanding, or incomplete details.",
-          "poor": "Incorrect explanation or missing description of ..."
-        },
-        {
-          "criteria": "Clarity and Organization",
-          "excellent": "The answer is well-structured, clear, and logically organized with appropriate technical terms.",
-          "good": "Mostly clear with minor issues in organization or explanation.",
-          "average": "Somewhat disorganized or difficult to follow.",
-          "poor": "Poorly structured and unclear answer."
-        }
-      ]
-    }
-  ]
-}`
-
-  const models = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
-    'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3-flash-preview',
-    'gemini-3.5-flash-lite'
-  ]
-
-  // Robust JSON Parser with trailing comma removal and bracket-stack auto-healer
+  // Robust JSON Parser with trailing comma removal, unescaped quote repair, and bracket-stack auto-healer
   const robustParseJson = (rawText) => {
     if (!rawText) return null
     let cleaned = String(rawText).replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim()
@@ -840,7 +766,25 @@ Output MUST BE valid JSON only, without any markdown backticks or commentary:
       try { return JSON.parse(match[0].replace(/,\s*([\]}])/g, '$1')) } catch (e3) {}
     }
 
-    // 4. Auto-heal truncated JSON using bracket stack
+    // 4. Line-by-line repair of unescaped quotes inside JSON string values
+    try {
+      const lines = (match ? match[0] : fixed).split('\n')
+      const repairedLines = lines.map(line => {
+        const kvMatch = line.match(/^(\s*"[^"]+"\s*:\s*")(.*)("(?:\s*,\s*|\s*))$/)
+        if (kvMatch) {
+          const prefix = kvMatch[1]
+          let val = kvMatch[2]
+          const suffix = kvMatch[3]
+          val = val.replace(/(?<!\\)"/g, '\\"')
+          return prefix + val + suffix
+        }
+        return line
+      })
+      const repairedText = repairedLines.join('\n').replace(/,\s*([\]}])/g, '$1')
+      try { return JSON.parse(repairedText) } catch (e4) {}
+    } catch (errLine) {}
+
+    // 5. Auto-heal truncated JSON using bracket stack
     try {
       let s = (match ? match[0] : fixed).trim()
       s = s.replace(/,\s*$/, '').replace(/:\s*$/, ': ""')
@@ -879,64 +823,153 @@ Output MUST BE valid JSON only, without any markdown backticks or commentary:
         s += stack.pop()
       }
       return JSON.parse(s.replace(/,\s*([\]}])/g, '$1'))
-    } catch (e4) {}
+    } catch (e5) {}
 
     return null
   }
 
-  let lastError = null
-  for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: promptText }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 8192,
-            responseMimeType: 'application/json'
-          }
-        })
-      })
-      const data = await resp.json()
-      if (resp.ok && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-        const rawText = data.candidates[0].content.parts[0].text.trim()
-        const parsed = robustParseJson(rawText)
+  const models = [
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite'
+  ]
 
-        let rubricsList = null
-        if (Array.isArray(parsed)) {
-          rubricsList = parsed
-        } else if (parsed && typeof parsed === 'object') {
-          rubricsList = parsed.rubrics || parsed.questions || parsed.data || Object.values(parsed).find(v => Array.isArray(v))
-        }
+  const generateBatch = async (batchQuestions) => {
+    const questionsFormatted = batchQuestions.map((q, idx) => {
+      const qNum = q.qNo || `Question ${idx + 1}`
+      const qMarks = q.marks ? ` [${q.marks} Marks]` : ''
+      return `### ${qNum}${qMarks}:\n${q.text || ''}`
+    }).join('\n\n')
 
-        if (rubricsList && Array.isArray(rubricsList) && rubricsList.length > 0) {
-          const sanitizedRubrics = rubricsList.map(q => ({
-            ...q,
-            questionNumber: q.questionNumber || q.qNo || 'Question',
-            questionTitle: cleanMathAndLatexForWord(q.questionTitle || q.title || ''),
-            rows: Array.isArray(q.rows) ? q.rows.map(r => ({
-              criteria: cleanMathAndLatexForWord(r.criteria || ''),
-              excellent: cleanMathAndLatexForWord(r.excellent || ''),
-              good: cleanMathAndLatexForWord(r.good || ''),
-              average: cleanMathAndLatexForWord(r.average || ''),
-              poor: cleanMathAndLatexForWord(r.poor || '')
-            })) : []
-          }))
-          return { rubrics: sanitizedRubrics }
-        } else {
-          lastError = 'AI returned an invalid JSON response structure.'
+    const promptText = `You are an expert academic assessment specialist, university professor, and OBE (Outcome-Based Education) accreditation rubric designer.
+Generate official 5-column outcome-based assessment rubrics for each examination question below.
+
+COURSE: ${courseCode || 'N/A'} - ${courseTitle || 'N/A'} (${department || 'Department of CSE'})
+ASSESSMENT: ${assessmentName || 'Examination'}
+${totalMarks ? `TOTAL MARKS: ${totalMarks}` : ''}
+
+EXAMINATION QUESTIONS TO EVALUATE:
+${questionsFormatted}
+
+CRITICAL PEDAGOGICAL & STYLE GUIDELINES (MODELED AFTER UNIVERSITY FACULTY RUBRICS):
+1. Focus on what the STUDENT demonstrates (e.g., "Clearly explains...", "Accurately traces code/derivation...", "Correctly applies algorithm...", "Compares..."). DO NOT merely quote textbook paragraphs.
+2. For each question, construct 3 to 4 focused criteria rows capturing the core concepts, derivations, formulas, diagrams, or comparisons demanded by the question.
+3. The FINAL criterion row for EVERY question MUST ALWAYS BE "Clarity and Organization".
+4. Follow this natural 4-tier graduation pattern matching standard academic assessment rubrics:
+   - "excellent" (80-100% marks): Clearly explains/identifies/solves all required elements with accurate concepts, logical reasoning, and complete depth.
+   - "good" (60-79% marks): Explains/solves correctly but with limited details, minor conceptual gaps, or slight omissions.
+   - "average" (40-59% marks): Shows basic or partial understanding; mentions some concepts correctly with noticeable errors, superficial explanation, or incomplete analysis.
+   - "poor" (below 40% marks): Fails to explain/solve, provides fundamentally incorrect concepts, or misses the description entirely.
+
+CRITICAL MATHEMATICAL & SCIENTIFIC NOTATION RULE:
+- NEVER USE RAW LATEX DOLLAR SIGNS (DO NOT OUTPUT $ OR $$). Write clean unicode (e.g. O(n log n), T(n) = 2T(n/2) + n, √, ≤, ≥).
+
+CRITICAL CODE & JSON ESCAPING RULES:
+- When describing programming code (e.g. C/C++/Java/Python, printf, conditionals), ALWAYS use single quotes inside JSON string values (e.g. printf('A is greater')) OR escape double quotes with a backslash (\\").
+- NEVER output unescaped double quotes inside text values.
+
+Output MUST BE valid JSON only, without any markdown backticks or commentary:
+{
+  "rubrics": [
+    {
+      "questionNumber": "Question 1",
+      "questionTitle": "Brief topic summary",
+      "rows": [
+        {
+          "criteria": "Understanding of ...",
+          "excellent": "Clearly explains ... with accurate concepts and proper reasoning.",
+          "good": "Explains ... correctly but with limited details or minor conceptual gaps.",
+          "average": "Describes ... with some errors, partial understanding, or incomplete details.",
+          "poor": "Incorrect explanation or missing description of ..."
+        },
+        {
+          "criteria": "Clarity and Organization",
+          "excellent": "The answer is well-structured, clear, and logically organized with appropriate technical terms.",
+          "good": "Mostly clear with minor issues in organization or explanation.",
+          "average": "Somewhat disorganized or difficult to follow.",
+          "poor": "Poorly structured and unclear answer."
         }
-      } else {
-        lastError = data?.error?.message || `HTTP ${resp.status}`
-      }
-    } catch (err) {
-      lastError = err.message
+      ]
     }
+  ]
+}`
+
+    let lastError = null
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: promptText }] }],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 8192,
+              responseMimeType: 'application/json'
+            }
+          }),
+          signal: AbortSignal.timeout(25000)
+        })
+        const data = await resp.json()
+        if (resp.ok && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+          const rawText = data.candidates[0].content.parts[0].text.trim()
+          const parsed = robustParseJson(rawText)
+
+          let rubricsList = null
+          if (Array.isArray(parsed)) {
+            rubricsList = parsed
+          } else if (parsed && typeof parsed === 'object') {
+            rubricsList = parsed.rubrics || parsed.questions || parsed.data || Object.values(parsed).find(v => Array.isArray(v))
+          }
+
+          if (rubricsList && Array.isArray(rubricsList) && rubricsList.length > 0) {
+            return rubricsList
+          }
+        } else {
+          lastError = data?.error?.message || `HTTP ${resp.status}`
+        }
+      } catch (err) {
+        lastError = err.message
+      }
+    }
+    throw new Error(lastError || 'Could not generate rubrics for batch.')
   }
 
-  throw new Error(`Client Gemini Error: ${lastError || 'Could not generate rubrics.'}`)
+  // Process questions: if more than 2 questions, split into parallel chunks of 2
+  let allRubrics = []
+  if (questions.length <= 2) {
+    allRubrics = await generateBatch(questions)
+  } else {
+    const chunks = []
+    for (let i = 0; i < questions.length; i += 2) {
+      chunks.push(questions.slice(i, i + 2))
+    }
+    const chunkResults = await Promise.all(chunks.map(chunk => generateBatch(chunk)))
+    allRubrics = chunkResults.flat()
+  }
+
+  if (!allRubrics || allRubrics.length === 0) {
+    throw new Error('AI returned an invalid JSON response structure.')
+  }
+
+  const sanitizedRubrics = allRubrics.map((q, idx) => ({
+    ...q,
+    questionNumber: q.questionNumber || q.qNo || `Question ${idx + 1}`,
+    questionTitle: cleanMathAndLatexForWord(q.questionTitle || q.title || ''),
+    rows: Array.isArray(q.rows) ? q.rows.map(r => ({
+      criteria: cleanMathAndLatexForWord(r.criteria || ''),
+      excellent: cleanMathAndLatexForWord(r.excellent || ''),
+      good: cleanMathAndLatexForWord(r.good || ''),
+      average: cleanMathAndLatexForWord(r.average || ''),
+      poor: cleanMathAndLatexForWord(r.poor || '')
+    })) : []
+  }))
+
+  return { rubrics: sanitizedRubrics }
 }
+
 
