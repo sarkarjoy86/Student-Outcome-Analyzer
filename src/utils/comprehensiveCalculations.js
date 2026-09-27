@@ -348,38 +348,36 @@ export const calculateAllAttainments = (
   }
 
   // Calculate PO attainment percentages
-  // Rule: PO attainment = HIGHEST CO attainment among all COs mapped to that PO
-  // Both passMarksPercentage and kpiPercentage use this max rule
+  // PO attainment: Calculated from each individual student's PO score (studentPOs),
+  // counting how many students meet or exceed the target thresholds.
+  // Formula: (COUNTIF(student_PO_scores >= threshold) / totalStudents) * 100
+  // Matches the official OBE Excel template: =(COUNTIF(Q19:Q318, ">=threshold") / totalStudents) * 100
   const poAttainment = {}
   for (let po = 1; po <= 12; po++) {
     const poKey = `PO${po}`
 
-    // Find all COs that map to this PO
-    const relatedCOs = []
-    for (let co = 1; co <= 12; co++) {
-      const coKey = `CO${co}`
-      if (coMapping && coMapping[coKey] && coMapping[coKey][poKey] === 1) {
-        relatedCOs.push(coKey)
-      }
-    }
+    // Check if this PO is mapped to at least one CO
+    const isMapped = Object.keys(coMapping || {}).some(
+      (coKey) => coMapping[coKey]?.[poKey] === 1
+    )
 
-    if (relatedCOs.length === 0) {
+    if (!isMapped || !students || students.length === 0) {
       poAttainment[poKey] = { passMarksPercentage: 0, kpiPercentage: 0 }
       continue
     }
 
-    // PO % = highest CO % among all mapped COs (applied to both pass-marks and KPI)
-    let maxPassMarks = 0
-    let maxKPI = 0
-    relatedCOs.forEach((co) => {
-      const coAtt = coAttainment[co]
-      if (coAtt.passMarksPercentage > maxPassMarks) maxPassMarks = coAtt.passMarksPercentage
-      if (coAtt.kpiPercentage > maxKPI) maxKPI = coAtt.kpiPercentage
+    let passCount = 0
+    let kpiCount = 0
+
+    students.forEach((student) => {
+      const poScore = studentPOs[student.id]?.[poKey] ?? 0
+      if (poScore >= targetPassMarks) passCount++
+      if (poScore >= kpiPO) kpiCount++
     })
 
     poAttainment[poKey] = {
-      passMarksPercentage: maxPassMarks,
-      kpiPercentage: maxKPI,
+      passMarksPercentage: (passCount / students.length) * 100,
+      kpiPercentage: (kpiCount / students.length) * 100,
     }
   }
 

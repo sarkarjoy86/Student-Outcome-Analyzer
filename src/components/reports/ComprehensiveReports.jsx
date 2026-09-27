@@ -2370,9 +2370,9 @@ const ComprehensiveReports = ({
 
                         students.forEach((s) => {
                           const score = calculations.studentCOs[s.id]?.[co] || 0
-                          if (score > 0 && score < 40) below40++
-                          else if (score >= 40 && score < 80) between40_79++
-                          else if (score >= 80) above80++
+                          if (score < 40) below40++
+                          else if (score < 80) between40_79++
+                          else above80++
                         })
                         const total = students.length
                         return {
