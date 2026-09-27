@@ -31,6 +31,7 @@ import {
 import html2canvas from 'html2canvas'
 import { apiService } from '../../services/apiService'
 import { BAIUST_LOGO } from '../marks/baiustLogo'
+import { captureElementToCanvas } from '../../utils/chartDownload'
 
 // Color scheme for Likert scale (Sections 1-4: 1 to 5)
 const RATING_COLORS_1_5 = {
@@ -694,18 +695,16 @@ CRITICAL REPORT REQUIREMENTS:
     }
   }
 
-  // Capture Recharts element as base64 PNG for Word Document Export
+  // Capture Recharts element as base64 PNG for Word Document Export with clean text & inline legend
   const getChartImageBase64 = async (elementId) => {
     const element = document.getElementById(elementId)
     if (!element) return ''
     try {
-      const canvas = await html2canvas(element, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        logging: false,
-        useCORS: true,
-      })
-      return canvas.toDataURL('image/png')
+      const canvas = await captureElementToCanvas(element)
+      if (canvas) {
+        return canvas.toDataURL('image/png')
+      }
+      return ''
     } catch (err) {
       console.warn('Error capturing chart image for Word export:', elementId, err)
       return ''
@@ -1316,7 +1315,7 @@ CRITICAL REPORT REQUIREMENTS:
                 {/* Section 1 Chart */}
                 <div id="student-feedback-chart-sec1" className="bg-white p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
                   <div className="text-center sm:text-left">
-                    <p className="text-[11px] font-black text-gray-800 uppercase tracking-wide">
+                    <p className="text-xs font-bold text-gray-800 uppercase tracking-wider">
                       SECTION 1: LEARNING OUTCOMES &amp; STUDENT ACHIEVEMENT
                     </p>
                     <p className="text-[9.5px] text-gray-500 font-semibold">
@@ -1369,7 +1368,7 @@ CRITICAL REPORT REQUIREMENTS:
                 {/* Section 2 Chart */}
                 <div id="student-feedback-chart-sec2" className="bg-white p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
                   <div className="text-center sm:text-left">
-                    <p className="text-[11px] font-black text-gray-800 uppercase tracking-wide">
+                    <p className="text-xs font-bold text-gray-800 uppercase tracking-wider">
                       SECTION 2: COURSE CONTENT &amp; DELIVERY
                     </p>
                     <p className="text-[9.5px] text-gray-500 font-semibold">
@@ -1422,7 +1421,7 @@ CRITICAL REPORT REQUIREMENTS:
                 {/* Section 3 Chart */}
                 <div id="student-feedback-chart-sec3" className="bg-white p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
                   <div className="text-center sm:text-left">
-                    <p className="text-[11px] font-black text-gray-800 uppercase tracking-wide">
+                    <p className="text-xs font-bold text-gray-800 uppercase tracking-wider">
                       SECTION 3: INSTRUCTOR EVALUATION
                     </p>
                     <p className="text-[9.5px] text-gray-500 font-semibold">
@@ -1475,7 +1474,7 @@ CRITICAL REPORT REQUIREMENTS:
                 {/* Section 4 Chart */}
                 <div id="student-feedback-chart-sec4" className="bg-white p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
                   <div className="text-center sm:text-left">
-                    <p className="text-[11px] font-black text-gray-800 uppercase tracking-wide">
+                    <p className="text-xs font-bold text-gray-800 uppercase tracking-wider">
                       SECTION 4: COURSE ASSESSMENT &amp; WORKLOAD
                     </p>
                     <p className="text-[9.5px] text-gray-500 font-semibold">
@@ -1561,7 +1560,7 @@ CRITICAL REPORT REQUIREMENTS:
               {/* Section 5 Chart */}
               <div id="student-feedback-chart-sec5" className="bg-white p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
                 <div className="text-center sm:text-left">
-                  <p className="text-[11px] font-black text-gray-800 uppercase tracking-wide">
+                  <p className="text-xs font-bold text-gray-800 uppercase tracking-wider">
                     SECTION 5: OUTCOME ACHIEVEMENTS BY THE COURSE
                   </p>
                   <p className="text-[9.5px] text-gray-500 font-semibold">Criteria</p>

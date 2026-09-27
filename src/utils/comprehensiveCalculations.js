@@ -114,8 +114,9 @@ export const calculateStudentCO = (studentId, co, marks, assessments, metadataMa
           qTotal += val
         }
       })
-      if (qTotal === 0 && questions.length === 1) {
-        const coKey = (a.co || '').replace(/\s+/g, '').toUpperCase()
+      if (qTotal === 0) {
+        const allQuestionsThisCO = questions.every(q => (q.co || a.co || '').replace(/\s+/g, '').toUpperCase() === normCo)
+        const coKey = (a.co || (allQuestionsThisCO ? normCo : '')).replace(/\s+/g, '').toUpperCase()
         if (coKey === normCo) {
           qTotal = parseFloat(sMarks.totalMark ?? sMarks.marks ?? 0) || 0
         }

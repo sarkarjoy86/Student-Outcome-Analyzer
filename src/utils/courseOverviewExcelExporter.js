@@ -306,7 +306,7 @@ export function exportCourseOverviewToExcel({
     figNum: 2,
     title: 'CO Student Performance Distribution Breakdown Graph',
     systemChartTitle: 'CO Student Distribution',
-    caption: 'Stacked cohort distribution illustrating student performance brackets (<40%, 40%–79%, and ≥80%) across Course Outcomes.'
+    caption: 'Stacked distribution illustrating student performance brackets (<40%, 40%–79%, and ≥80%) across Course Outcomes.'
   })
 
   // -----------------------------------------------------------------
@@ -359,7 +359,7 @@ export function exportCourseOverviewToExcel({
     figNum: 3,
     title: 'Program Outcomes (POs) Attainment Graph',
     systemChartTitle: 'Program Outcomes (POs) Attainment',
-    caption: 'Cohort attainment levels across Program Outcomes against target pass marks and benchmark KPI criteria.'
+    caption: 'Batch attainment levels across Program Outcomes against target pass marks and benchmark KPI criteria.'
   })
 
   // -----------------------------------------------------------------

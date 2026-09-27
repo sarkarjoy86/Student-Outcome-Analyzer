@@ -711,7 +711,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
         <div id="survey-chart-sec1" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              <h3 className="text-base font-bold text-gray-900 tracking-wider uppercase">
                 SECTION 1: LEARNING OUTCOMES & STUDENT ACHIEVEMENT
               </h3>
               <p className="text-xs text-gray-600 font-semibold mt-0.5">
@@ -776,7 +776,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
         <div id="survey-chart-sec2" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              <h3 className="text-base font-bold text-gray-900 tracking-wider uppercase">
                 SECTION 2: COURSE CONTENT & DELIVERY
               </h3>
               <p className="text-xs text-gray-600 font-semibold mt-0.5">
@@ -841,7 +841,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
         <div id="survey-chart-sec3" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              <h3 className="text-base font-bold text-gray-900 tracking-wider uppercase">
                 SECTION 3: INSTRUCTOR EVALUATION
               </h3>
               <p className="text-xs text-gray-600 font-semibold mt-0.5">
@@ -906,7 +906,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
         <div id="survey-chart-sec4" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              <h3 className="text-base font-bold text-gray-900 tracking-wider uppercase">
                 SECTION 4: COURSE ASSESSMENT & WORKLOAD
               </h3>
               <p className="text-xs text-gray-600 font-semibold mt-0.5">
@@ -971,7 +971,7 @@ export default function SurveyAnalysis({ surveyId, offering: activeOffering, onB
         <div id="survey-chart-sec5" className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-black text-gray-900 tracking-wide uppercase">
+              <h3 className="text-base font-bold text-gray-900 tracking-wider uppercase">
                 SECTION 5: OUTCOME ACHIEVEMENTS BY THE COURSE
               </h3>
               <p className="text-xs text-gray-600 font-semibold mt-0.5">Criteria</p>

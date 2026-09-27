@@ -1579,7 +1579,7 @@ const ComprehensiveReports = ({
         <div class="department">Department of Computer Science and Engineering</div>
         <div style="height: 25px;"></div>
         <div class="report-title">OBE COURSE REPORT</div>
-        <div style="font-size: 13pt; font-weight: bold; color: #1a5f3f; text-transform: uppercase; letter-spacing: 1px;">COHORT PERFORMANCE & OBE ATTAINMENT ANALYSIS</div>
+        <div style="font-size: 13pt; font-weight: bold; color: #1a5f3f; text-transform: uppercase; letter-spacing: 1px;">BATCH PERFORMANCE & OBE ATTAINMENT ANALYSIS</div>
         <div style="height: 35px;"></div>
         <table class="details-table">
           <tr>
@@ -1886,7 +1886,7 @@ const ComprehensiveReports = ({
 
       <div class="section-title">15. Automatic Observations</div>
       <ul style="line-height: 1.6; font-size: 10pt;">
-        <li>Overall cohort size is <strong>${students.length} students</strong> with an average performance score of <strong>${batchMetrics.averagePercentage?.toFixed(2)}%</strong>.</li>
+        <li>Overall batch size is <strong>${students.length} students</strong> with an average performance score of <strong>${batchMetrics.averagePercentage?.toFixed(2)}%</strong>.</li>
         <li>The class-wide overall pass rate achieved is <strong>${batchMetrics.passRate?.toFixed(2)}%</strong>.</li>
         <li>A total of <strong>${coAttainedCount} out of ${activeCOs.length} Course Outcomes</strong> successfully met their class attainment target (KPI: ${kpiCO}%).</li>
         <li>A total of <strong>${poAttainedCount} out of ${activePOs.length} Program Outcomes</strong> met the program mapping KPI threshold (KPI: ${kpiPO}%).</li>
@@ -3794,7 +3794,7 @@ const ComprehensiveReports = ({
                 14. Automatic Observations (System Generated)
               </h3>
               <ul className="list-disc pl-5 space-y-2.5 text-sm font-semibold text-gray-700">
-                <li>Overall cohort size is <strong className="text-green-800">{students.length} students</strong> with an average performance score of <strong className="text-green-800">{batchMetrics.averagePercentage?.toFixed(2)}%</strong>.</li>
+                <li>Overall batch size is <strong className="text-green-800">{students.length} students</strong> with an average performance score of <strong className="text-green-800">{batchMetrics.averagePercentage?.toFixed(2)}%</strong>.</li>
                 <li>The class-wide overall pass rate achieved is <strong className="text-green-800">{batchMetrics.passRate?.toFixed(2)}%</strong>.</li>
                 <li>
                   A total of <strong className="text-green-800">{coAttainedCount} out of {activeCOs.length} Course Outcomes</strong> successfully met their class attainment target (KPI: {kpiCO}%).
@@ -4082,7 +4082,7 @@ const ComprehensiveReports = ({
                               Comparative Performance Analysis & Narrative
                             </h2>
                             <p className="text-xs text-gray-500">
-                              Comprehensive outcome benchmarking across selected cohort ({cohortCount} Students)
+                              Comprehensive outcome benchmarking across selected group ({cohortCount} Students)
                             </p>
                           </div>
                         </div>
@@ -4094,12 +4094,12 @@ const ComprehensiveReports = ({
                       {/* 4 Stat Badges */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                         <div className="p-3.5 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50/50 border border-emerald-200/80">
-                          <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">Compared Cohort</p>
+                          <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">Compared Group</p>
                           <p className="text-xl font-black text-emerald-950 mt-1">{cohortCount} <span className="text-xs font-semibold text-emerald-700">Students</span></p>
                           <p className="text-[10px] text-gray-600 mt-0.5">Active evaluation</p>
                         </div>
                         <div className="p-3.5 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50/50 border border-blue-200/80">
-                          <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Cohort Mean Score</p>
+                          <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Group Mean Score</p>
                           <p className="text-xl font-black text-blue-950 mt-1">{cohortAvgPct.toFixed(1)}%</p>
                           <p className="text-[10px] text-gray-600 mt-0.5">Aggregate performance</p>
                         </div>
@@ -4111,16 +4111,16 @@ const ComprehensiveReports = ({
                         <div className="p-3.5 rounded-xl bg-gradient-to-br from-purple-50 to-pink-50/50 border border-purple-200/80">
                           <p className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">Strongest CO</p>
                           <p className="text-xl font-black text-purple-950 mt-1">{strongestCO?.co || 'N/A'}</p>
-                          <p className="text-[10px] text-gray-600 mt-0.5">{strongestCO?.avg.toFixed(1)}% Cohort Avg</p>
+                          <p className="text-[10px] text-gray-600 mt-0.5">{strongestCO?.avg.toFixed(1)}% Group Avg</p>
                         </div>
                       </div>
 
                       {/* Detailed Narrative Section */}
                       <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-200 text-xs text-gray-700 leading-relaxed space-y-2">
                         <p>
-                          <strong className="text-gray-900">Cohort Overview: </strong>
-                          This comparative study evaluates the academic performance and course outcome attainment for a selected cohort of <span className="font-semibold text-emerald-900">{cohortCount} student{cohortCount > 1 ? 's' : ''}</span>: {comparedList.map((s) => `${s.name} (${s.id})`).join(', ')}.
-                          The aggregate cohort achieved an overall mean score of <span className="font-bold text-emerald-800">{cohortAvgPct.toFixed(1)}%</span> against a total syllabus value of <span className="font-semibold text-gray-900">{totalMaxMarks} marks</span>.
+                          <strong className="text-gray-900">Group Overview: </strong>
+                          This comparative study evaluates the academic performance and course outcome attainment for a selected group of <span className="font-semibold text-emerald-900">{cohortCount} student{cohortCount > 1 ? 's' : ''}</span>: {comparedList.map((s) => `${s.name} (${s.id})`).join(', ')}.
+                          The selected group achieved an overall mean score of <span className="font-bold text-emerald-800">{cohortAvgPct.toFixed(1)}%</span> against a total syllabus value of <span className="font-semibold text-gray-900">{totalMaxMarks} marks</span>.
                         </p>
                         <p>
                           <strong className="text-gray-900">Performance Disparity & Attainment: </strong>
@@ -4131,7 +4131,7 @@ const ComprehensiveReports = ({
                         </p>
                         <p>
                           <strong className="text-gray-900">Curricular Outcome Insights: </strong>
-                          Across all evaluated Course Outcomes ({activeCOList.join(', ')}), the cohort demonstrated peak proficiency in <span className="font-bold text-emerald-800">{strongestCO?.co}</span> with a group average of <span className="font-bold text-emerald-700">{strongestCO?.avg.toFixed(1)}%</span>.
+                          Across all evaluated Course Outcomes ({activeCOList.join(', ')}), the group demonstrated peak proficiency in <span className="font-bold text-emerald-800">{strongestCO?.co}</span> with a group average of <span className="font-bold text-emerald-700">{strongestCO?.avg.toFixed(1)}%</span>.
                           {weakestCO && weakestCO.co !== strongestCO?.co && (
                             <span> Conversely, <span className="font-bold text-amber-800">{weakestCO.co}</span> exhibited the lowest attainment average at <span className="font-bold text-amber-700">{weakestCO.avg.toFixed(1)}%</span>{weakestCO.avg < kpiCO ? ` (below the institutional benchmark target of ${kpiCO}%)` : ''}, suggesting that this outcome requires additional tutorial focus and formative assessment reinforcement.</span>
                           )}
@@ -4196,10 +4196,10 @@ const ComprehensiveReports = ({
                                 </td>
                               </tr>
                             ))}
-                            {/* Summary Cohort Average Row */}
+                            {/* Summary Group Average Row */}
                             <tr className="bg-emerald-50/80 font-bold border-t-2 border-emerald-300 text-emerald-950 text-xs">
                               <td colSpan="3" className="p-3 text-right uppercase tracking-wider font-extrabold">
-                                Cohort Mean Average:
+                                Group Mean Average:
                               </td>
                               <td className="p-3 text-center font-mono">
                                 {(comparedList.reduce((acc, s) => acc + s.obtained, 0) / cohortCount).toFixed(1)} / {totalMaxMarks}
