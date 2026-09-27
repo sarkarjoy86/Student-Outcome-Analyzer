@@ -37,6 +37,7 @@ import {
   Printer,
   ChevronRight,
   Sparkles,
+  Loader2,
 } from 'lucide-react'
 import SWOTAnalysisReport from './SWOTAnalysisReport'
 import SelfAssessmentReport from './SelfAssessmentReport'
@@ -47,6 +48,7 @@ import html2canvas from 'html2canvas'
 import { apiService } from '../../services/apiService'
 import PORecommendationMatrix from './PORecommendationMatrix'
 import { exportCourseOverviewToExcel } from '../../utils/courseOverviewExcelExporter'
+import { exportCOPOWordReport } from '../../utils/copoWordExporter'
 
 // University color scheme: Green, Gold/Yellow, Blue
 const UNIVERSITY_COLORS = {
@@ -139,6 +141,7 @@ const ComprehensiveReports = ({
   const [coDescriptions, setCoDescriptions] = useState({})
   const [poDescriptions, setPoDescriptions] = useState({})
   const [chartAnimKey, setChartAnimKey] = useState(0)
+  const [isExportingCOPOWord, setIsExportingCOPOWord] = useState(false)
 
   // Re-trigger smooth chart entrance animations when Reports tab mounts or sub-tab switches
   React.useEffect(() => {
@@ -1030,6 +1033,26 @@ const ComprehensiveReports = ({
 
     const fileName = `OBE_${reportScope === 'combined' ? 'Batch' : 'Section'}_Report_${courseInfo?.courseCode || 'Course'}_${new Date().toISOString().split('T')[0]}.xlsx`
     XLSX.writeFile(wb, fileName)
+  }
+
+  // Export Direct Measurements of COs & POs to Word (.doc)
+  const handleDownloadCOPOWord = async () => {
+    try {
+      setIsExportingCOPOWord(true)
+      await exportCOPOWordReport({
+        courseInfo,
+        calculations,
+        targetPassMarks,
+        kpiCO,
+        kpiPO,
+        reportScope,
+      })
+    } catch (err) {
+      console.error('Failed to export CO-PO Word report:', err)
+      alert('Failed to export Word report: ' + (err.message || 'Unknown error'))
+    } finally {
+      setIsExportingCOPOWord(false)
+    }
   }
 
   // Capture Recharts element as base64 PNG helper
@@ -2210,6 +2233,33 @@ const ComprehensiveReports = ({
                   </button>
                 )}
 
+                {/* Download Word: ONLY shown in Course Overview sub-page */}
+                {viewMode === 'overview' && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadCOPOWord}
+                    disabled={isExportingCOPOWord}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition shadow-xs hover:shadow cursor-pointer group active:scale-95 ${
+                      isExportingCOPOWord
+                        ? 'bg-blue-300 text-white cursor-wait'
+                        : 'bg-blue-700 hover:bg-blue-800 text-white'
+                    }`}
+                    title="Download Direct Measurements of COs & POs Word Report (.doc)"
+                  >
+                    {isExportingCOPOWord ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin text-blue-200" />
+                        <span>Exporting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FileText size={14} className="group-hover:scale-110 transition-transform text-blue-200" />
+                        <span>Download Word</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
                 {/* Download Excel: ONLY shown in Course Overview sub-page */}
                 {viewMode === 'overview' && (
                   <button
@@ -2308,38 +2358,40 @@ const ComprehensiveReports = ({
                     <Download size={14} />
                   </button>
                 </div>
-                <ResponsiveContainer width="100%" height={450}>
-                  <BarChart
-                    key={`co-attain-${chartAnimKey}`}
-                    data={Array.from({ length: 12 }, (_, i) => {
-                      const co = `CO${i + 1}`
-                      return {
-                        name: co,
-                        [`Above Pass Marks (${targetPassMarks}%)`]: calculations.coAttainment[co]?.passMarksPercentage || 0,
-                        [`Above KPI (${kpiCO}%)`]: calculations.coAttainment[co]?.kpiPercentage || 0,
-                      }
-                    })}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <defs>
-                      <linearGradient id="colorPassMarks" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9} />
-                        <stop offset="95%" stopColor={UNIVERSITY_COLORS.accent} stopOpacity={0.9} />
-                      </linearGradient>
-                      <linearGradient id="colorKPI" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightGold} stopOpacity={0.9} />
-                        <stop offset="95%" stopColor={UNIVERSITY_COLORS.secondary} stopOpacity={0.9} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
-                    <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
-                    <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
-                    <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => [`${parseFloat(value).toFixed(1)}%`, '']} labelFormatter={(label) => `${label}`} />
-                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiCO}%)`} fill="url(#colorKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
-                    <Legend wrapperStyle={{ paddingTop: '16px' }} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div id="co-overview-chart-wrapper" className="w-full bg-white rounded-lg">
+                  <ResponsiveContainer width="100%" height={450}>
+                    <BarChart
+                      key={`co-attain-${chartAnimKey}`}
+                      data={Array.from({ length: 12 }, (_, i) => {
+                        const co = `CO${i + 1}`
+                        return {
+                          name: co,
+                          [`Above Pass Marks (${targetPassMarks}%)`]: calculations.coAttainment[co]?.passMarksPercentage || 0,
+                          [`Above KPI (${kpiCO}%)`]: calculations.coAttainment[co]?.kpiPercentage || 0,
+                        }
+                      })}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorPassMarks" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9} />
+                          <stop offset="95%" stopColor={UNIVERSITY_COLORS.accent} stopOpacity={0.9} />
+                        </linearGradient>
+                        <linearGradient id="colorKPI" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightGold} stopOpacity={0.9} />
+                          <stop offset="95%" stopColor={UNIVERSITY_COLORS.secondary} stopOpacity={0.9} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
+                      <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
+                      <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
+                      <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => [`${parseFloat(value).toFixed(1)}%`, '']} labelFormatter={(label) => `${label}`} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiCO}%)`} fill="url(#colorKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                      <Legend wrapperStyle={{ paddingTop: '16px' }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
 
               {/* Student Distribution */}
@@ -2413,38 +2465,40 @@ const ComprehensiveReports = ({
                     <Download size={14} />
                   </button>
                 </div>
-                <ResponsiveContainer width="100%" height={450}>
-                  <BarChart
-                    key={`po-attain-${chartAnimKey}`}
-                    data={Array.from({ length: 12 }, (_, i) => {
-                      const po = `PO${i + 1}`
-                      return {
-                        name: po,
-                        [`Above Pass Marks (${targetPassMarks}%)`]: calculations.poAttainment[po]?.passMarksPercentage || 0,
-                        [`Above KPI (${kpiPO}%)`]: calculations.poAttainment[po]?.kpiPercentage || 0,
-                      }
-                    })}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <defs>
-                      <linearGradient id="colorPOPassMarks" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9} />
-                        <stop offset="95%" stopColor={UNIVERSITY_COLORS.accent} stopOpacity={0.9} />
-                      </linearGradient>
-                      <linearGradient id="colorPOKPI" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightGold} stopOpacity={0.9} />
-                        <stop offset="95%" stopColor={UNIVERSITY_COLORS.secondary} stopOpacity={0.9} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
-                    <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
-                    <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
-                    <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
-                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPOPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                    <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiPO}%)`} fill="url(#colorPOKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
-                    <Legend wrapperStyle={{ paddingTop: '16px' }} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div id="po-overview-chart-wrapper" className="w-full bg-white rounded-lg">
+                  <ResponsiveContainer width="100%" height={450}>
+                    <BarChart
+                      key={`po-attain-${chartAnimKey}`}
+                      data={Array.from({ length: 12 }, (_, i) => {
+                        const po = `PO${i + 1}`
+                        return {
+                          name: po,
+                          [`Above Pass Marks (${targetPassMarks}%)`]: calculations.poAttainment[po]?.passMarksPercentage || 0,
+                          [`Above KPI (${kpiPO}%)`]: calculations.poAttainment[po]?.kpiPercentage || 0,
+                        }
+                      })}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorPOPassMarks" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightBlue} stopOpacity={0.9} />
+                          <stop offset="95%" stopColor={UNIVERSITY_COLORS.accent} stopOpacity={0.9} />
+                        </linearGradient>
+                        <linearGradient id="colorPOKPI" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={UNIVERSITY_COLORS.lightGold} stopOpacity={0.9} />
+                          <stop offset="95%" stopColor={UNIVERSITY_COLORS.secondary} stopOpacity={0.9} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
+                      <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
+                      <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
+                      <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPOPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
+                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiPO}%)`} fill="url(#colorPOKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                      <Legend wrapperStyle={{ paddingTop: '16px' }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
 
               {/* PO Contribution */}
