@@ -622,7 +622,18 @@ router.put('/teacher/assessments/:id', requireAuth, async (req, res) => {
     }
     if (examDuration !== undefined) assessment.examDuration = examDuration
     if (status !== undefined) assessment.status = status
-    if (co !== undefined) assessment.co = co
+    if (co !== undefined) {
+      assessment.co = co
+      const meta = await QuestionMetadata.findOne({ assessment: assessment._id })
+      if (meta && meta.questions && meta.questions.length > 0) {
+        meta.questions.forEach(q => {
+          if (['attendance', 'performance', 'participation', 'assignments', 'presentation', 'projectReport'].includes(assessment.type) || meta.questions.length === 1) {
+            q.co = co
+          }
+        })
+        await meta.save()
+      }
+    }
     if (name !== undefined) assessment.name = name
     if (level !== undefined) assessment.level = level
     if (term !== undefined) assessment.term = term

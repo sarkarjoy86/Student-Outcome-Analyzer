@@ -198,6 +198,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
   const [assessments, setAssessments] = useState([])
   const [qBankPapers, setQBankPapers] = useState([])
   const [activeAssessmentForPaper, setActiveAssessmentForPaper] = useState(null)
+  const [updatingCOAssessmentId, setUpdatingCOAssessmentId] = useState(null)
 
   // Reference Notes States (Persistent per normalized course key)
   const activeCourseId = getNormalizedCourseKey(offering)
@@ -347,6 +348,24 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
     return allPossible.filter(code => !existingSet.has(code))
   }, [dbCourseOutcomes, proposedCOs, deletedCOs])
+
+  // Available CO codes for assessment mapping (e.g. CO1, CO2, CO3, CO4, ...)
+  const availableCourseCOs = useMemo(() => {
+    let list = []
+    if (dbCourseOutcomes && dbCourseOutcomes.length > 0) {
+      list = dbCourseOutcomes.map(o => (o.code || '').replace(/\s+/g, '').toUpperCase())
+    } else if (coMapping && Object.keys(coMapping).length > 0) {
+      list = Object.keys(coMapping).map(c => c.replace(/\s+/g, '').toUpperCase())
+    } else {
+      const num = offering?.course?.numCOs || 4
+      list = Array.from({ length: num }, (_, i) => `CO${i + 1}`)
+    }
+    return Array.from(new Set(list.filter(Boolean))).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+      return numA - numB
+    })
+  }, [dbCourseOutcomes, coMapping, offering])
 
   // Automatically select first available CO code when available list changes
   useEffect(() => {
@@ -1984,6 +2003,44 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     }
   }
 
+  // Update Mapped CO dynamically for marks-entry-only assessments (Attendance, Performance, Participation, etc.)
+  const handleDirectAssessmentCOChange = async (assessment, newCO) => {
+    if (!assessment || !assessment._id) return
+    const targetCO = newCO === 'NONE' ? 'NONE' : newCO
+    if (assessment.co === targetCO) return
+
+    setUpdatingCOAssessmentId(assessment._id)
+
+    // 1. Optimistic local state update for zero-latency UI reaction
+    setAssessments(prev => prev.map(a => a._id === assessment._id ? { ...a, co: targetCO } : a))
+    setMarksSpreadsheetData(prev => {
+      if (!prev || !prev.assessments) return prev
+      return {
+        ...prev,
+        assessments: prev.assessments.map(a => a._id === assessment._id ? { ...a, co: targetCO } : a)
+      }
+    })
+    setCombinedBatchSpreadsheetData(prev => {
+      if (!prev || !prev.assessments) return prev
+      return {
+        ...prev,
+        assessments: prev.assessments.map(a => a._id === assessment._id ? { ...a, co: targetCO } : a)
+      }
+    })
+
+    // 2. Persist to database & trigger server-side attainment recalculation
+    try {
+      await apiService.updateAssessment(assessment._id, { co: targetCO })
+      await loadAllData()
+    } catch (err) {
+      console.error('Failed to update assessment CO:', err)
+      alert('Failed to update mapped CO: ' + (err.message || 'Unknown error'))
+      loadAllData()
+    } finally {
+      setUpdatingCOAssessmentId(null)
+    }
+  }
+
   // Save modified KPI configuration
   const saveKpiConfig = async () => {
     setSaving(true)
@@ -3305,7 +3362,32 @@ function EditorLoadingFallback() {
                             {isSubmissionType && (
                               <div className="col-span-2">Deadline: <span className="font-bold text-orange-700">{a.deadline ? new Date(a.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Not Set'}</span></div>
                             )}
-                            {(() => {
+                            {isDirectMarksType ? (
+                              <div className="col-span-2 flex items-center justify-between py-0.5">
+                                <span className="text-gray-600 font-semibold">Mapped CO:</span>
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={a.co && a.co !== 'NONE' ? a.co : 'NONE'}
+                                    onChange={(e) => handleDirectAssessmentCOChange(a, e.target.value)}
+                                    disabled={updatingCOAssessmentId === a._id}
+                                    className={`text-xs font-bold rounded-lg px-2.5 py-1 border transition-all cursor-pointer outline-none shadow-2xs ${
+                                      a.co && a.co !== 'NONE'
+                                        ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 hover:border-blue-400 focus:ring-2 focus:ring-blue-400'
+                                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100 hover:border-gray-300 focus:ring-2 focus:ring-gray-300'
+                                    } ${updatingCOAssessmentId === a._id ? 'opacity-50 cursor-wait' : ''}`}
+                                    title="Click to select or change mapped CO"
+                                  >
+                                    <option value="NONE">None</option>
+                                    {availableCourseCOs.map(co => (
+                                      <option key={co} value={co} className="font-semibold text-gray-800">{co}</option>
+                                    ))}
+                                  </select>
+                                  {updatingCOAssessmentId === a._id && (
+                                    <Loader2 size={13} className="animate-spin text-blue-600 shrink-0" />
+                                  )}
+                                </div>
+                              </div>
+                            ) : (() => {
                               const qMeta = (marksSpreadsheetData.metadata || {})[a._id] || []
                               const displayCO = a.co || Array.from(new Set(qMeta.map(q => q.co).filter(c => c && c !== 'NONE'))).join(', ')
                               if (displayCO && displayCO !== 'NONE' && displayCO !== '') {
