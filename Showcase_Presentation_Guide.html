@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <title>OBE System Showcase Presentation Guide</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+    }
+    body {
+      font-family: 'Segoe UI', Calibri, Arial, 'SolaimanLipi', 'Kalpurush', sans-serif;
+      color: #1f2937;
+      line-height: 1.55;
+      font-size: 13px;
+      margin: 0;
+      padding: 24px;
+      background-color: #f9fafb;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 36px 42px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      border: 1px solid #e5e7eb;
+    }
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+      .container {
+        box-shadow: none;
+        border: none;
+        padding: 0;
+        max-width: 100%;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .page-break {
+        page-break-before: always;
+      }
+    }
+    .header-box {
+      border-bottom: 2px solid #059669;
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      color: #064e3b;
+      font-size: 22px;
+      margin: 0 0 6px 0;
+      font-weight: 800;
+    }
+    .meta-bar {
+      font-size: 11.5px;
+      color: #4b5563;
+      margin-bottom: 8px;
+    }
+    .meta-badge {
+      display: inline-block;
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 11px;
+      margin-right: 6px;
+    }
+    .tip-box {
+      background: #eff6ff;
+      border-left: 4px solid #3b82f6;
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 16px 0;
+      font-size: 12px;
+      color: #1e3a8a;
+    }
+    .tip-box strong {
+      color: #1d4ed8;
+    }
+    .speech-box {
+      background: #f0fdf4;
+      border-left: 4px solid #10b981;
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 10px 0 14px 0;
+      font-style: italic;
+      color: #064e3b;
+      font-size: 12.5px;
+    }
+    .flow-grid {
+      display: table;
+      width: 100%;
+      margin: 20px 0;
+      border-collapse: separate;
+      border-spacing: 6px;
+    }
+    .flow-row {
+      display: table-row;
+    }
+    .flow-cell {
+      display: table-cell;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px 8px;
+      text-align: center;
+      width: 14.28%;
+      vertical-align: top;
+    }
+    .flow-cell.admin-cell {
+      background: #eff6ff;
+      border-color: #93c5fd;
+    }
+    .flow-cell.hero-cell {
+      background: #ecfdf5;
+      border-color: #6ee7b7;
+    }
+    .flow-num {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      line-height: 20px;
+      border-radius: 50%;
+      background: #059669;
+      color: #fff;
+      font-size: 11px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .flow-cell.admin-cell .flow-num {
+      background: #2563eb;
+    }
+    .flow-title {
+      font-size: 11px;
+      font-weight: bold;
+      color: #1e293b;
+      margin-bottom: 3px;
+    }
+    .flow-time {
+      font-size: 10px;
+      color: #64748b;
+      font-weight: 600;
+    }
+    .step-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .step-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #f1f5f9;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+    .step-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-tag {
+      font-size: 11px;
+      font-weight: bold;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      background: #f1f5f9;
+      color: #475569;
+    }
+    .bullet-list {
+      margin: 6px 0 10px 0;
+      padding-left: 20px;
+    }
+    .bullet-list li {
+      margin-bottom: 4px;
+    }
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 12px;
+    }
+    table.data-table th {
+      background: #064e3b;
+      color: #ffffff;
+      padding: 8px 10px;
+      text-align: left;
+      font-weight: bold;
+      border: 1px solid #064e3b;
+    }
+    table.data-table td {
+      padding: 8px 10px;
+      border: 1px solid #e5e7eb;
+      vertical-align: top;
+    }
+    table.data-table tr:nth-child(even) {
+      background-color: #f9fafb;
+    }
+    .action-bar {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+    .btn-pdf {
+      background: #dc2626;
+      color: white;
+    }
+    .btn-pdf:hover {
+      background: #b91c1c;
+    }
+    .btn-word {
+      background: #2563eb;
+      color: white;
+    }
+    .btn-word:hover {
+      background: #1d4ed8;
+    }
+    .btn-copy {
+      background: #059669;
+      color: white;
+    }
+    .btn-copy:hover {
+      background: #047857;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="action-bar no-print">
+      <button onclick="window.print()" class="btn btn-pdf">
+        🖨️ Save as PDF / Print Guide
+      </button>
+      <a href="Showcase_Presentation_Guide.doc" download class="btn btn-word">
+        📄 Download as Word Document (.doc)
+      </a>
+      <button onclick="copyToClipboard()" class="btn btn-copy" id="copyBtn">
+        📋 Copy for Word
+      </button>
+    </div>
+
+    <div class="header-box">
+      <h1>🎓 OBE Course Outcome Attainment System: Showcase Presentation Guide</h1>
+      <div class="meta-bar">
+        <span class="meta-badge">Target Audience: Professors & Evaluators</span>
+        <span class="meta-badge">Duration: 12–14 Mins + Q&A</span>
+        <span class="meta-badge">Primary Course: CSE 311 (Batch 19, Sec A & B)</span>
+      </div>
+    </div>
+
+    <div class="tip-box">
+      <strong>💡 মূল উপস্থাপনা কৌশল:</strong> ডেমো শুরু করার সময় শূন্য থেকে কোর্স তৈরি, স্টুডেন্ট যোগ বা মার্কস টাইপ করতে যাবেন না। শুরুতে ডিপার্টমেন্ট এডমিন পোর্টালে ১.৫ মিনিট সেন্ট্রাল গভর্ন্যান্স দেখিয়ে সরাসরি সম্পূর্ণ ডাটা প্রস্তুত থাকা <strong>CSE 311 (Operating System)</strong> কোর্সে শিক্ষক হিসেবে প্রবেশ করবেন।
+    </div>
+
+    <!-- Visual Flowchart -->
+    <h3 style="font-size: 14px; color: #0f172a; margin-bottom: 8px;">🧭 প্রেজেন্টেশন ফ্লোচার্ট (Step-by-Step Flowchart)</h3>
+    <div class="flow-grid">
+      <div class="flow-row">
+        <div class="flow-cell admin-cell">
+          <div class="flow-num">1</div>
+          <div class="flow-title">Admin Portal</div>
+          <div class="flow-time">১.৫ মিনিট</div>
+        </div>
+        <div class="flow-cell">
+          <div class="flow-num">2</div>
+          <div class="flow-title">Course Setup</div>
+          <div class="flow-time">১.৫ মিনিট</div>
+        </div>
+        <div class="flow-cell">
+          <div class="flow-num">3</div>
+          <div class="flow-title">Assessments</div>
+          <div class="flow-time">২ মিনিট</div>
+        </div>
+        <div class="flow-cell">
+          <div class="flow-num">4</div>
+          <div class="flow-title">Marks Entry</div>
+          <div class="flow-time">১ মিনিট</div>
+        </div>
+        <div class="flow-cell hero-cell">
+          <div class="flow-num">5</div>
+          <div class="flow-title">Attainment</div>
+          <div class="flow-time">২.৫ মিনিট</div>
+        </div>
+        <div class="flow-cell hero-cell">
+          <div class="flow-num">6</div>
+          <div class="flow-title">Batch Report</div>
+          <div class="flow-time">৩ মিনিট</div>
+        </div>
+        <div class="flow-cell">
+          <div class="flow-num">7</div>
+          <div class="flow-title">Survey / Close</div>
+          <div class="flow-time">১ মিনিট</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 1 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">🏛️ ধাপ ১: দ্য হুক ও সেন্ট্রাল এডমিন পোর্টাল</div>
+        <div class="step-tag">সময়: ১.৫–২ মিনিট</div>
+      </div>
+      <div class="speech-box">
+        "শ্রদ্ধেয় শিক্ষক ও মূল্যায়নকারী মণ্ডলী, বর্তমান আন্তর্জাতিক অ্যাক্রেডিটেশন (BAETE/OBE) মানদণ্ড অনুযায়ী প্রতিটি কোর্সের Course Outcomes (CO) এবং Program Outcomes (PO) প্রত্যক্ষ ও পরোক্ষভাবে পরিমাপ করা বাধ্যতামূলক। বর্তমানে শিক্ষকদের এক্সেলে জটিল ফর্মুলা বসিয়ে শত শত শিক্ষার্থীর নম্বর নিয়ে ম্যানুয়ালি কাজ করতে হয়, যা অত্যন্ত সময়সাপেক্ষ এবং ভুলে ভরা।<br><br>
+        আমাদের এই <strong>Automated OBE Course Outcome Attainment & Analyzer</strong> প্ল্যাটফর্মটি সম্পূর্ণ প্রক্রিয়াকে স্বয়ংক্রিয় করেছে। এই সিস্টেমে দুটি মূল স্তর রয়েছে: <strong>১. Department Admin / HOD</strong> এবং <strong>২. Course Teacher</strong>। শুরুতে আমরা ডিপার্টমেন্টাল এডমিন কীভাবে পুরো প্রক্রিয়াটি সেন্ট্রালি পরিচালনা করেন তা এক ঝলকে দেখে নিচ্ছি।"
+      </div>
+      <strong>এডমিনে যা যা দ্রুত দেখাবেন:</strong>
+      <ul class="bullet-list">
+        <li><strong>Program Outcomes ট্যাব:</strong> অ্যাক্রেডিটেশনের কেন্দ্রীয় ১২টি পিও (PO1–PO12) এবং বিএইটিই স্ট্যান্ডার্ড সেন্ট্রালি কনফিগার করা।</li>
+        <li><strong>Course Offerings ট্যাব:</strong> চলতি সেমিস্টারে কীভাবে <strong>CSE 311</strong> কোর্সটি সেকশন A ও B সহ সংশ্লিষ্ট শিক্ষকের নামে অ্যাসাইন করা হয়েছে।</li>
+        <li><strong>Faculty CO-PO Requests ট্যাব (হাইলাইট ফিচার):</strong> শিক্ষক কোর্সের CO-PO ম্যাপিংয়ে পরিবর্তন আনতে চাইলে হেড অব ডিপার্টমেন্টের কাছে রিকোয়েস্ট আসে এবং এডমিন পর্যালোচনা করে Approve/Reject করেন (Academic Governance & Audit Trail)।</li>
+      </ul>
+      <div class="speech-box">
+        <em>👉 ট্রানজিশন ডায়লগ:</em> "ডিপার্টমেন্ট যখন কোর্স ও শিক্ষক অ্যাসাইন করে দিল, তখন একজন শিক্ষক ক্লাসরুম লেভেলে কীভাবে কোর্স পরিচালনা, নম্বর প্রদান এবং স্বয়ংক্রিয় অ্যাটেইনমেন্ট হিসাব করবেন? চলুন এবার শিক্ষক হিসেবে লগইন করে <strong>CSE 311</strong> কোর্সে প্রবেশ করি..."
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">👨‍🏫 ধাপ ২: কোর্স সেটআপ ও CO-PO ম্যাপিং</div>
+        <div class="step-tag">সময়: ১.৫ মিনিট</div>
+      </div>
+      <ul class="bullet-list">
+        <li><strong>কোথায় যাবেন:</strong> শিক্ষকের ড্যাশবোর্ডে <strong>CSE 311</strong> কার্ডে ক্লিক করে <code>Course Overview</code> এবং <code>CO-PO Mapping</code> ট্যাবে।</li>
+        <li><strong>কী দেখাবেন:</strong> কোর্সের সিলেবাস ও <strong>CO-PO Matrix</strong> (CO1 থেকে CO5 কীভাবে PO1, PO2, PO3, PO10-এর সাথে ম্যাপিং করা হয়েছে)।</li>
+      </ul>
+      <div class="speech-box">
+        "সিলেবাসের এই ম্যাপিংয়ের ওপর ভিত্তি করেই সিস্টেমের গাণিতিক ইঞ্জিন পরবর্তীতে প্রতিটি শিক্ষার্থীর নম্বরকে সংশ্লিষ্ট প্রোগ্রাম আউটকামে রূপান্তর করবে।"
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">📝 ধাপ ৩: অ্যাসেসমেন্ট আর্কিটেকচার ও প্রশ্ন আর্কাইভ</div>
+        <div class="step-tag">সময়: ২ মিনিট</div>
+      </div>
+      <ul class="bullet-list">
+        <li><strong>Assessments ট্যাব:</strong> মূল্যায়ন কাঠামো—Continuous (CT-1, CT-2, CT-3, Attendance, Project Report), Midterm ও Final Exam।</li>
+        <li><strong>Question Archives ট্যাব:</strong> প্রতিটি প্রশ্নের সাথে <strong>Bloom's Taxonomy Levels</strong> (Remembering, Applying, Analyzing ইত্যাদি) ট্যাগ করা।</li>
+      </ul>
+      <div class="speech-box">
+        "প্রতিটি প্রশ্নকে ব্লুমস ট্যাক্সোনমির সাথে যুক্ত রাখায় শিক্ষকরা দেখতে পারেন তাদের প্রশ্নপত্রে উচ্চতর চিন্তন দক্ষতার প্রশ্ন কতটা অন্তর্ভুক্ত ছিল।"
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">📊 ধাপ ৪: স্টুডেন্ট টেবিল ও সহজ মার্কস এন্ট্রি</div>
+        <div class="step-tag">সময়: ১ মিনিট</div>
+      </div>
+      <ul class="bullet-list">
+        <li><strong>Student Table / Marks Entry ট্যাব:</strong> মসৃণ এক্সেল-লাইক গ্রিড।</li>
+        <li><strong>ভ্যালিডেশন ও অ্যাবসেন্ট হ্যান্ডলিং:</strong> Max Marks-এর বেশি টাইপ করা অসম্ভব, অনুপস্থিত শিক্ষার্থীর জন্য 'A' ফ্ল্যাগ। বাইরে থেকে তৈরি এক্সেল শিট এক ক্লিকে আপলোড করার সুবিধা।</li>
+      </ul>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="step-card page-break">
+      <div class="step-header">
+        <div class="step-title">⚡ ধাপ ৫: দ্য হিরো ফিচার — রিয়েল-টাইম CO ও PO অ্যাটেইনমেন্ট ইঞ্জিন</div>
+        <div class="step-tag">সময়: ২.৫ মিনিট</div>
+      </div>
+      <ul class="bullet-list">
+        <li><strong>Dynamic Thresholds:</strong> Target Pass Marks (যেমন ৪০%) এবং Benchmark KPI (যেমন ৫০%)।</li>
+        <li><strong>CO ও PO Attainment টেবিল ও চার্ট:</strong> কত শতাংশ শিক্ষার্থী Pass Mark এবং কত শতাংশ শিক্ষার্থী KPI অর্জন করেছে।</li>
+      </ul>
+      <div class="speech-box">
+        <strong>পাওয়ারফুল টেকনিক্যাল পয়েন্ট (জোর দিয়ে বলবেন):</strong><br>
+        "PO2-তে যেমন CO3 ও CO4 দুটোই ম্যাপ করা। আমাদের সিস্টেম কোনো গড় বা অনুমানভিত্তিক শর্টকাট নেয় না; বরং <strong>শিক্ষার্থী-স্তরে (Student-Level)</strong> প্রতিটি শিক্ষার্থীর ব্যক্তিগত সর্বোচ্চ অর্জন বিবেচনা করে সম্পূর্ণ ব্যাচের PO পরিমাপ করে, যা আন্তর্জাতিক অ্যাক্রেডিটেশনের গাণিতিক নিয়মের সাথে শতভাগ সামঞ্জস্যপূর্ণ।"
+      </div>
+    </div>
+
+    <!-- Step 6 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">🏆 ধাপ ৬: গ্র্যান্ড ফিনালে — স্বয়ংক্রিয় রিপোর্ট ও কম্বাইন্ড ব্যাচ পাওয়ার</div>
+        <div class="step-tag">সময়: ৩ মিনিট</div>
+      </div>
+      <ul class="bullet-list">
+        <li><strong>Multi-Section Aggregation:</strong> টগল বাটন ক্লিক করে দেখাবেন: <em>Section A</em> $ightarrow$ <em>Section B</em> $ightarrow$ এবং <strong>Combined Batch Report</strong> (৫৮ জন শিক্ষার্থীর সমন্বিত ফলাফল)!</li>
+        <li><strong>CO Student Distribution & Heatmap:</strong> পারফরম্যান্স ব্র্যাকেট (<40%, 40–79%, ≥80%) এবং রঙিন ভিজ্যুয়াল হিটম্যাপ।</li>
+        <li><strong>Comparative Analysis:</strong> ৪/৫ জন শিক্ষার্থীর গ্রুপ তুলনা ও গ্রুপ এভারেজ।</li>
+        <li><strong>1-Click Word Export (The WOW Moment):</strong> <strong>Download Word</strong> বাটনে ক্লিক করে ওয়ার্ড ফাইল ওপেন করে প্রজেক্টরে দেখান: প্রাতিষ্ঠানিক লোগো, চার্ট ইমেজ, টেবিল ও শিক্ষকের স্বাক্ষর ব্লকসহ প্রিন্ট-রেডি রিপোর্ট!</li>
+      </ul>
+      <div class="speech-box">
+        "একটি কোর্সে যতগুলো সেকশনই থাকুক না কেন, শিক্ষক বা বিভাগীয় প্রধানকে আলাদা এক্সেল নিয়ে কাটাকুটি করতে হয় না; সিস্টেম এক ক্লিকেই সম্পূর্ণ ব্যাচের সম্মিলিত ওবিই হিসাব স্বয়ংক্রিয়ভাবে বের করে দেয়।"
+      </div>
+    </div>
+
+    <!-- Step 7 -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-title">📋 ধাপ ৭: পরোক্ষ সার্ভে ও সমাপ্তি</div>
+        <div class="step-tag">সময়: ১ মিনিট</div>
+      </div>
+      <div class="speech-box">
+        "Course Survey ট্যাবের মাধ্যমে শিক্ষার্থীদের ফিডব্যাক নিয়ে ইনডাইরেক্ট মেজারমেন্ট চার্ট তৈরির ফিচারও এখানে অন্তর্ভুক্ত রয়েছে। এই প্ল্যাটফর্মটি শিক্ষকদের কয়েক দিনের ক্লান্তিকর এক্সেল কাজের ঝামেলা দূর করে মাত্র কয়েক মিনিটে আন্তর্জাতিক মানের নির্ভুল অ্যাক্রেডিটেশন রিপোর্ট নিশ্চিত করে। ধন্যবাদ।"
+      </div>
+    </div>
+
+    <!-- Q&A Defense Table -->
+    <h3 style="font-size: 14px; color: #0f172a; margin: 24px 0 10px 0;">🛡️ ৩. সম্ভাব্য প্রশ্ন ও তার নির্ভুল উত্তর (Q&A Defense)</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width: 40%;">সম্ভাব্য প্রশ্ন</th>
+          <th style="width: 60%;">আপনার আত্মবিশ্বাসী উত্তর</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>১. PO2-তে তো দুটো CO ম্যাপ করা, হিসাব কীভাবে হলো?</strong></td>
+          <td>"আমরা শিক্ষার্থী-স্তরে (Student-level) হিসাব করি। অর্থাৎ প্রতিটি শিক্ষার্থীর প্রাপ্ত CO3 ও CO4-এর মধ্যে সর্বোচ্চ অর্জনটি তার ব্যক্তিগত PO2 হিসেবে ধরা হয়, এরপর পুরো ব্যাচের কত শতাংশ শিক্ষার্থী ৫০% KPI পূরণ করেছে তা গণনা করা হয়।"</td>
+        </tr>
+        <tr>
+          <td><strong>২. এডমিন কি শিক্ষকদের কোর্সে নম্বর এডিট করতে পারে?</strong></td>
+          <td>"না, এডমিন শুধু কোর্স বরাদ্দ ও অ্যাকাডেমিক পলিসি নিয়ন্ত্রণ করেন। মার্কস এন্ট্রি ও প্রশ্ন তৈরির সম্পূর্ণ নিয়ন্ত্রণ সংশ্লিষ্ট কোর্স শিক্ষকের হাতে।"</td>
+        </tr>
+        <tr>
+          <td><strong>৩. শিক্ষক কোনো CO ভুল ম্যাপ করলে কী হবে?</strong></td>
+          <td>"শিক্ষক সিস্টেমে CO পরিবর্তনের রিকোয়েস্ট পাঠাতে পারেন, যা আমরা এডমিন প্যানেলের 'Requests' ট্যাবে দেখেছি। বিভাগীয় প্রধান অনুমোদন দিলেই কেবল তা কোর্সে কার্যকর হয়।"</td>
+        </tr>
+        <tr>
+          <td><strong>৪. একাধিক সেকশনের প্রশ্ন আলাদা হলে কম্বাইন্ড রিপোর্টে সমস্যা হবে?</strong></td>
+          <td>"না, প্রতিটি সেকশন তার নিজ নিজ প্রশ্নের মান ও CO ম্যাপিং অনুযায়ী মূল্যায়িত হয় এবং কম্বাইন্ড ইঞ্জিন সেগুলোকে নরমালাইজ করে সম্মিলিত ব্যাচের ফলাফল নিখুঁতভাবে তৈরি করে।"</td>
+        </tr>
+      </tbody>
+    </table>
+
+  </div>
+
+  <script>
+    function copyToClipboard() {
+      const container = document.querySelector('.container');
+      const clone = container.cloneNode(true);
+      clone.querySelector('.action-bar')?.remove();
+      
+      const blob = new Blob([clone.innerHTML], { type: 'text/html' });
+      const plainBlob = new Blob([clone.innerText], { type: 'text/plain' });
+      
+      if (navigator.clipboard && navigator.clipboard.write) {
+        navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': blob,
+            'text/plain': plainBlob
+          })
+        ]).then(() => {
+          const btn = document.getElementById('copyBtn');
+          btn.innerText = '✅ Copied to Clipboard!';
+          setTimeout(() => { btn.innerText = '📋 Copy for Word'; }, 3000);
+        }).catch(err => {
+          alert('Please press Ctrl+P to save as PDF or download the Word file directly.');
+        });
+      } else {
+        alert('Please press Ctrl+P to save as PDF or download the Word file directly.');
+      }
+    }
+  </script>
+</body>
+</html>

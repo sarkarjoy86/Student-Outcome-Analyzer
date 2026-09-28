@@ -99,6 +99,9 @@ const studentLongitudinalPOSchema = new mongoose.Schema({
     letterGrade: String,
     gradePoint: Number,
     poAttainments: mongoose.Schema.Types.Mixed,
+    coAttainments: mongoose.Schema.Types.Mixed,
+    totalCOCount: { type: Number, default: 0 },
+    achievedCOCount: { type: Number, default: 0 },
   }],
   completedCoursesCount: {
     type: Number,

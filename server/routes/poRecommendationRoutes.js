@@ -12,6 +12,7 @@ import QuestionMetadata from '../models/QuestionMetadata.js';
 import StudentMarks from '../models/StudentMarks.js';
 import StudentLongitudinalPO from '../models/StudentLongitudinalPO.js';
 import PORecommendation from '../models/PORecommendation.js';
+import CourseOutcome from '../models/CourseOutcome.js';
 
 const router = express.Router();
 
@@ -125,8 +126,17 @@ export async function calculateAndSyncStudentPO(studentIdOrDbId, targetThreshold
       marksMap[m.assessment.toString()] = m;
     });
 
+    // Fetch registered course outcomes for this course to get descriptions
+    const registeredCOs = await CourseOutcome.find({ course: course._id }).lean();
+    const coDescMap = {};
+    registeredCOs.forEach(item => {
+      coDescMap[norm(item.code)] = item.description;
+    });
+
     // Calculate CO1..CO12 attainments for this student in this course
     const courseCOs = {};
+    const coDetailsList = [];
+
     for (let c = 1; c <= 12; c++) {
       const targetCO = `CO${c}`;
       let totalCOMax = 0;
@@ -159,7 +169,20 @@ export async function calculateAndSyncStudentPO(studentIdOrDbId, targetThreshold
         }
       });
 
-      courseCOs[targetCO] = totalCOMax > 0 ? (totalCOObtained / totalCOMax) * 100 : 0;
+      const coAttScore = totalCOMax > 0 ? (totalCOObtained / totalCOMax) * 100 : 0;
+      courseCOs[targetCO] = coAttScore;
+
+      // Only include COs that were evaluated in this course
+      if (totalCOMax > 0) {
+        coDetailsList.push({
+          co: targetCO,
+          description: coDescMap[targetCO] || `${courseCode} ${targetCO}`,
+          obtainedMarks: Math.round(totalCOObtained * 10) / 10,
+          maxMarks: Math.round(totalCOMax * 10) / 10,
+          attainment: Math.round(coAttScore * 10) / 10,
+          isPassed: coAttScore >= targetThreshold,
+        });
+      }
     }
 
     // Calculate Course Overall Grade
@@ -206,6 +229,17 @@ export async function calculateAndSyncStudentPO(studentIdOrDbId, targetThreshold
       });
     });
 
+    // Attach mapped POs to each evaluated CO
+    coDetailsList.forEach(coItem => {
+      const normCo = coItem.co;
+      const pos = [];
+      const poMap = mergedMapping[normCo] || {};
+      Object.keys(poMap).forEach(pKey => {
+        if (poMap[pKey] === 1) pos.push(pKey);
+      });
+      coItem.mappedPOs = pos;
+    });
+
     const coursePOs = {};
     for (let p = 1; p <= 12; p++) {
       const targetPO = `PO${p}`;
@@ -247,6 +281,9 @@ export async function calculateAndSyncStudentPO(studentIdOrDbId, targetThreshold
       percentage: Math.round(coursePercentage * 10) / 10,
       letterGrade: grade,
       gradePoint: gp,
+      coAttainments: coDetailsList,
+      totalCOCount: coDetailsList.length,
+      achievedCOCount: coDetailsList.filter(c => c.isPassed).length,
       poAttainments: coursePOs,
     });
   }
@@ -436,40 +473,81 @@ export async function syncCourseOfferingStudentsLongitudinalPO(offeringId, targe
 
 /**
  * GET /api/po-recommendation/students
- * Get pre-calculated student longitudinal PO summary list directly from MongoDB collection
+ * Get pre-calculated student longitudinal PO summary list directly from MongoDB collection.
+ * When offeringId is provided, fetches ALL students across ALL sections in the same batch+course
+ * (sister offerings), returning section info and the list of available sections.
  */
 router.get('/po-recommendation/students', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
     const threshold = parseFloat(req.query.threshold) || 50;
     const { offeringId, teacherId } = req.query;
 
     let targetStudentIds = null;
+    // Maps student ObjectId string -> section name
+    const studentSectionMap = {};
+    let availableSections = [];
 
     if (offeringId && mongoose.Types.ObjectId.isValid(offeringId)) {
-      const offering = await CourseOffering.findById(offeringId);
-      if (offering) {
-        const batchId = offering.batch;
-        const sectionName = offering.section;
-        const sectionDoc = await Section.findOne({ batchId, sectionName });
-        const queryFilter = {};
-        if (batchId) queryFilter.batchId = batchId;
-        if (sectionDoc) queryFilter.sectionId = sectionDoc._id;
+      const primaryOffering = await CourseOffering.findById(offeringId);
+      if (primaryOffering) {
+        const courseId = primaryOffering.course?._id || primaryOffering.course;
+        const batchId = primaryOffering.batch?._id || primaryOffering.batch;
+        const semesterId = primaryOffering.semester?._id || primaryOffering.semester;
 
-        const studentsInSection = await Student.find(queryFilter);
-        for (const s of studentsInSection) {
-          await Enrollment.findOneAndUpdate(
-            { student: s._id, courseOffering: offeringId },
-            {},
-            { upsert: true }
-          );
+        // Find all sister offerings (same course + batch)
+        const sisterFilter = { course: courseId, batch: batchId };
+        let sisterOfferings = await CourseOffering.find(sisterFilter).sort({ section: 1 });
+        if (semesterId) {
+          const matchingSemesterOfferings = sisterOfferings.filter(o => String(o.semester?._id || o.semester) === String(semesterId));
+          if (matchingSemesterOfferings.length > 0) {
+            sisterOfferings = matchingSemesterOfferings;
+          }
+        }
+        const sisterOfferingIds = sisterOfferings.map(o => o._id);
+        availableSections = Array.from(new Set(sisterOfferings.map(o => o.section).filter(Boolean))).sort();
+
+        // Build a map: courseOfferingId -> sectionName
+        const offeringToSection = {};
+        sisterOfferings.forEach(o => { offeringToSection[o._id.toString()] = o.section || 'N/A'; });
+
+        // Collect all enrolled students across all sister offerings
+        const allEnrollments = await Enrollment.find({ courseOffering: { $in: sisterOfferingIds } }).select('student courseOffering');
+        const allStudentIdSet = new Set();
+        allEnrollments.forEach(e => {
+          const sid = e.student.toString();
+          allStudentIdSet.add(sid);
+          // Assign section from offering map (first assignment wins; deduplicated students keep first section)
+          if (!studentSectionMap[sid]) {
+            studentSectionMap[sid] = offeringToSection[e.courseOffering.toString()] || 'N/A';
+          }
+        });
+
+        // Also pull students via Section/Batch model for accuracy
+        for (const off of sisterOfferings) {
+          const sectionDoc = await Section.findOne({ batchId, sectionName: off.section });
+          const qf = { batchId };
+          if (sectionDoc) qf.sectionId = sectionDoc._id;
+          const studentsInSec = await Student.find(qf).select('_id');
+          studentsInSec.forEach(s => {
+            const sid = s._id.toString();
+            allStudentIdSet.add(sid);
+            if (!studentSectionMap[sid]) {
+              studentSectionMap[sid] = off.section || 'N/A';
+            }
+            // Ensure enrollment record exists
+            Enrollment.findOneAndUpdate(
+              { student: s._id, courseOffering: off._id },
+              {},
+              { upsert: true }
+            ).catch(() => {});
+          });
         }
 
-        if (studentsInSection.length > 0) {
-          targetStudentIds = studentsInSection.map(s => s._id.toString());
-        } else {
-          const enrollments = await Enrollment.find({ courseOffering: offeringId }).select('student');
-          targetStudentIds = enrollments.map(e => e.student.toString());
-        }
+        targetStudentIds = Array.from(allStudentIdSet);
       } else {
         const enrollments = await Enrollment.find({ courseOffering: offeringId }).select('student');
         targetStudentIds = enrollments.map(e => e.student.toString());
@@ -481,7 +559,7 @@ router.get('/po-recommendation/students', async (req, res) => {
       targetStudentIds = Array.from(new Set(enrollments.map(e => e.student.toString())));
     }
 
-    // Convert targetStudentIds to Mongoose ObjectIds for 100% accurate MongoDB matching
+    // Convert targetStudentIds to Mongoose ObjectIds for accurate MongoDB matching
     const query = {};
     if (targetStudentIds !== null) {
       const objectIds = targetStudentIds
@@ -514,21 +592,29 @@ router.get('/po-recommendation/students', async (req, res) => {
       records = await StudentLongitudinalPO.find(query).sort({ studentId: 1 });
     }
 
-    const summaries = records.map(r => ({
-      id: r.student,
-      studentId: r.studentId,
-      studentName: r.studentName,
-      cgpa: r.cgpa,
-      overallPoAttainment: r.overallPoAttainment,
-      recommendationScore: r.recommendationScore,
-      recommendationStatus: r.recommendationStatus,
-      badgeColor: r.badgeColor,
-      weakPOCount: r.weakPOCount,
-      completedCoursesCount: r.completedCoursesCount,
-      lastCalculatedAt: r.lastCalculatedAt,
-    }));
+    const summaries = records.map(r => {
+      // Prefer the section from the enrollment-derived map; fall back to stored record value
+      const resolvedSection = studentSectionMap[r.student.toString()] || r.section || 'N/A';
+      return {
+        id: r.student,
+        studentId: r.studentId,
+        studentName: r.studentName,
+        section: resolvedSection,
+        batch: r.batch || 'N/A',
+        cgpa: r.cgpa,
+        overallPoAttainment: r.overallPoAttainment,
+        recommendationScore: r.recommendationScore,
+        recommendationStatus: r.recommendationStatus,
+        badgeColor: r.badgeColor,
+        weakPOCount: r.weakPOCount,
+        completedCoursesCount: r.completedCoursesCount,
+        poAttainments: r.poAttainments ? Object.fromEntries(r.poAttainments) : {},
+        completedCourses: r.completedCourses || [],
+        lastCalculatedAt: r.lastCalculatedAt,
+      };
+    });
 
-    res.status(200).json({ ok: true, threshold, students: summaries });
+    res.status(200).json({ ok: true, threshold, students: summaries, availableSections });
   } catch (error) {
     console.error('Error fetching PO recommendation students:', error);
     res.status(500).json({ ok: false, message: error.message });

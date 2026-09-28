@@ -18,7 +18,7 @@ import html2canvas from 'html2canvas'
  */
 export const sanitizeChartClone = (clonedContainer, originalContainer) => {
   // 1. Remove download / action buttons
-  clonedContainer.querySelectorAll('button').forEach((btn) => btn.remove())
+  clonedContainer.querySelectorAll('button, .no-print').forEach((btn) => btn.remove())
 
   // 2. Set clean container styles and clean font metrics
   clonedContainer.style.border = 'none'

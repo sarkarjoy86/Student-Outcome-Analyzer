@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<!--[if gte mso 9]>
+<xml>
+ <w:WordDocument>
+  <w:View>Print</w:View>
+  <w:Zoom>100</w:Zoom>
+  <w:DoNotOptimizeForBrowser/>
+ </w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  body {
+    font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.4;
+    color: #1f2937;
+  }
+  h1 {
+    font-size: 18pt;
+    color: #064e3b;
+    border-bottom: 2pt solid #059669;
+    padding-bottom: 6pt;
+    margin-bottom: 12pt;
+  }
+  h2, h3 {
+    font-size: 13pt;
+    color: #0f172a;
+    margin-top: 14pt;
+    margin-bottom: 6pt;
+  }
+  .tip-box {
+    background-color: #eff6ff;
+    border-left: 4pt solid #3b82f6;
+    padding: 8pt 12pt;
+    margin: 10pt 0;
+  }
+  .speech-box {
+    background-color: #f0fdf4;
+    border-left: 4pt solid #10b981;
+    padding: 8pt 12pt;
+    margin: 8pt 0 12pt 0;
+    font-style: italic;
+    color: #064e3b;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10pt 0;
+  }
+  th {
+    background-color: #064e3b;
+    color: #ffffff;
+    font-weight: bold;
+    padding: 6pt 8pt;
+    border: 1pt solid #064e3b;
+    font-size: 10pt;
+  }
+  td {
+    border: 1pt solid #cbd5e1;
+    padding: 6pt 8pt;
+    font-size: 10pt;
+    vertical-align: top;
+  }
+  .flow-table td {
+    background-color: #f8fafc;
+    border: 1pt solid #94a3b8;
+    text-align: center;
+    padding: 8pt 4pt;
+  }
+</style>
+</head>
+<body>
+  <h1>OBE Course Outcome Attainment System: Showcase Presentation Guide</h1>
+  <p><strong>Target Audience:</strong> Professors, Evaluators, Academic Committee, Head of Department<br>
+  <strong>Estimated Duration:</strong> 12–14 minutes presentation + 3–5 minutes Q&A<br>
+  <strong>Primary Showcase Course:</strong> CSE 311 — Operating System (Batch 19, Sections A & B)</p>
+
+  <div class="tip-box">
+    <strong>মূল উপস্থাপনা কৌশল:</strong> ডেমো শুরু করার সময় শূন্য থেকে কোর্স তৈরি, স্টুডেন্ট যোগ বা মার্কস টাইপ করতে যাবেন না। শুরুতে ডিপার্টমেন্ট এডমিন পোর্টালে ১.৫ মিনিট সেন্ট্রাল গভর্ন্যান্স দেখিয়ে সরাসরি সম্পূর্ণ ডাটা প্রস্তুত থাকা <strong>CSE 311 (Operating System)</strong> কোর্সে শিক্ষক হিসেবে প্রবেশ করবেন।
+  </div>
+
+  <h2>🧭 প্রেজেন্টেশন ফ্লোচার্ট (Step-by-Step Flow)</h2>
+  <table class="flow-table">
+    <tr>
+      <td style="background-color: #eff6ff;"><strong>১. Admin Portal</strong><br>১.৫ মিনিট</td>
+      <td><strong>২. Course Setup</strong><br>১.৫ মিনিট</td>
+      <td><strong>৩. Assessments</strong><br>২ মিনিট</td>
+      <td><strong>৪. Marks Entry</strong><br>১ মিনিট</td>
+      <td style="background-color: #ecfdf5;"><strong>৫. Attainment</strong><br>২.৫ মিনিট</td>
+      <td style="background-color: #ecfdf5;"><strong>৬. Batch Report</strong><br>৩ মিনিট</td>
+      <td><strong>৭. Survey / Close</strong><br>১ মিনিট</td>
+    </tr>
+  </table>
+
+  <h2>🏛️ ধাপ ১: দ্য হুক ও সেন্ট্রাল এডমিন পোর্টাল (১.৫–২ মিনিট)</h2>
+  <div class="speech-box">
+    "শ্রদ্ধেয় শিক্ষক ও মূল্যায়নকারী মণ্ডলী, বর্তমান আন্তর্জাতিক অ্যাক্রেডিটেশন (BAETE/OBE) মানদণ্ড অনুযায়ী প্রতিটি কোর্সের Course Outcomes (CO) এবং Program Outcomes (PO) প্রত্যক্ষ ও পরোক্ষভাবে পরিমাপ করা বাধ্যতামূলক। বর্তমানে শিক্ষকদের এক্সেলে জটিল ফর্মুলা বসিয়ে শত শত শিক্ষার্থীর নম্বর নিয়ে ম্যানুয়ালি কাজ করতে হয়, যা অত্যন্ত সময়সাপেক্ষ এবং ভুলে ভরা।<br><br>
+    আমাদের এই <strong>Automated OBE Course Outcome Attainment & Analyzer</strong> প্ল্যাটফর্মটি সম্পূর্ণ প্রক্রিয়াকে স্বয়ংক্রিয় করেছে। এই সিস্টেমে দুটি মূল স্তর রয়েছে: <strong>১. Department Admin / HOD</strong> এবং <strong>২. Course Teacher</strong>। শুরুতে আমরা ডিপার্টমেন্টাল এডমিন কীভাবে পুরো প্রক্রিয়াটি সেন্ট্রালি পরিচালনা করেন তা এক ঝলকে দেখে নিচ্ছি।"
+  </div>
+  <p><strong>এডমিনে যা যা দ্রুত দেখাবেন:</strong></p>
+  <ul>
+    <li><strong>Program Outcomes ট্যাব:</strong> অ্যাক্রেডিটেশনের কেন্দ্রীয় ১২টি পিও (PO1–PO12) এবং বিএইটিই স্ট্যান্ডার্ড সেন্ট্রালি কনফিগার করা।</li>
+    <li><strong>Course Offerings ট্যাব:</strong> চলতি সেমিস্টারে কীভাবে <strong>CSE 311</strong> কোর্সটি সেকশন A ও B সহ সংশ্লিষ্ট শিক্ষকের নামে অ্যাসাইন করা হয়েছে।</li>
+    <li><strong>Faculty CO-PO Requests ট্যাব (হাইলাইট ফিচার):</strong> শিক্ষক কোর্সের CO-PO ম্যাপিংয়ে পরিবর্তন আনতে চাইলে হেড অব ডিপার্টমেন্টের কাছে রিকোয়েস্ট আসে এবং এডমিন পর্যালোচনা করে Approve/Reject করতে পারেন (Academic Governance & Audit Trail)।</li>
+  </ul>
+  <div class="speech-box">
+    <em>👉 ট্রানজিশন ডায়লগ:</em> "ডিপার্টমেন্ট যখন কোর্স ও শিক্ষক অ্যাসাইন করে দিল, তখন একজন শিক্ষক ক্লাসরুম লেভেলে কীভাবে কোর্স পরিচালনা, নম্বর প্রদান এবং স্বয়ংক্রিয় অ্যাটেইনমেন্ট হিসাব করবেন? চলুন এবার শিক্ষক হিসেবে লগইন করে <strong>CSE 311</strong> কোর্সে প্রবেশ করি..."
+  </div>
+
+  <h2>👨‍🏫 ধাপ ২: কোর্স সেটআপ ও CO-PO ম্যাপিং (১.৫ মিনিট)</h2>
+  <ul>
+    <li><strong>কোথায় যাবেন:</strong> শিক্ষকের ড্যাশবোর্ডে <strong>CSE 311</strong> কার্ডে ক্লিক করে <code>Course Overview</code> এবং <code>CO-PO Mapping</code> ট্যাবে।</li>
+    <li><strong>কী দেখাবেন:</strong> কোর্সের সিলেবাস ও <strong>CO-PO Matrix</strong> (CO1 থেকে CO5 কীভাবে PO1, PO2, PO3, PO10-এর সাথে ম্যাপিং করা হয়েছে)।</li>
+  </ul>
+  <div class="speech-box">
+    "সিলেবাসের এই ম্যাপিংয়ের ওপর ভিত্তি করেই সিস্টেমের গাণিতিক ইঞ্জিন পরবর্তীতে প্রতিটি শিক্ষার্থীর নম্বরকে সংশ্লিষ্ট প্রোগ্রাম আউটকামে রূপান্তর করবে।"
+  </div>
+
+  <h2>📝 ধাপ ৩: অ্যাসেসমেন্ট আর্কিটেকচার ও প্রশ্ন আর্কাইভ (২ মিনিট)</h2>
+  <ul>
+    <li><strong>Assessments ট্যাব:</strong> মূল্যায়ন কাঠামো—Continuous (CT-1, CT-2, CT-3, Attendance, Project Report), Midterm ও Final Exam।</li>
+    <li><strong>Question Archives ট্যাব:</strong> প্রতিটি প্রশ্নের সাথে <strong>Bloom's Taxonomy Levels</strong> (Remembering, Applying, Analyzing ইত্যাদি) ট্যাগ করা।</li>
+  </ul>
+  <div class="speech-box">
+    "প্রতিটি প্রশ্নকে ব্লুমস ট্যাক্সোনমির সাথে যুক্ত রাখায় শিক্ষকরা দেখতে পারেন তাদের প্রশ্নপত্রে উচ্চতর চিন্তন দক্ষতার প্রশ্ন কতটা অন্তর্ভুক্ত ছিল।"
+  </div>
+
+  <h2>📊 ধাপ ৪: স্টুডেন্ট টেবিল ও সহজ মার্কস এন্ট্রি (১ মিনিট)</h2>
+  <ul>
+    <li><strong>Student Table / Marks Entry ট্যাব:</strong> মসৃণ এক্সেল-লাইক গ্রিড।</li>
+    <li><strong>ভ্যালিডেশন ও অ্যাবসেন্ট হ্যান্ডলিং:</strong> Max Marks-এর বেশি টাইপ করা অসম্ভব, অনুপস্থিত শিক্ষার্থীর জন্য 'A' ফ্ল্যাগ। বাইরে থেকে তৈরি এক্সেল শিট এক ক্লিকে আপলোড করার সুবিধা।</li>
+  </ul>
+
+  <h2>⚡ ধাপ ৫: দ্য হিরো ফিচার — রিয়েল-টাইম CO ও PO অ্যাটেইনমেন্ট ইঞ্জিন (২.৫ মিনিট)</h2>
+  <ul>
+    <li><strong>Dynamic Thresholds:</strong> Target Pass Marks (যেমন ৪০%) এবং Benchmark KPI (যেমন ৫০%)।</li>
+    <li><strong>CO ও PO Attainment টেবিল ও চার্ট:</strong> কত শতাংশ শিক্ষার্থী Pass Mark এবং কত শতাংশ শিক্ষার্থী KPI অর্জন করেছে।</li>
+  </ul>
+  <div class="speech-box">
+    <strong>পাওয়ারফুল টেকনিক্যাল পয়েন্ট (জোর দিয়ে বলবেন):</strong><br>
+    "PO2-তে যেমন CO3 ও CO4 দুটোই ম্যাপ করা। আমাদের সিস্টেম কোনো গড় বা অনুমানভিত্তিক শর্টকাট নেয় না; বরং <strong>শিক্ষার্থী-স্তরে (Student-Level)</strong> প্রতিটি শিক্ষার্থীর ব্যক্তিগত সর্বোচ্চ অর্জন বিবেচনা করে সম্পূর্ণ ব্যাচের PO পরিমাপ করে, যা আন্তর্জাতিক অ্যাক্রেডিটেশনের গাণিতিক নিয়মের সাথে শতভাগ সামঞ্জস্যপূর্ণ।"
+  </div>
+
+  <h2>🏆 ধাপ ৬: গ্র্যান্ড ফিনালে — স্বয়ংক্রিয় রিপোর্ট ও কম্বাইন্ড ব্যাচ পাওয়ার (৩ মিনিট)</h2>
+  <ul>
+    <li><strong>Multi-Section Aggregation:</strong> টগল বাটন ক্লিক করে দেখাবেন: <em>Section A</em> $ightarrow$ <em>Section B</em> $ightarrow$ এবং <strong>Combined Batch Report</strong> (৫৮ জন শিক্ষার্থীর সমন্বিত ফলাফল)!</li>
+    <li><strong>CO Student Distribution & Heatmap:</strong> পারফরম্যান্স ব্র্যাকেট (&lt;40%, 40–79%, ≥80%) এবং রঙিন ভিজ্যুয়াল হিটম্যাপ।</li>
+    <li><strong>Comparative Analysis:</strong> ৪/৫ জন শিক্ষার্থীর গ্রুপ তুলনা ও গ্রুপ এভারেজ।</li>
+    <li><strong>1-Click Word Export (The WOW Moment):</strong> <strong>Download Word</strong> বাটনে ক্লিক করে ওয়ার্ড ফাইল ওপেন করে প্রজেক্টরে দেখান: প্রাতিষ্ঠানিক লোগো, চার্ট ইমেজ, টেবিল ও শিক্ষকের স্বাক্ষর ব্লকসহ প্রিন্ট-রেডি রিপোর্ট!</li>
+  </ul>
+  <div class="speech-box">
+    "একটি কোর্সে যতগুলো সেকশনই থাকুক না কেন, শিক্ষক বা বিভাগীয় প্রধানকে আলাদা এক্সেল নিয়ে কাটাকুটি করতে হয় না; সিস্টেম এক ক্লিকেই সম্পূর্ণ ব্যাচের সম্মিলিত ওবিই হিসাব স্বয়ংক্রিয়ভাবে বের করে দেয়।"
+  </div>
+
+  <h2>📋 ধাপ ৭: পরোক্ষ সার্ভে ও সমাপ্তি (১ মিনিট)</h2>
+  <div class="speech-box">
+    "Course Survey ট্যাবের মাধ্যমে শিক্ষার্থীদের ফিডব্যাক নিয়ে ইনডাইরেক্ট মেজারমেন্ট চার্ট তৈরির ফিচারও এখানে অন্তর্ভুক্ত রয়েছে। এই প্ল্যাটফর্মটি শিক্ষকদের কয়েক দিনের ক্লান্তিকর এক্সেল কাজের ঝামেলা দূর করে মাত্র কয়েক মিনিটে আন্তর্জাতিক মানের নির্ভুল অ্যাক্রেডিটেশন রিপোর্ট নিশ্চিত করে। ধন্যবাদ।"
+  </div>
+
+  <h2>🛡️ ৩. সম্ভাব্য প্রশ্ন ও তার নির্ভুল উত্তর (Q&A Defense)</h2>
+  <table>
+    <tr>
+      <th style="width: 40%;">সম্ভাব্য প্রশ্ন</th>
+      <th style="width: 60%;">আপনার আত্মবিশ্বাসী উত্তর</th>
+    </tr>
+    <tr>
+      <td><strong>১. PO2-তে তো দুটো CO ম্যাপ করা, হিসাব কীভাবে হলো?</strong></td>
+      <td>"আমরা শিক্ষার্থী-স্তরে (Student-level) হিসাব করি। অর্থাৎ প্রতিটি শিক্ষার্থীর প্রাপ্ত CO3 ও CO4-এর মধ্যে সর্বোচ্চ অর্জনটি তার ব্যক্তিগত PO2 হিসেবে ধরা হয়, এরপর পুরো ব্যাচের কত শতাংশ শিক্ষার্থী ৫০% KPI পূরণ করেছে তা গণনা করা হয়।"</td>
+    </tr>
+    <tr>
+      <td><strong>২. এডমিন কি শিক্ষকদের কোর্সে নম্বর এডিট করতে পারে?</strong></td>
+      <td>"না, এডমিন শুধু কোর্স বরাদ্দ ও অ্যাকাডেমিক পলিসি নিয়ন্ত্রণ করেন। মার্কস এন্ট্রি ও প্রশ্ন তৈরির সম্পূর্ণ নিয়ন্ত্রণ সংশ্লিষ্ট কোর্স শিক্ষকের হাতে।"</td>
+    </tr>
+    <tr>
+      <td><strong>৩. শিক্ষক কোনো CO ভুল ম্যাপ করলে কী হবে?</strong></td>
+      <td>"শিক্ষক সিস্টেমে CO পরিবর্তনের রিকোয়েস্ট পাঠাতে পারেন, যা আমরা এডমিন প্যানেলের 'Requests' ট্যাবে দেখেছি। বিভাগীয় প্রধান অনুমোদন দিলেই কেবল তা কোর্সে কার্যকর হয়।"</td>
+    </tr>
+    <tr>
+      <td><strong>৪. একাধিক সেকশনের প্রশ্ন আলাদা হলে কম্বাইন্ড রিপোর্টে সমস্যা হবে?</strong></td>
+      <td>"না, প্রতিটি সেকশন তার নিজ নিজ প্রশ্নের মান ও CO ম্যাপিং অনুযায়ী মূল্যায়িত হয় এবং কম্বাইন্ড ইঞ্জিন সেগুলোকে নরমালাইজ করে সম্মিলিত ব্যাচের ফলাফল নিখুঁতভাবে তৈরি করে।"</td>
+    </tr>
+  </table>
+</body>
+</html>

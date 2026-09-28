@@ -142,6 +142,8 @@ const ComprehensiveReports = ({
   const [poDescriptions, setPoDescriptions] = useState({})
   const [chartAnimKey, setChartAnimKey] = useState(0)
   const [isExportingCOPOWord, setIsExportingCOPOWord] = useState(false)
+  const [coChartActiveOnly, setCoChartActiveOnly] = useState(false)
+  const [poChartActiveOnly, setPoChartActiveOnly] = useState(false)
 
   // Re-trigger smooth chart entrance animations when Reports tab mounts or sub-tab switches
   React.useEffect(() => {
@@ -251,20 +253,26 @@ const ComprehensiveReports = ({
 
   // Get active COs and POs based on current markings
   const activeCOs = useMemo(() => {
+    let list = []
     if (dbCourseOutcomes && dbCourseOutcomes.length > 0) {
-      return dbCourseOutcomes.map(
+      list = dbCourseOutcomes.map(
         (co) => co.code.replace(/\s+/g, '').toUpperCase()
       )
+    } else {
+      const coDescKeys = Object.keys(coDescriptions)
+      if (coDescKeys.length > 0) {
+        list = coDescKeys.map(k => k.replace(/\s+/g, '').toUpperCase())
+      } else {
+        list = Array.from({ length: 12 }, (_, i) => `CO${i + 1}`).filter(
+          (co) => (coMarkAllocations[co] || 0) > 0
+        )
+      }
     }
-    // Fallback: use coDescriptions keys
-    const coDescKeys = Object.keys(coDescriptions)
-    if (coDescKeys.length > 0) {
-      return coDescKeys.map(k => k.replace(/\s+/g, '').toUpperCase())
-    }
-    // Fallback: non-zero allocation if config is not retrieved yet
-    return Array.from({ length: 12 }, (_, i) => `CO${i + 1}`).filter(
-      (co) => (coMarkAllocations[co] || 0) > 0
-    )
+    return Array.from(new Set(list)).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+      return numA - numB
+    })
   }, [dbCourseOutcomes, coDescriptions, coMarkAllocations])
 
   const activePOs = useMemo(() => {
@@ -2346,31 +2354,60 @@ const ComprehensiveReports = ({
             {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
               <div id="co-attainment-chart" className="lg:col-span-3 bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                   <h2 className="text-xl font-bold bg-gradient-to-r from-green-800 to-green-600 bg-clip-text text-transparent uppercase tracking-wider">
                     Course Outcomes (COs) Attainment
                   </h2>
-                  <button
-                    onClick={() => downloadChartAsJPG('co-attainment-chart', 'CO_Attainment')}
-                    className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md no-print"
-                    title="Download chart"
-                  >
-                    <Download size={14} />
-                  </button>
+                  <div className="flex items-center gap-2 self-end sm:self-auto no-print">
+                    {/* Minimalist Switch Toggle (No Text) */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={coChartActiveOnly}
+                      onClick={() => setCoChartActiveOnly(prev => !prev)}
+                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${
+                        coChartActiveOnly ? 'bg-green-600' : 'bg-gray-300 hover:bg-gray-400'
+                      }`}
+                      title={coChartActiveOnly ? "Evaluated COs active (Click to show all 12)" : "All 12 COs active (Click to show evaluated only)"}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition-transform duration-200 ease-in-out ${
+                          coChartActiveOnly ? 'translate-x-3.5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+
+                    <button
+                      onClick={() => downloadChartAsJPG('co-attainment-chart', 'CO_Attainment')}
+                      className="flex items-center justify-center p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                      title="Download chart as JPG"
+                    >
+                      <Download size={14} />
+                    </button>
+                  </div>
                 </div>
                 <div id="co-overview-chart-wrapper" className="w-full bg-white rounded-lg">
                   <ResponsiveContainer width="100%" height={450}>
                     <BarChart
-                      key={`co-attain-${chartAnimKey}`}
-                      data={Array.from({ length: 12 }, (_, i) => {
-                        const co = `CO${i + 1}`
-                        return {
-                          name: co,
-                          [`Above Pass Marks (${targetPassMarks}%)`]: calculations.coAttainment[co]?.passMarksPercentage || 0,
-                          [`Above KPI (${kpiCO}%)`]: calculations.coAttainment[co]?.kpiPercentage || 0,
-                        }
-                      })}
+                      key={`co-attain-${chartAnimKey}-${coChartActiveOnly ? 'act' : 'all'}`}
+                      data={
+                        coChartActiveOnly && activeCOs.length > 0
+                          ? activeCOs.map((co) => ({
+                              name: co,
+                              [`Above Pass Marks (${targetPassMarks}%)`]: calculations.coAttainment[co]?.passMarksPercentage || 0,
+                              [`Above KPI (${kpiCO}%)`]: calculations.coAttainment[co]?.kpiPercentage || 0,
+                            }))
+                          : Array.from({ length: 12 }, (_, i) => {
+                              const co = `CO${i + 1}`
+                              return {
+                                name: co,
+                                [`Above Pass Marks (${targetPassMarks}%)`]: calculations.coAttainment[co]?.passMarksPercentage || 0,
+                                [`Above KPI (${kpiCO}%)`]: calculations.coAttainment[co]?.kpiPercentage || 0,
+                              }
+                            })
+                      }
                       margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                      barGap={6}
                     >
                       <defs>
                         <linearGradient id="colorPassMarks" x1="0" y1="0" x2="0" y2="1">
@@ -2386,8 +2423,32 @@ const ComprehensiveReports = ({
                       <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
                       <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
                       <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => [`${parseFloat(value).toFixed(1)}%`, '']} labelFormatter={(label) => `${label}`} />
-                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiCO}%)`} fill="url(#colorKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                      <Bar
+                        isAnimationActive={true}
+                        animationDuration={1100}
+                        animationEasing="ease-out"
+                        animationBegin={100}
+                        dataKey={`Above Pass Marks (${targetPassMarks}%)`}
+                        fill="url(#colorPassMarks)"
+                        radius={[8, 8, 0, 0]}
+                        stroke={UNIVERSITY_COLORS.accent}
+                        strokeWidth={1}
+                        barSize={coChartActiveOnly && activeCOs.length > 0 ? (activeCOs.length <= 3 ? 44 : activeCOs.length <= 5 ? 38 : activeCOs.length <= 8 ? 28 : 22) : undefined}
+                        maxBarSize={48}
+                      />
+                      <Bar
+                        isAnimationActive={true}
+                        animationDuration={1100}
+                        animationEasing="ease-out"
+                        animationBegin={200}
+                        dataKey={`Above KPI (${kpiCO}%)`}
+                        fill="url(#colorKPI)"
+                        radius={[8, 8, 0, 0]}
+                        stroke={UNIVERSITY_COLORS.secondary}
+                        strokeWidth={1}
+                        barSize={coChartActiveOnly && activeCOs.length > 0 ? (activeCOs.length <= 3 ? 44 : activeCOs.length <= 5 ? 38 : activeCOs.length <= 8 ? 28 : 22) : undefined}
+                        maxBarSize={48}
+                      />
                       <Legend wrapperStyle={{ paddingTop: '16px' }} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -2453,31 +2514,60 @@ const ComprehensiveReports = ({
             {/* PO Chart Row */}
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
               <div id="po-bar-chart" className="lg:col-span-3 bg-gradient-to-br from-white to-blue-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-blue-100">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                   <h2 className="text-xl font-bold bg-gradient-to-r from-blue-800 to-blue-600 bg-clip-text text-transparent uppercase tracking-wider">
                     Program Outcomes (POs) Attainment
                   </h2>
-                  <button
-                    onClick={() => downloadChartAsJPG('po-bar-chart', 'PO_Attainment_Bar')}
-                    className="flex items-center justify-center p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md no-print"
-                    title="Download chart"
-                  >
-                    <Download size={14} />
-                  </button>
+                  <div className="flex items-center gap-2 self-end sm:self-auto no-print">
+                    {/* Minimalist Switch Toggle (No Text) */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={poChartActiveOnly}
+                      onClick={() => setPoChartActiveOnly(prev => !prev)}
+                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${
+                        poChartActiveOnly ? 'bg-green-600' : 'bg-gray-300 hover:bg-gray-400'
+                      }`}
+                      title={poChartActiveOnly ? "Mapped POs active (Click to show all 12)" : "All 12 POs active (Click to show mapped only)"}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition-transform duration-200 ease-in-out ${
+                          poChartActiveOnly ? 'translate-x-3.5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+
+                    <button
+                      onClick={() => downloadChartAsJPG('po-bar-chart', 'PO_Attainment_Bar')}
+                      className="flex items-center justify-center p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
+                      title="Download chart as JPG"
+                    >
+                      <Download size={14} />
+                    </button>
+                  </div>
                 </div>
                 <div id="po-overview-chart-wrapper" className="w-full bg-white rounded-lg">
                   <ResponsiveContainer width="100%" height={450}>
                     <BarChart
-                      key={`po-attain-${chartAnimKey}`}
-                      data={Array.from({ length: 12 }, (_, i) => {
-                        const po = `PO${i + 1}`
-                        return {
-                          name: po,
-                          [`Above Pass Marks (${targetPassMarks}%)`]: calculations.poAttainment[po]?.passMarksPercentage || 0,
-                          [`Above KPI (${kpiPO}%)`]: calculations.poAttainment[po]?.kpiPercentage || 0,
-                        }
-                      })}
+                      key={`po-attain-${chartAnimKey}-${poChartActiveOnly ? 'act' : 'all'}`}
+                      data={
+                        poChartActiveOnly && activePOs.length > 0
+                          ? activePOs.map((po) => ({
+                              name: po,
+                              [`Above Pass Marks (${targetPassMarks}%)`]: calculations.poAttainment[po]?.passMarksPercentage || 0,
+                              [`Above KPI (${kpiPO}%)`]: calculations.poAttainment[po]?.kpiPercentage || 0,
+                            }))
+                          : Array.from({ length: 12 }, (_, i) => {
+                              const po = `PO${i + 1}`
+                              return {
+                                name: po,
+                                [`Above Pass Marks (${targetPassMarks}%)`]: calculations.poAttainment[po]?.passMarksPercentage || 0,
+                                [`Above KPI (${kpiPO}%)`]: calculations.poAttainment[po]?.kpiPercentage || 0,
+                              }
+                            })
+                      }
                       margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                      barGap={6}
                     >
                       <defs>
                         <linearGradient id="colorPOPassMarks" x1="0" y1="0" x2="0" y2="1">
@@ -2493,8 +2583,32 @@ const ComprehensiveReports = ({
                       <XAxis dataKey="name" tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} />
                       <YAxis domain={[0, 100]} ticks={[0, 20, 40, 60, 80, 100]} tick={{ fill: '#1a5f3f', fontWeight: 'bold' }} axisLine={{ stroke: '#1a5f3f', strokeWidth: 2 }} label={{ value: 'Percentage (%)', angle: -90, position: 'insideLeft', fill: '#1a5f3f', style: { fontWeight: 'bold' } }} />
                       <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '2px solid #1a5f3f', borderRadius: '8px' }} formatter={(value) => `${parseFloat(value).toFixed(1)}%`} />
-                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={100} dataKey={`Above Pass Marks (${targetPassMarks}%)`} fill="url(#colorPOPassMarks)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.accent} strokeWidth={1} />
-                      <Bar isAnimationActive={true} animationDuration={1100} animationEasing="ease-out" animationBegin={200} dataKey={`Above KPI (${kpiPO}%)`} fill="url(#colorPOKPI)" radius={[8, 8, 0, 0]} stroke={UNIVERSITY_COLORS.secondary} strokeWidth={1} />
+                      <Bar
+                        isAnimationActive={true}
+                        animationDuration={1100}
+                        animationEasing="ease-out"
+                        animationBegin={100}
+                        dataKey={`Above Pass Marks (${targetPassMarks}%)`}
+                        fill="url(#colorPOPassMarks)"
+                        radius={[8, 8, 0, 0]}
+                        stroke={UNIVERSITY_COLORS.accent}
+                        strokeWidth={1}
+                        barSize={poChartActiveOnly && activePOs.length > 0 ? (activePOs.length <= 3 ? 44 : activePOs.length <= 5 ? 38 : activePOs.length <= 8 ? 28 : 22) : undefined}
+                        maxBarSize={48}
+                      />
+                      <Bar
+                        isAnimationActive={true}
+                        animationDuration={1100}
+                        animationEasing="ease-out"
+                        animationBegin={200}
+                        dataKey={`Above KPI (${kpiPO}%)`}
+                        fill="url(#colorPOKPI)"
+                        radius={[8, 8, 0, 0]}
+                        stroke={UNIVERSITY_COLORS.secondary}
+                        strokeWidth={1}
+                        barSize={poChartActiveOnly && activePOs.length > 0 ? (activePOs.length <= 3 ? 44 : activePOs.length <= 5 ? 38 : activePOs.length <= 8 ? 28 : 22) : undefined}
+                        maxBarSize={48}
+                      />
                       <Legend wrapperStyle={{ paddingTop: '16px' }} />
                     </BarChart>
                   </ResponsiveContainer>

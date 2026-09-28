@@ -2173,16 +2173,19 @@ function EditorLoadingFallback() {
           { id: 'marksEntry', label: 'Marks Entry', icon: CheckSquare },
           { id: 'attainment', label: 'Attainment', icon: Award },
           { id: 'reports', label: 'Reports', icon: BarChart3 },
-          { id: 'poRecommendation', label: 'PO Recommendation', icon: Award },
           { id: 'evaluation', label: 'Course Survey', icon: MessageSquare },
+          { id: 'poRecommendation', label: 'PO Recommendation', icon: Award },
         ].map(tab => {
           const Icon = tab.icon
           const isActive = activeTab === tab.id
+          const isPoRec = tab.id === 'poRecommendation'
           return (
             <button
               key={tab.id}
               onClick={() => handleSelectTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all cursor-pointer ${isActive
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm transition-all cursor-pointer ${
+                isPoRec ? 'sm:ml-auto ' : ''
+              }${isActive
                 ? 'bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-950 text-white shadow-md border border-emerald-950/20'
                 : 'text-gray-600 hover:bg-emerald-50 hover:text-emerald-800'
                 }`}
@@ -5307,7 +5310,7 @@ function EditorLoadingFallback() {
               </div>
             }>
               <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6">
-                <PORecommendationMatrix offering={offering} initialStudentList={students} />
+                <PORecommendationMatrix key={offering?._id || 'po-rec-matrix'} offering={offering} initialStudentList={students} />
               </div>
             </Suspense>
           )}

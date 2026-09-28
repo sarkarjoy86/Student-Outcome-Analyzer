@@ -1134,15 +1134,15 @@ export const apiService = {
   },
 
   // PO Recommendation Matrix API
-  async getPORecommendationStudents(threshold = 60, offeringId = "", teacherId = "", refresh = false) {
-    let url = `${API_BASE}/api/po-recommendation/students?threshold=${threshold}${refresh ? '&refresh=true' : ''}`;
+  async getPORecommendationStudents(threshold = 50, offeringId = "", teacherId = "", refresh = false) {
+    let url = `${API_BASE}/api/po-recommendation/students?threshold=${threshold}&_t=${Date.now()}${refresh ? '&refresh=true' : ''}`;
     if (offeringId) url += `&offeringId=${encodeURIComponent(offeringId)}`;
     if (teacherId) url += `&teacherId=${encodeURIComponent(teacherId)}`;
-    const res = await fetchWithDefaults(url);
+    const res = await fetchWithDefaults(url, { cache: 'no-store' });
     return handleResponse(res);
   },
 
-  async getStudentPORecommendation(studentId, threshold = 60) {
+  async getStudentPORecommendation(studentId, threshold = 50) {
     const res = await fetchWithDefaults(`${API_BASE}/api/po-recommendation/student/${encodeURIComponent(studentId)}?threshold=${threshold}&recalculate=true`);
     return handleResponse(res);
   },
@@ -1155,7 +1155,7 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  async syncAllPORecommendations(threshold = 60) {
+  async syncAllPORecommendations(threshold = 50) {
     const res = await fetchWithDefaults(`${API_BASE}/api/po-recommendation/sync-all`, {
       method: "POST",
       body: JSON.stringify({ threshold }),
