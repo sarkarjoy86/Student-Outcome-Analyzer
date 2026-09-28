@@ -1,9 +1,10 @@
 import html2canvas from 'html2canvas'
+import { sanitizeChartClone } from './chartDownload'
 
 /**
  * Exports the "Direct Measurements of COs & POs" report as a Microsoft Word (.doc) document.
  * Matches the official institutional layout with green branding, compact metadata table,
- * properly aligned and proportioned bar charts, split left/right legends (Blue on Left, Yellow on Right),
+ * properly aligned and proportioned bar charts with built-in clean legends,
  * narrower teacher signature table with dedicated white signature row, and guaranteed 1-page fit.
  */
 export async function exportCOPOWordReport({
@@ -15,24 +16,28 @@ export async function exportCOPOWordReport({
   reportScope = 'combined',
 }) {
   // Capture charts cleanly using an off-screen clone so live DOM is untouched
-  const captureChart = async (containerId) => {
-    const container = document.getElementById(containerId)
+  const captureChart = async (wrapperId, fallbackContainerId) => {
+    let container = document.getElementById(wrapperId)
+    if (!container && fallbackContainerId) {
+      container = document.getElementById(fallbackContainerId)
+    }
     if (!container) return ''
     try {
       // Clone container to preserve exact layout and avoid touching live DOM
       const cloned = container.cloneNode(true)
 
-      // Remove download button from clone
-      const dlBtn = cloned.querySelector('button')
-      if (dlBtn) dlBtn.remove()
+      // Remove ALL buttons, toggles, and .no-print elements
+      cloned.querySelectorAll('button, .no-print, [role="switch"]').forEach((btn) => btn.remove())
 
-      // Remove header card title so only the pure chart is captured
-      const titleEl = cloned.querySelector('.flex.items-center.justify-between, h2')
-      if (titleEl) titleEl.remove()
+      // If cloned contains any card header or title row, remove it completely so no title or button artifacts exist
+      const headerRow = cloned.querySelector('.flex.justify-between, [class*="justify-between"], h2')
+      if (headerRow) {
+        const topHeader = headerRow.closest('[class*="mb-"]') || headerRow
+        topHeader.remove()
+      }
 
-      // Remove the legend from the clone because Word has its own crisp HTML legend
-      const legendEl = cloned.querySelector('.recharts-legend-wrapper')
-      if (legendEl) legendEl.remove()
+      // Sanitize the clone (including converting Recharts legend to crisp, colored text glyphs ■)
+      sanitizeChartClone(cloned, container)
 
       // Remove card borders/shadows/background for clean white export
       cloned.style.border = 'none'
@@ -52,7 +57,8 @@ export async function exportCOPOWordReport({
       tempWrapper.style.margin = '0px'
 
       const containerRect = container.getBoundingClientRect()
-      tempWrapper.style.width = containerRect.width + 'px'
+      const originalWidth = containerRect.width || 700
+      tempWrapper.style.width = originalWidth + 'px'
 
       tempWrapper.appendChild(cloned)
       document.body.appendChild(tempWrapper)
@@ -70,14 +76,14 @@ export async function exportCOPOWordReport({
 
       return canvas.toDataURL('image/png')
     } catch (err) {
-      console.warn('Error capturing chart for Word export:', containerId, err)
+      console.warn('Error capturing chart for Word export:', wrapperId, err)
       return ''
     }
   }
 
-  // 1. Capture Bar Charts cleanly
-  const coChartImg = (await captureChart('co-attainment-chart')) || (await captureChart('co-overview-chart-wrapper'))
-  const poChartImg = (await captureChart('po-bar-chart')) || (await captureChart('po-overview-chart-wrapper'))
+  // 1. Capture Bar Charts cleanly (prefer chart wrapper with SVG + Legend, zero buttons)
+  const coChartImg = (await captureChart('co-overview-chart-wrapper', 'co-attainment-chart'))
+  const poChartImg = (await captureChart('po-overview-chart-wrapper', 'po-bar-chart'))
 
   // 2. Prepare Metadata
   const courseCode = courseInfo?.courseCode || 'CSE 443'
@@ -269,28 +275,10 @@ export async function exportCOPOWordReport({
 
         <!-- CO Attainment Bar Chart (Table-isolated to prevent any overlap with table above) -->
         ${coChartImg ? `
-          <table style="width:100%; border-collapse:collapse; border:none; margin:0 auto;">
+          <table style="width:100%; border-collapse:collapse; border:none; margin:0 auto 2pt auto;">
             <tr>
               <td style="border:none; text-align:center; padding:0;">
                 <img src="${coChartImg}" width="430" style="width:430pt; max-width:100%; height:auto; display:block; margin:0 auto; border:none;" alt="Course Outcomes Attainment Chart" />
-              </td>
-            </tr>
-          </table>
-
-          <!-- CO Legend: Blue on LEFT, Yellow on RIGHT with crisp solid colored squares -->
-          <table style="width:100%; border-collapse:collapse; border:none; margin:1pt 0 2pt 0; font-family:'Times New Roman',Times,serif; font-size:7pt;">
-            <tr>
-              <td style="width:50%; text-align:left; border:none; padding:0; vertical-align:middle; white-space:nowrap;">
-                <span style="color:#2563eb; font-size:11pt; font-family:Arial,sans-serif; vertical-align:middle;">&#9632;</span>
-                <span style="font-weight:bold; font-size:7pt; color:#1f2937; vertical-align:middle;">
-                  &nbsp;% of Students above the Target Pass Marks ${targetPassMarks}%
-                </span>
-              </td>
-              <td style="width:50%; text-align:right; border:none; padding:0; vertical-align:middle; white-space:nowrap;">
-                <span style="color:#eab308; font-size:11pt; font-family:Arial,sans-serif; vertical-align:middle;">&#9632;</span>
-                <span style="font-weight:bold; font-size:7pt; color:#1f2937; vertical-align:middle;">
-                  &nbsp;% of Students above the KPI of ${kpiCO}%
-                </span>
               </td>
             </tr>
           </table>
@@ -325,28 +313,10 @@ export async function exportCOPOWordReport({
 
         <!-- PO Attainment Bar Chart (Table-isolated to prevent any overlap with table above) -->
         ${poChartImg ? `
-          <table style="width:100%; border-collapse:collapse; border:none; margin:0 auto;">
+          <table style="width:100%; border-collapse:collapse; border:none; margin:0 auto 2pt auto;">
             <tr>
               <td style="border:none; text-align:center; padding:0;">
                 <img src="${poChartImg}" width="430" style="width:430pt; max-width:100%; height:auto; display:block; margin:0 auto; border:none;" alt="Program Outcomes Attainment Chart" />
-              </td>
-            </tr>
-          </table>
-
-          <!-- PO Legend: Blue on LEFT, Yellow on RIGHT with crisp solid colored squares -->
-          <table style="width:100%; border-collapse:collapse; border:none; margin:1pt 0 2pt 0; font-family:'Times New Roman',Times,serif; font-size:7pt;">
-            <tr>
-              <td style="width:50%; text-align:left; border:none; padding:0; vertical-align:middle; white-space:nowrap;">
-                <span style="color:#2563eb; font-size:11pt; font-family:Arial,sans-serif; vertical-align:middle;">&#9632;</span>
-                <span style="font-weight:bold; font-size:7pt; color:#1f2937; vertical-align:middle;">
-                  &nbsp;% of Students above the Pass Marks ${targetPassMarks}%
-                </span>
-              </td>
-              <td style="width:50%; text-align:right; border:none; padding:0; vertical-align:middle; white-space:nowrap;">
-                <span style="color:#eab308; font-size:11pt; font-family:Arial,sans-serif; vertical-align:middle;">&#9632;</span>
-                <span style="font-weight:bold; font-size:7pt; color:#1f2937; vertical-align:middle;">
-                  &nbsp;% of Students above the KPI of ${kpiPO}%
-                </span>
               </td>
             </tr>
           </table>
