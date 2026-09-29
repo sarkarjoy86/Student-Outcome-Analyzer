@@ -1,0 +1,54 @@
+{
+  "generated": "20260930_015754",
+  "live": {
+    "url": "https://student-outcome-analyzer-ml.onrender.com",
+    "cold_start_health_s": {
+      "seconds": 0.16684770002029836,
+      "ok": true,
+      "status": 200
+    },
+    "first_inference_s": {
+      "seconds": 3.173003400093876,
+      "ok": true,
+      "status": 200
+    },
+    "/health": {
+      "n": 30,
+      "mean": 0.0760632500013647,
+      "sd": 0.024296627111455762,
+      "median": 0.0728712499840185,
+      "p95": 0.0867629999993369,
+      "min": 0.06356200005393475,
+      "max": 0.2015201998874545,
+      "success_rate": 1.0
+    },
+    "/suggest-metadata": {
+      "n": 30,
+      "mean": 1.7525769933359698,
+      "sd": 0.08970702599003254,
+      "median": 1.7535221500438638,
+      "p95": 1.8896298999898136,
+      "min": 1.6031416000332683,
+      "max": 1.962696399888955,
+      "success_rate": 1.0
+    },
+    "/similarity-check": {
+      "n": 30,
+      "mean": 4.079823009995744,
+      "sd": 0.25114354147029727,
+      "median": 4.029555999964941,
+      "p95": 4.549990199971944,
+      "min": 3.727488899952732,
+      "max": 4.600906300009228,
+      "success_rate": 1.0
+    }
+  },
+  "local_memory": {
+    "idle_rss_mb": 84.61,
+    "peak_rss_mb_during_requests": 109.89,
+    "rss_after_requests_mb": 100.81,
+    "requests_sent": 20,
+    "requests_ok": 20,
+    "hf_token_set": true
+  }
+}

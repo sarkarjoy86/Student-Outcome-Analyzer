@@ -1,0 +1,121 @@
+question,true,hybrid_pred
+What qualities are essential for success in the field of engineering? Explain briefly.,C1,C2
+List and explain any five pins of the 8086 microprocessor that behave differently in maximum and minimum mode.,C1,C2
+"State the standard port numbers assigned to HTTP, HTTPS, DNS, and SMTP protocols.",C1,C1
+Define the Isolation property of ACID transactions in DBMS and explain how concurrency control mechanisms prevent interference and data anomalies when multiple transactions execute simultaneously.,C1,C2
+"Write a short note on the following terms: i) Deadlock Avoidance, ii) Safe State, iii) Deadlock recovery using process termination.",C1,C1
+Why is Laravel considered a full-stack framework?,C1,C5
+State Turing's definition of Artificial Intelligence and list the four core capabilities required to pass the Turing test.,C1,C1
+Write down the advantages of CMS (Content Management System).,C1,C5
+Briefly discuss Shneiderman's Eight Golden Rules of Interface Design.,C1,C2
+Recall the phases of generic software process model.,C1,C1
+Discuss BLACK BOX and WHITE BOX Testing with suitable example.,C1,C2
+List the five core phases of the traditional Waterfall software development life cycle.,C1,C1
+Discuss all the Testing types with suitable example.,C1,C2
+State the Nyquist bandwidth formula for a noiseless channel with V discrete signal levels.,C1,C1
+"Define image segmentation and write down the attributes. Explain the concept of point, line and edge detection.",C1,C2
+Define bioinformatics and recall the primary public repositories for biological macromolecular structures.,C1,C1
+"Write a short note on the following terms: i) PROM, ii) EPROM, iii) PLA.",C1,C1
+"Let A, B, C be Sets. Prove A - (A - B) = A ∩ B.",C1,C1
+What is Web? Briefly describe Web Application architecture.,C1,C2
+"Recall the worst-case time complexity of standard QuickSort, MergeSort, and InsertionSort algorithms.",C1,C1
+Describe the working principle of CISC and RISC with their characteristics.,C2,C2
+Given Customers and Orders tables: write SQL queries and show output for: i. INNER JOIN ii. LEFT JOIN iii. RIGHT JOIN iv. FULL OUTER JOIN.,C2,C3
+Explain the concept of data reduction in data mining and discuss its significance in the knowledge discovery process.,C2,C2
+Differentiate between LOC-based and Function Point (FP)-based estimation.,C2,C2
+Write down the differences between pointer variable and normal variable with appropriate C-program.,C2,C2
+"Draw a supervised dataset. Identify features, data, input, and output from the dataset.",C2,C5
+Draw and explain the BIU-EU interaction in 8086 using the 6-byte prefetch queue. Describe the functions of BIU and EU and how pipelining improves performance.,C2,C2
+Explain the concept of a register and discuss how registers are used for binary information processing.,C2,C2
+"Briefly explain your understanding about ""Interactive Data Input"".",C2,C2
+"Four main sources of nodal delay at a router (processing, queuing, transmission, propagation) and influencing factors.",C2,C1
+Explain the functionality of the DBMS Query Processing engine and evaluate why it is significantly more effective than file system scripts for generating aggregated analytical reports such as monthly doctor patient visits.,C2,C2
+What are an organization's four primary advantages when utilizing a Content Management System (CMS)? Describe two additional obstacles that a big business can have when putting an Enterprise Application Integration (EAI) solution into practice.,C2,C2
+"Explain the principle of locality in computer systems. In your answer, describe both temporal locality and spatial locality, and illustrate how each principle is exploited in the design of cache memory to improve system performance.",C2,C6
+"Explain what a digital image is, give an example, and describe the various stages involved in digital image processing.",C2,C2
+What is the layer that provides logical addressing for path determination? Define MAC address and how is it different from an IP address?,C2,C1
+Describe the role of syntax-directed translation in connecting parser output with semantic action routines.,C2,C2
+Write down the ACM code of ethics and professional conduct.,C2,C1
+Explain the basic architecture of Global System for Mobile Communication (GSM) and describe the main functions of its key components.,C2,C2
+"Explain fragmentation in memory management, detailing internal vs external fragmentation with diagrams and solutions.",C2,C2
+What does the Shannon capacity and Nyquist theorem have to do with communications? Can these be used together in practical aspects?,C2,C2
+"Write a C++ program to: Dynamically allocate an array, Input elements, Display maximum and minimum values, Release memory.",C3,C3
+Construct a DFA from the given regular expression and show all tuples associated with it: Regular Expression = ba + (aa + b)*.,C3,C3
+"Your friend wants to make a phone call using an old landline (like PSTN) and send a text message over WhatsApp: i) Which type of switching (packet or circuit) does each use? ii) Which one needs a dedicated path, and which one can send pieces of the message over different routes? iii) Explain the main differences in how each message reaches the receiver.",C3,C2
+"Given the following 4x4 grayscale image matrix: [[2, 3, 3, 2], [4, 2, 4, 3], [3, 2, 3, 5], [2, 4, 2, 4]]. Apply histogram equalization on the image. Show all necessary steps including the histogram, cumulative distribution function (CDF), transformation function, and the final enhanced matrix.",C3,C3
+"Suppose that a 2x2 image [[5, 20], [40, 30]] has been enlarged by a factor of 5 into a 6x6 grid. Use Linear Interpolation to find the value of intermediate pixels p, q, r, and s along the diagonal.",C3,C3
+"Describe the step-by-step process of the Insertion algorithm for sorting an array [8, 4, 6, 9, 2, 3, 1] in ascending order.",C3,C2
+A software company wants to develop a small utility application: Write a C++ program that defines a class Box with a private data member volume. Use a friend function to set and display the value of volume.,C3,C3
+Subtract 7654321 from a given 7-digit decimal number using 9's complement method.,C3,C1
+Illustrate classification of parsers in syntax analysis and demonstrate working process of an LL(1) parser.,C3,C3
+Perform both Breadth First Search (BFS) and Depth First Search (DFS) starting from vertex A on the given 11-node undirected graph (vertices A to K). List the order in which the vertices are visited during each traversal.,C3,C1
+Apply business value chain model to explain how a manufacturing company creates customer value.,C3,C2
+"Consider relations R1 to R6 on set {1, 2, 3, 4}: determine which of these relations are reflexive, transitive, symmetric, and anti-symmetric.",C3,C1
+"Use the definition of the Ackermann function to find A(1, 3).",C3,C3
+Convert the following RE (Regular Expression) into Finite Automata: (a U b)* aba.,C3,C1
+"If \(t2 holds the base address of array B and\)s1 corresponds to the variable x, convert the C statement to MIPS assembly instructions: B[400] = x * 2 + B[400]; Show the MIPS instructions and comment each step.",C3,C1
+"Consider the Employee Database: employee(employee_name, street, city), works(employee_name, company_name, salary), company(company_name, city), manages(employee_name, manager_name). Find the names and cities of residence of all employees who work for 'First Bank Corporation'.",C3,C5
+"Apply Dijkstra's algorithm to find the shortest path from node A to node D in a weighted graph with edges: {(A,B,6), (A,D,2), (B,C,3), (B,D,4), (C,D,2), (A,C,5)}. Show the sequence of nodes visited and the final shortest path distance.",C3,C3
+"Using Peterson's Solution, show how two processes can safely enter the critical section. Illustrate the working principles with a diagram or pseudocode.",C3,C2
+Find the significant digits of the following numbers: a) 0.004560 b) 30500 c) 0.00078 d) 12.4500 e) 9.010 x 10^4. Explain how loss of significant digits can affect computational results.,C3,C2
+"You are given the following weighted directed graph with vertices A, B, C, D (directed edges: A->B: 5, A->C: 1, D->A: 2, C->B: 3, B->C: 8, C->D: 4). Apply the Floyd-Warshall algorithm to compute the shortest paths between all pairs of vertices.",C3,C3
+Analyze the priority resolution schemes used in DMA controllers and compare fixed and rotating priority.,C4,C4
+"Verify whether the Grammar S -> aAS | aSS | epsilon, A -> SbA | ba generates the string 'aabaa'. If it does, show both the left and right derivation trees.",C4,C3
+Compare and analyze Exhaustive and Heuristic approaches used in Multiple Sequence Alignment (MSA) with workflow diagrams.,C4,C4
+"Compare the greedy approach and dynamic programming in terms of problem-solving strategy, efficiency, and application. When should you prefer one over the other?",C4,C2
+"Apply First Fit, Best Fit, and Worst Fit on Case 1 (Fixed Partition MFT) and Case 2 (Variable Partition MVT). Determine internal and external fragmentation.",C4,C1
+"Is there any error in this code? If yes, correct it and explain: class Book { string title; public: Book(string t) { title = t; } }; int main() { Book b; b = Book(""C++""); }",C4,C2
+Apply the concept of a firewall and explain how it helps protect an internal network from external threats. Analyze how misconfigured firewalls can create security gaps in an organization.,C4,C4
+"A family has two children. Let: E = both children are boys, F = at least one child is a boy. Determine whether E and F are independent. Justify your answer.",C4,C5
+Test how Hamming distance affects a system's capability to differentiate between valid and invalid codewords.,C4,C2
+What is Spaghetti Code in PHP? Explain how MVC architecture organizes large PHP applications. Analyze MVC request-response flow diagram.,C4,C4
+"A retail store collects customer purchase data from multiple branches. Some entries contain spelling mistakes in product names, inconsistent price formats, and noisy transaction records. i) Analyze how noisy and inconsistent data can affect mining accuracy and business decisions. ii) Identify possible sources of inconsistency in the dataset. iii) Recommend appropriate preprocessing techniques to improve data quality.",C4,C4
+Analyze how increasing SNR affects the theoretical capacity of a channel.,C4,C4
+"Four types of addresses in TCP/IP (physical, logical, port, specific): layer mapping and end-to-end communication diagram.",C4,C2
+"You are a security analyst investigating two separate incidents. Incident A: You suspect a compromised host on the network (10.0.5.20) is using DNS Tunneling to exfiltrate data. You need to capture and analyze the raw network packets to look for suspiciously long DNS queries or TXT records. Incident B: You need to conduct an authorized vulnerability scan of a web server (192.168.22.45) to check for known vulnerabilities like SQL injection or outdated service banners, and produce a structured risk report. (i) For Incident A, which two specific tools would be most appropriate for (a) capturing the traffic and (b) analyzing the protocol details? Justify your choice for the analyzer in one sentence. (ii) For Incident B, which tool is specifically designed for this task? Name one of its 'NVT Families' that would be most relevant for scanning the web server. (iii) What is the key difference between a False Positive and a Zero-Day Vulnerability finding in the context of the scan in Incident B?",C4,C5
+"Banker's Algorithm: a) Calculate Current Need matrix; b) Determine if system is in safe state and provide safe sequence; c) Analyze if P0 request (2,3,2) can be granted immediately.",C4,C4
+"Analyze the key differences between Distance Vector and Link State routing protocols. Compare their performance in terms of scalability, convergence speed, resource consumption, and suitability for large-scale networks. Based on your analysis, justify which protocol is more efficient for a dynamic enterprise network and why.",C4,C5
+Explain the OSI and TCP/IP reference models by comparing their layer structures. Highlight at least three key structural and functional differences between the two models.,C4,C2
+Non-persistent vs Persistent HTTP: compare RTT overhead and response times when downloading page with multiple embedded objects.,C4,C4
+Determine the difference in path selection between A* and Greedy Best-First Search for the same weighted graph of your choice.,C4,C2
+"Explain GOR secondary structure prediction method and compare with Chou-Fasman in terms of accuracy, applicability, and information theory.",C4,C2
+An e-commerce company applies dimensionality reduction before building a recommendation system for customers. i) Evaluate how dimensionality reduction improves computational efficiency and model performance. ii) Analyze the risks of removing too many features from the dataset. iii) Justify why balancing information retention and reduction is important in recommendation systems.,C5,C5
+Consider a banking transaction where a customer transfers money from Account A to Account B. Explain how ACID properties are maintained during this transaction and what could go wrong if one of the ACID properties is violated.,C5,C2
+Suggest and discuss at least two strategies to prevent or resolve deadlock in a multi-resource office printing system.,C5,C2
+"Determine the critical path(s) in the project network (Activities A-G), calculate the total duration of the critical path(s), and discuss the significance of slack or float in project scheduling.",C5,C3
+Compare Waterfall and Agile methodologies. Recommend which is better for a mobile app startup and justify your answer.,C5,C5
+What is bit plane slicing? How can you reconstruct an image from bit planes? Describe it.,C5,C2
+Why Gamma correction is important? Analyze it with proper justification.,C5,C4
+Exemplify Histogram Specification Process with an input and a reference image.,C5,C3
+Case Study on System Failure & Responsibility: Has Charlie acted responsibly? By what evidence do you conclude so? Has Carol? How? Has the computing center director acted responsibly? How?,C5,C4
+"Evaluate the benefits of encapsulation for maintaining large software systems. Provide examples of how encapsulation improves maintainability, security, and code reusability.",C5,C1
+Evaluate the architectural advantages of ARM RISC processors versus x86 CISC processors in modern energy-constrained mobile computing devices.,C5,C4
+Evaluate the architectural trade-offs between Microservices and Monolithic patterns for an early-stage startup experiencing rapid user growth. Justify your recommendation based on deployment velocity and operational overhead.,C5,C5
+Flash ADC is considered the fastest among all types of ADCs. Explain your opinion.,C5,C2
+Evaluate the effectiveness of Linux Completely Fair Scheduler (CFS) versus traditional multilevel feedback queues in desktop versus server workloads.,C5,C2
+Critically assess whether AVL trees or Red-Black trees provide superior real-world performance for in-memory database indexing where write throughput is more critical than read latency.,C5,C5
+Critically evaluate the generalization capabilities of Support Vector Machines versus Deep Neural Networks when trained on extremely small biomedical tabular datasets with severe class noise.,C5,C3
+Evaluate the ethical responsibilities of software engineers in ensuring privacy and security during software development. How do engineering practices help uphold these responsibilities?,C5,C1
+"Suppose a development team is building a library management system for BAIUST with well-defined, stable requirements (book issuance, returns, fines, inventory, reporting) to be completed within six months: i. Justify whether the Waterfall model is appropriate for this project; ii. Midway through the project, the university unexpectedly requests to add a digital payment gateway for fines. Analyze how this late change would affect each phase of the Waterfall model; iii. Break down the 6-month timeline into Waterfall phases with estimated durations and justifications.",C5,C5
+"Given five processes P1(AT:0, BT:10), P2(AT:2, BT:5), P3(AT:3, BT:8), P4(AT:4, BT:6), P5(AT:5, BT:4): apply FCFS, SRTF, and Round Robin (quantum = 3 ms) scheduling algorithms, compute average waiting and turnaround times, and determine which algorithm is most suitable.",C5,C3
+Explain the importance of testing and updating a Business Continuity Planning (BCP). Propose a testing strategy for a university's online exam system.,C5,C2
+Consider the design of a CMOS compound gate computing the following complex functions: i. F = ~(((A + C) . B) + D); ii. F = ~((AC) . E + (BD)). Sketch transistor-level schematic diagrams for the two functions.,C6,C1
+"Design a Single Cycle Data-path that can perform the following operations: i. add \(s1,\)t0, \(t3; ii. lw\)s1, \(t0, 160(\)t3).",C6,C1
+"Design a hierarchical network for the given IP address: 192.168.10.0/24 using Variable-Length Subnet Mask (VLSM). You need to subnet this block for the following departments: Sales - 100 hosts, HR - 60 hosts, IT - 12 hosts, Management - 8 hosts.",C6,C3
+"A large hospital wants to digitize its patient management system (entities: Patients, Medical Histories as weak entity, Doctors, Appointments, Departments, Billing). Draw the complete ER diagram clearly identifying entities, relationships, attributes, primary keys, and full/partial participation of entities.",C6,C1
+Design a distributed sharding schema and multi-region replication protocol for a global banking database supporting ACID transactions across 5 continents with sub-100ms commit latency.,C6,C3
+Propose a hybrid validation strategy for a small imbalanced dataset and justify your design.,C6,C5
+"Design a Single Cycle Datapath that can perform MIPS memory instruction: lw \(s1, 160(\)t3), showing functional units and data flow connections.",C6,C3
+"The craft trading website HuRoHuRi is setting up a database to record sellers and their products (seller name, email, postal address; product name, price, number available, unique ID, and seller-product relationship). Draw a Use-Case Diagram that represents this information, capturing constraints on the relationships and designating appropriate primary keys.",C6,C1
+Generate the state space tree and apply a backtracking approach to solve the 8-Queen problem.,C6,C3
+Design the intermediate representation and code generation pipeline for a Domain-Specific Language targeting domain-specific hardware accelerators (TPUs). Specify symbol table structures and optimization passes.,C6,C5
+"Draw a relational schema diagram for the university student management system (Students, Courses, Instructors, Departments, Enrollments) showing referential integrity constraints.",C6,C1
+Formulate a complete deep learning pipeline for detecting rare medical anomalies in 3D MRI scans using 3D Convolutional Neural Networks and attention mechanisms.,C6,C3
+"Consider the Table-1 with features [Study Hours, Attendance, Sleep Quality, Internet Use] and target class Pass (Yes/No). Design the best rules by using the OneR method.",C6,C5
+"Construct a semantic network representation for the following statements about an apple and its properties: ""Apple is a Fruit. Apple is grown in Orchards. Apple has color Red. Apple contains Vitamins. All Fruits are Edible.""",C6,C3
+"For a Ride-Sharing Application connecting passengers and drivers, design and illustrate a Data Flow Diagram (DFD) modeling the ride-booking process.",C6,C2
+"Design a real-time collaborative document editing web application architecture utilizing WebSockets, Operational Transformation (OT), and Redis pub-sub clusters.",C6,C6
+"Draw the control signal for single cycle data-path that can perform the following instruction: sw \(s1,\)t0, 10($t3).",C6,C3
+"Design and illustrate a block diagram of a 1-bit Arithmetic Logic Unit (ALU) capable of performing basic logical and arithmetic operations including AND, OR, addition, and subtraction. Clearly label all input and output signals, and indicate the control lines required to select each operation.",C6,C2
+"Design a fault-tolerant, event-driven notification architecture for a ride-sharing platform that handles 100,00ندگی concurrent push notifications per second. Specify message brokers, caching layers, and fallback mechanisms.",C6,C6
+"For a Ride-Sharing Application connecting passengers and drivers, design and illustrate a Sequence Diagram modeling the ride-booking process focusing on ride requests, matching, fare calculation, and trip completion.",C6,C2
