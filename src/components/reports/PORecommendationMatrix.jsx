@@ -155,9 +155,53 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
   const [isMasterTableExpanded, setIsMasterTableExpanded] = useState(false);
   const [isLongitudinalSummaryExpanded, setIsLongitudinalSummaryExpanded] = useState(false);
 
-  const batchDisplay = typeof offering?.batch === 'object'
-    ? (offering?.batch?.name || offering?.batch?.batchNum || 'Batch')
-    : String(offering?.batch || 'Batch');
+  const batchDisplay = useMemo(() => {
+    if (offering?.batch) {
+      if (typeof offering.batch === 'object') {
+        return offering.batch.batchName || offering.batch.name || offering.batch.batchNum || '';
+      }
+      return String(offering.batch);
+    }
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlB = urlParams.get('batch');
+      if (urlB) return urlB;
+    } catch (e) {}
+    if (students && students.length > 0) {
+      const counts = {};
+      students.forEach(st => {
+        if (st.batch && st.batch !== 'N/A') {
+          counts[st.batch] = (counts[st.batch] || 0) + 1;
+        }
+      });
+      const topBatch = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      if (topBatch) return topBatch[0];
+    }
+    return 'Batch';
+  }, [offering, students]);
+
+  const cleanBatch = b => String(b || '').toLowerCase().replace(/batch/g, '').replace(/[^a-z0-9]/g, '').trim();
+
+  const isStudentInBatch = (stBatch, targetBatch) => {
+    if (!targetBatch || targetBatch === 'Batch' || targetBatch === 'All') return true;
+    const tb = cleanBatch(targetBatch);
+    const sb = cleanBatch(stBatch);
+    if (!tb || !sb) return true;
+    return sb === tb;
+  };
+
+  // Regular cohort students of the target batch (excludes retake students from other batches)
+  const regularBatchStudents = useMemo(() => {
+    const matched = students.filter(st => isStudentInBatch(st.batch, batchDisplay));
+    return matched.length > 0 ? matched : students;
+  }, [students, batchDisplay]);
+
+  // Cross-batch retake students taking this course offering
+  const retakeStudents = useMemo(() => {
+    return students.filter(st => !isStudentInBatch(st.batch, batchDisplay));
+  }, [students, batchDisplay]);
+
+  const [rosterCohortView, setRosterCohortView] = useState('regular'); // 'regular' | 'retake'
 
   const customRemedStorageKey = `BAETE_CUSTOM_PO_REMED_BATCH_${batchDisplay}`;
   useEffect(() => {
@@ -318,18 +362,19 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
     return sem;
   };
 
-  // Robust Section list derived from availableSections and students
+  // Robust Section list derived from availableSections and regular batch students
   const allSectionsList = useMemo(() => {
     const set = new Set();
     (availableSections || []).forEach(s => { if (s && s !== 'N/A') set.add(s); });
-    students.forEach(st => { if (st.section && st.section !== 'N/A') set.add(st.section); });
+    regularBatchStudents.forEach(st => { if (st.section && st.section !== 'N/A') set.add(st.section); });
     return Array.from(set).sort();
-  }, [availableSections, students]);
+  }, [availableSections, regularBatchStudents]);
 
   // Extract all unique courses present in the batch with rich outcome metrics
+  // Evaluated ONLY across regular batch cohort students to exclude cross-batch retake courses
   const batchAvailableCourses = useMemo(() => {
     const courseMap = new Map();
-    students.forEach(st => {
+    regularBatchStudents.forEach(st => {
       (st.completedCourses || []).forEach(c => {
         if (!c.courseCode) return;
         if (!courseMap.has(c.courseCode)) {
@@ -391,7 +436,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
         semester: offering.semester?.name || offering.semester?.semesterName || 'Spring',
         academicYear: offering.academicYear || offering.semester?.academicYear || '',
         creditHours: offering.course.creditHours || 3,
-        studentsSet: new Set(students.map(s => String(s.id || s.studentId))),
+        studentsSet: new Set(regularBatchStudents.map(s => String(s.id || s.studentId))),
         poAttainmentsList: [],
         coAttainmentsList: [],
         coTotalCounts: [],
@@ -433,7 +478,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
           courseTitle: c.courseTitle,
           semester: semDisplay,
           creditHours: c.creditHours,
-          studentsCount: c.studentsSet.size || students.length,
+          studentsCount: c.studentsSet.size || regularBatchStudents.length,
           totalCOs,
           avgCO,
           coPassRate,
@@ -441,7 +486,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
         };
       })
       .sort((a, b) => a.courseCode.localeCompare(b.courseCode));
-  }, [students, offering, threshold]);
+  }, [regularBatchStudents, offering, threshold]);
 
   // Sync batch selected courses on initial load or mode switch
   useEffect(() => {
@@ -450,10 +495,10 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
     }
   }, [batchAvailableCourses, batchCourseFilterMode]);
 
-  // Dynamically recalculate each student's PO profile against batchSelectedCourseCodes
+  // Dynamically recalculate each regular batch student's PO profile against batchSelectedCourseCodes
   const recalculatedBatchStudents = useMemo(() => {
     if (!batchSelectedCourseCodes || batchSelectedCourseCodes.size === 0) {
-      return students.map(st => ({
+      return regularBatchStudents.map(st => ({
         ...st,
         cgpa: 0,
         overallPoAttainment: 0,
@@ -467,10 +512,10 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
     const allAvailable = new Set(batchAvailableCourses.map(c => c.courseCode));
     const allSelected = allAvailable.size > 0 && Array.from(allAvailable).every(code => batchSelectedCourseCodes.has(code));
     if (allSelected) {
-      return students;
+      return regularBatchStudents;
     }
 
-    return students.map(st => {
+    return regularBatchStudents.map(st => {
       if (!st.completedCourses || st.completedCourses.length === 0) return st;
       const matched = st.completedCourses.filter(c => batchSelectedCourseCodes.has(c.courseCode));
       const profile = computeProfileFromCourses(matched, threshold);
@@ -488,7 +533,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
         completedCoursesCount: matched.length,
       };
     });
-  }, [students, batchSelectedCourseCodes, batchAvailableCourses, threshold]);
+  }, [regularBatchStudents, batchSelectedCourseCodes, batchAvailableCourses, threshold]);
 
   // Batch section filter applied over recalculated batch students
   const activeBatchStudents = useMemo(() => {
@@ -612,8 +657,11 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
   }, [batchStats?.batchChartData, threshold, selectedSection]);
 
   const batchRoster = useMemo(() => {
-    let list = [...activeBatchStudents];
-    if (batchSearch.trim()) { const q = batchSearch.toLowerCase(); list = list.filter(s => (s.studentName || '').toLowerCase().includes(q) || (s.studentId || '').toLowerCase().includes(q)); }
+    let list = rosterCohortView === 'retake' ? [...retakeStudents] : [...activeBatchStudents];
+    if (batchSearch.trim()) {
+      const q = batchSearch.toLowerCase();
+      list = list.filter(s => (s.studentName || '').toLowerCase().includes(q) || (s.studentId || '').toLowerCase().includes(q));
+    }
     if (batchStatusFilter !== 'All') {
       list = list.filter(s => {
         if (batchStatusFilter === 'Eligible') return s.recommendationStatus === 'Eligible for Recommendation';
@@ -624,9 +672,14 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
       });
     }
     const { key, dir } = batchSort;
-    list.sort((a, b) => { const av = a[key] ?? ''; const bv = b[key] ?? ''; if (typeof av === 'number') return dir === 'asc' ? av - bv : bv - av; return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
+    list.sort((a, b) => {
+      const av = a[key] ?? '';
+      const bv = b[key] ?? '';
+      if (typeof av === 'number') return dir === 'asc' ? av - bv : bv - av;
+      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
     return list;
-  }, [activeBatchStudents, batchSearch, batchStatusFilter, batchSort]);
+  }, [rosterCohortView, retakeStudents, activeBatchStudents, batchSearch, batchStatusFilter, batchSort]);
 
   const handleBatchSort = key => setBatchSort(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
 
@@ -676,7 +729,7 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
           </button>
           <button onClick={() => setViewMode('batch')} className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all cursor-pointer border ${viewMode === 'batch' ? 'bg-gradient-to-r from-emerald-700 to-teal-800 text-white border-emerald-900/20 shadow-md' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-emerald-50 hover:text-emerald-800'}`}>
             <Users className="w-4 h-4" />Batch Overview
-            {students.length > 0 && <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${viewMode === 'batch' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>{students.length}</span>}
+            {regularBatchStudents.length > 0 && <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${viewMode === 'batch' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>{regularBatchStudents.length}</span>}
           </button>
         </div>
         {/* Controls */}
@@ -690,12 +743,25 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
               </div>
               {showSearchDropdown && searchTerm.trim() && (
                 <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto divide-y divide-gray-100">
-                  {filteredStudents.length === 0 ? <div className="p-3 text-xs text-gray-500 font-medium">No matching students</div> : filteredStudents.map(s => (
-                    <div key={s.id || s.studentId} onClick={() => handleSelectStudent(s)} className="p-2.5 hover:bg-green-50 cursor-pointer flex items-center justify-between transition">
-                      <div><div className="text-xs font-extrabold text-gray-900">{s.studentId} - {s.studentName}</div><div className="text-[11px] text-gray-500">CGPA: {(s.cgpa || 0).toFixed(2)} | PO Avg: {s.overallPoAttainment || 0}%</div></div>
-                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-gray-100 text-gray-700">{s.recommendationStatus || 'Pending'}</span>
-                    </div>
-                  ))}
+                  {filteredStudents.length === 0 ? <div className="p-3 text-xs text-gray-500 font-medium">No matching students</div> : filteredStudents.map(s => {
+                    const isRetake = !isStudentInBatch(s.batch, batchDisplay);
+                    return (
+                      <div key={s.id || s.studentId} onClick={() => handleSelectStudent(s)} className="p-2.5 hover:bg-green-50 cursor-pointer flex items-center justify-between transition">
+                        <div>
+                          <div className="text-xs font-extrabold text-gray-900 flex items-center gap-1.5">
+                            <span>{s.studentId} - {s.studentName}</span>
+                            {isRetake && (
+                              <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                Batch {s.batch} Retake
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-gray-500">CGPA: {(s.cgpa || 0).toFixed(2)} | PO Avg: {s.overallPoAttainment || 0}%</div>
+                        </div>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-gray-100 text-gray-700">{s.recommendationStatus || 'Pending'}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -704,7 +770,18 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
             <div className="md:col-span-5">
               <label className="block text-xs font-bold text-gray-700 mb-1">Select Student Profile ({filteredStudents.length} Students)</label>
               <select value={selectedStudentId} onChange={e => setSelectedStudentId(e.target.value)} className="w-full py-2 px-3 border border-gray-300 rounded-xl text-sm font-bold focus:ring-2 focus:ring-green-500 focus:border-green-500 bg-white">
-                {filteredStudents.length === 0 ? <option value="">No matching students found</option> : filteredStudents.map(s => <option key={s.id || s.studentId} value={s.id || s.studentId}>{s.studentId} - {s.studentName} | CGPA: {(s.cgpa || 0).toFixed(2)} | PO Avg: {s.overallPoAttainment || 0}% | [{s.recommendationStatus || 'Pending'}]</option>)}
+                {filteredStudents.length === 0 ? (
+                  <option value="">No matching students found</option>
+                ) : (
+                  filteredStudents.map(s => {
+                    const isRetake = !isStudentInBatch(s.batch, batchDisplay);
+                    return (
+                      <option key={s.id || s.studentId} value={s.id || s.studentId}>
+                        {s.studentId} - {s.studentName} {isRetake ? `[Batch ${s.batch} - Retake]` : `[Batch ${s.batch || batchDisplay}]`} | CGPA: {(s.cgpa || 0).toFixed(2)} | PO Avg: {s.overallPoAttainment || 0}% | [{s.recommendationStatus || 'Pending'}]
+                      </option>
+                    );
+                  })
+                )}
               </select>
             </div>
           )}
@@ -734,12 +811,18 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center shadow-lg border-2 border-green-300/30"><Users className="w-8 h-8 text-white" /></div>
                     <div>
-                      <h3 className="text-2xl font-black tracking-tight">Batch Overview</h3>
+                      <h3 className="text-2xl font-black tracking-tight">Batch {batchDisplay} Overview</h3>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-green-200 font-medium">
                         {offering && <><span>Course: <strong className="text-white">{offering.course?.courseCode}</strong></span><span>•</span></>}
-                        <span>Total: <strong className="text-white">{students.length}</strong></span>
+                        <span>Batch {batchDisplay} Cohort: <strong className="text-white">{regularBatchStudents.length} students</strong></span>
+                        {retakeStudents.length > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-amber-300 font-bold">Cross-Batch Retakes: <strong>{retakeStudents.length}</strong></span>
+                          </>
+                        )}
                         <span>•</span>
-                        <span>Showing: <strong className="text-white">{batchStats.n} ({selectedSection === 'ALL' ? 'All Sections' : `Section ${selectedSection}`})</strong></span>
+                        <span>Active View: <strong className="text-white">{batchStats.n} ({selectedSection === 'ALL' ? 'All Sections' : `Section ${selectedSection}`})</strong></span>
                         <span>•</span>
                         <span>Threshold: <strong className="text-amber-300">{threshold}%</strong></span>
                       </div>
@@ -1238,7 +1321,9 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
                     <div className="p-2 bg-green-100 text-green-700 rounded-xl"><Users size={18} /></div>
                     <div className="text-left">
                       <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">STUDENT PERFORMANCE ROSTER</h4>
-                      <p className="text-xs text-gray-500 font-medium">{showBatchRoster ? 'Click to collapse student roster breakdown' : 'Click to expand student roster breakdown'} — {batchStats.n} students in view</p>
+                      <p className="text-xs text-gray-500 font-medium">
+                        {showBatchRoster ? 'Click to collapse student roster breakdown' : 'Click to expand student roster breakdown'} — {rosterCohortView === 'retake' ? retakeStudents.length : batchStats.n} students in view {rosterCohortView === 'retake' ? '(Cross-Batch Retakes)' : ''}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1250,13 +1335,44 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
                   <>
                     <div className="p-4 border-b border-gray-100 bg-white">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <p className="text-xs text-gray-500 font-semibold">Full batch eligibility breakdown — click <strong>View</strong> to inspect individual profiles</p>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <p className="text-xs text-gray-500 font-semibold">Full batch eligibility breakdown — click <strong>View</strong> to inspect individual profiles</p>
+                          {retakeStudents.length > 0 && (
+                            <div className="flex items-center gap-1 p-0.5 bg-gray-100 rounded-lg border border-gray-200">
+                              <button
+                                type="button"
+                                onClick={() => setRosterCohortView('regular')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${rosterCohortView === 'regular' ? 'bg-white text-emerald-800 shadow-xs' : 'text-gray-600 hover:text-gray-900'}`}
+                              >
+                                Regular Cohort ({regularBatchStudents.length})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRosterCohortView('retake')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${rosterCohortView === 'retake' ? 'bg-amber-600 text-white shadow-xs' : 'text-amber-800 hover:text-amber-950'}`}
+                              >
+                                <span>Retake Students</span>
+                                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${rosterCohortView === 'retake' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 border border-amber-300'}`}>
+                                  {retakeStudents.length}
+                                </span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <div className="relative"><Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" /><input type="text" placeholder="Search student..." value={batchSearch} onChange={e => setBatchSearch(e.target.value)} className="pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-green-500 focus:border-green-500" /></div>
                           {['All','Eligible','PO Gap','Low CGPA','Ineligible'].map(f => <button key={f} onClick={() => setBatchStatusFilter(f)} className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${batchStatusFilter === f ? 'bg-emerald-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-emerald-50 hover:text-emerald-700'}`}>{f}</button>)}
                         </div>
                       </div>
                     </div>
+
+                    {rosterCohortView === 'retake' && (
+                      <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 font-semibold flex items-center gap-2">
+                        <Info className="w-4 h-4 text-amber-700 flex-shrink-0" />
+                        <span>Showing <strong>{retakeStudents.length}</strong> cross-batch retake student{retakeStudents.length !== 1 ? 's' : ''} enrolled in this course offering. These students belong to other batches and are excluded from Batch {batchDisplay} batch-wide outcome attainment metrics.</span>
+                      </div>
+                    )}
+
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-sm">
                         <thead className="bg-gray-100/70 text-gray-700 text-xs font-bold uppercase tracking-wider border-b border-gray-200">
@@ -1266,23 +1382,39 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 font-medium">
-                          {batchRoster.length === 0 ? <tr><td colSpan={9} className="py-8 text-center text-sm text-gray-400 font-semibold">No students match the current filters.</td></tr> : batchRoster.map(s => (
-                            <tr key={s.id || s.studentId} className="hover:bg-gray-50 transition-colors">
-                              <td className="py-3 px-4 font-black text-green-800">{s.studentId}</td>
-                              <td className="py-3 px-4 text-gray-900 font-semibold">{s.studentName}</td>
-                              <td className="py-3 px-4"><span className="text-xs font-bold px-2 py-0.5 bg-gray-100 text-gray-700 rounded-md">{s.section || 'N/A'}</span></td>
-                              <td className="py-3 px-4 font-black text-gray-900"><span className={s.cgpa >= 3.5 ? 'text-emerald-700' : 'text-amber-700'}>{(s.cgpa || 0).toFixed(2)}</span></td>
-                              <td className="py-3 px-4 font-bold text-gray-800">{s.overallPoAttainment || 0}%</td>
-                              <td className="py-3 px-4 text-center"><span className={`font-extrabold text-base ${(s.weakPOCount || 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{s.weakPOCount || 0}</span></td>
-                              <td className="py-3 px-4 font-black text-gray-900">{s.recommendationScore || 0}<span className="text-xs text-gray-400 font-semibold">/100</span></td>
-                              <td className="py-3 px-4"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold ${statusPill(s.recommendationStatus)}`}>{s.recommendationStatus || 'Pending'}</span></td>
-                              <td className="py-3 px-4 text-center"><button onClick={() => handleViewProfile(s)} className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs px-2.5 py-1.5 rounded-lg transition-all cursor-pointer border border-emerald-200"><Eye className="w-3.5 h-3.5" /> View</button></td>
-                            </tr>
-                          ))}
+                          {batchRoster.length === 0 ? <tr><td colSpan={9} className="py-8 text-center text-sm text-gray-400 font-semibold">No students match the current filters.</td></tr> : batchRoster.map(s => {
+                            const isRetake = s.batch && !isStudentInBatch(s.batch, batchDisplay);
+                            return (
+                              <tr key={s.id || s.studentId} className="hover:bg-gray-50 transition-colors">
+                                <td className="py-3 px-4 font-black text-green-800">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span>{s.studentId}</span>
+                                    {isRetake && (
+                                      <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                        Batch {s.batch} Retake
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-gray-900 font-semibold">{s.studentName}</td>
+                                <td className="py-3 px-4"><span className="text-xs font-bold px-2 py-0.5 bg-gray-100 text-gray-700 rounded-md">{s.section || 'N/A'}</span></td>
+                                <td className="py-3 px-4 font-black text-gray-900"><span className={s.cgpa >= 3.5 ? 'text-emerald-700' : 'text-amber-700'}>{(s.cgpa || 0).toFixed(2)}</span></td>
+                                <td className="py-3 px-4 font-bold text-gray-800">{s.overallPoAttainment || 0}%</td>
+                                <td className="py-3 px-4 text-center"><span className={`font-extrabold text-base ${(s.weakPOCount || 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{s.weakPOCount || 0}</span></td>
+                                <td className="py-3 px-4 font-black text-gray-900">{s.recommendationScore || 0}<span className="text-xs text-gray-400 font-semibold">/100</span></td>
+                                <td className="py-3 px-4"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold ${statusPill(s.recommendationStatus)}`}>{s.recommendationStatus || 'Pending'}</span></td>
+                                <td className="py-3 px-4 text-center"><button onClick={() => handleViewProfile(s)} className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs px-2.5 py-1.5 rounded-lg transition-all cursor-pointer border border-emerald-200"><Eye className="w-3.5 h-3.5" /> View</button></td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
-                    {batchRoster.length > 0 && <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 font-medium">Showing {batchRoster.length} of {batchStats.n} students {selectedSection !== 'ALL' ? `(Section ${selectedSection})` : '(All Sections)'}</div>}
+                    {batchRoster.length > 0 && (
+                      <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 font-medium">
+                        Showing {batchRoster.length} of {rosterCohortView === 'retake' ? retakeStudents.length : batchStats.n} students {rosterCohortView === 'retake' ? '(Cross-Batch Retakes)' : (selectedSection !== 'ALL' ? `(Section ${selectedSection})` : '(All Sections)')}
+                      </div>
+                    )}
                   </>
                 )}
               </div>

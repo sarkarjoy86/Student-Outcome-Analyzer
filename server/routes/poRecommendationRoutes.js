@@ -269,11 +269,22 @@ export async function calculateAndSyncStudentPO(studentIdOrDbId, targetThreshold
       }
     }
 
+    const offeringBatchName = offering.batch?.batchName || offering.batch?.name || String(offering.batch || '');
+    const studentBatchName = student.batchId?.batchName || student.batchId?.name || String(student.batchId || '');
+    const cleanB = b => String(b || '').toLowerCase().replace(/batch/g, '').replace(/[^a-z0-9]/g, '').trim();
+    const isRetake = Boolean(
+      offeringBatchName &&
+      studentBatchName &&
+      cleanB(offeringBatchName) !== cleanB(studentBatchName)
+    );
+
     completedCourses.push({
       courseOfferingId: offering._id,
       courseCode,
       courseTitle,
       creditHours,
+      offeringBatch: offeringBatchName,
+      isRetake,
       semester: offering.semester?.semesterName || 'N/A',
       academicYear: offering.academicYear || offering.semester?.academicYear || 'N/A',
       obtainedMarks: Math.round(courseObtainedTotal * 10) / 10,

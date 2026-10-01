@@ -91,6 +91,8 @@ const studentLongitudinalPOSchema = new mongoose.Schema({
     courseCode: String,
     courseTitle: String,
     creditHours: Number,
+    offeringBatch: { type: String, default: '' },
+    isRetake: { type: Boolean, default: false },
     semester: String,
     academicYear: String,
     obtainedMarks: Number,
