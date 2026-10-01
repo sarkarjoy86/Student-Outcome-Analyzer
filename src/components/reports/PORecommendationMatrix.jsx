@@ -9,9 +9,11 @@ import {
   GraduationCap, Save, TrendingUp, RefreshCw, ShieldAlert, Loader2,
   BookOpen, Check, Filter, ArrowUpDown, ChevronDown, ChevronUp, Eye,
   Layers, BarChart2, Lightbulb, Activity, Target, CheckCheck,
-  ChevronRight, BookCheck, Info,
+  ChevronRight, BookCheck, Info, Sparkles, Copy, Printer, Edit3, FileText,
 } from 'lucide-react';
 import { apiService } from '../../services/apiService';
+import { generateBatchLevelCQI } from '../../services/cqiAiService';
+import BatchCQIFacultyMeetingModal from './BatchCQIFacultyMeetingModal';
 
 const PO_NAMES = {
   PO1: 'Engineering knowledge', PO2: 'Problem analysis', PO3: 'Design/development of solutions',
@@ -144,6 +146,36 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
   const [showBatchRoster, setShowBatchRoster] = useState(false);
   const [batchCourseFilterMode, setBatchCourseFilterMode] = useState('all');
   const [batchSelectedCourseCodes, setBatchSelectedCourseCodes] = useState(new Set());
+  const [aiCQILoading, setAiCQILoading] = useState(false);
+  const [batchCQIResult, setBatchCQIResult] = useState(null);
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [editingPO, setEditingPO] = useState(null);
+  const [poEditText, setPoEditText] = useState('');
+  const [customPORemediations, setCustomPORemediations] = useState({});
+  const [isMasterTableExpanded, setIsMasterTableExpanded] = useState(false);
+  const [isLongitudinalSummaryExpanded, setIsLongitudinalSummaryExpanded] = useState(false);
+
+  const batchDisplay = typeof offering?.batch === 'object'
+    ? (offering?.batch?.name || offering?.batch?.batchNum || 'Batch')
+    : String(offering?.batch || 'Batch');
+
+  const customRemedStorageKey = `BAETE_CUSTOM_PO_REMED_BATCH_${batchDisplay}`;
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(customRemedStorageKey);
+      if (saved) setCustomPORemediations(JSON.parse(saved));
+    } catch (e) {}
+  }, [customRemedStorageKey]);
+
+  const handleSavePORemediation = (poCode) => {
+    const updated = { ...customPORemediations, [poCode]: poEditText };
+    setCustomPORemediations(updated);
+    try {
+      localStorage.setItem(customRemedStorageKey, JSON.stringify(updated));
+    } catch (e) {}
+    setEditingPO(null);
+    setPoEditText('');
+  };
 
   useEffect(() => { loadStudents(); }, [threshold, offering?._id]);
   useEffect(() => { setSelectedSection('ALL'); }, [offering?._id]);
@@ -532,13 +564,52 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
       row.batchMean = poCounts[k] > 0 ? Math.round((poSums[k] / poCounts[k]) * 10) / 10 : 0;
       return row;
     });
-    const cqiItems = batchChartData.filter(d => d.avgAttainment < threshold).sort((a, b) => a.avgAttainment - b.avgAttainment).map(d => ({
-      po: d.po, name: PO_NAMES[d.po], avgAttainment: d.avgAttainment, passRate: d.passRate,
-      gap: Math.round((threshold - d.avgAttainment) * 10) / 10,
-      remediation: CQI_REMEDIATION[d.po] || 'Review and realign course delivery for this outcome.',
-    }));
+    const cqiItems = batchChartData.filter(d => d.avgAttainment < threshold).sort((a, b) => a.avgAttainment - b.avgAttainment).map(d => {
+      const aiRemed = batchCQIResult?.poRemediations?.[d.po];
+      const customText = customPORemediations[d.po];
+      const isZero = d.avgAttainment === 0;
+      const remediation = customText || aiRemed?.remediation || CQI_REMEDIATION[d.po] || 'Review and realign course delivery for this outcome.';
+      const allocatedCourses = aiRemed?.allocatedCourses || [];
+      return {
+        po: d.po,
+        name: PO_NAMES[d.po],
+        avgAttainment: d.avgAttainment,
+        passRate: d.passRate,
+        isZero,
+        gap: Math.round((threshold - d.avgAttainment) * 10) / 10,
+        remediation,
+        allocatedCourses,
+      };
+    });
     return { n, avgCGPA, avgPOAtt, eligibilityRate, eligibleCount, batchChartData, commonWeakPOs, clusterStats, tiers, crossSectionData, sectionNames, cqiItems };
-  }, [activeBatchStudents, threshold]);
+  }, [activeBatchStudents, threshold, batchCQIResult, customPORemediations]);
+
+  const handleGenerateBatchCQI = async (forceRegenerate = false) => {
+    if (!batchStats?.batchChartData) return;
+    setAiCQILoading(true);
+    try {
+      const res = await generateBatchLevelCQI({
+        batchId: batchDisplay,
+        section: selectedSection,
+        threshold,
+        batchChartData: batchStats.batchChartData,
+        clusterStats: batchStats.clusterStats,
+        completedCourses: batchAvailableCourses,
+        forceRegenerate,
+      });
+      setBatchCQIResult(res);
+    } catch (err) {
+      console.error('[PORecommendation] Error generating batch CQI:', err);
+    } finally {
+      setAiCQILoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (batchStats?.batchChartData && batchStats.batchChartData.length > 0 && !batchCQIResult) {
+      handleGenerateBatchCQI(false);
+    }
+  }, [batchStats?.batchChartData, threshold, selectedSection]);
 
   const batchRoster = useMemo(() => {
     let list = [...activeBatchStudents];
@@ -580,13 +651,6 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
 
   return (
     <div className="space-y-6">
-      {toastMsg && (
-        <div className="no-print bg-emerald-700 text-white p-4 rounded-xl shadow-lg flex items-center justify-between font-bold text-sm">
-          <div className="flex items-center gap-2"><Check className="w-5 h-5" />{toastMsg}</div>
-          <button onClick={() => setToastMsg('')} className="text-white/80 hover:text-white text-xs">Dismiss</button>
-        </div>
-      )}
-
       {/* ══ Header ══ */}
       <div className="no-print bg-white p-6 rounded-2xl shadow-md border border-gray-200 space-y-4">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-gray-100 pb-4">
@@ -814,56 +878,193 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
 
               {/* PO Attainment Master Table */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-5 border-b border-gray-200 bg-gray-50 flex items-center gap-3">
-                  <div className="p-2 bg-teal-100 text-teal-700 rounded-xl"><Target size={16} /></div>
-                  <div><h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">PO Competency Attainment Master Table</h4><p className="text-xs text-gray-500 font-medium">BAETE SAR reporting table — mean attainment, pass rate &amp; benchmark status per PO</p></div>
+                <div
+                  onClick={() => setIsMasterTableExpanded(prev => !prev)}
+                  className={`p-5 bg-gray-50 flex items-center justify-between gap-3 cursor-pointer hover:bg-gray-100/70 transition-colors select-none ${isMasterTableExpanded ? 'border-b border-gray-200' : ''}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-teal-100 text-teal-700 rounded-xl"><Target size={16} /></div>
+                    <div>
+                      <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">PO Competency Attainment Master Table</h4>
+                      <p className="text-xs text-gray-500 font-medium">BAETE SAR reporting table — mean attainment, pass rate &amp; benchmark status per PO</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setIsMasterTableExpanded(prev => !prev); }}
+                    className="p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 transition-colors cursor-pointer"
+                    title={isMasterTableExpanded ? 'Collapse Master Table' : 'Expand Master Table'}
+                  >
+                    {isMasterTableExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </button>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-semibold">
-                    <thead className="bg-gray-100 text-gray-600 font-bold uppercase tracking-wider border-b border-gray-200">
-                      <tr><th className="py-3 px-4">PO</th><th className="py-3 px-4">Competency Description (WA)</th><th className="py-3 px-4">Cluster</th><th className="py-3 px-4 text-center">Batch Mean (%)</th><th className="py-3 px-4 text-center">Pass Rate (%)</th><th className="py-3 px-4 text-center">Benchmark</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {batchStats.batchChartData.map(d => {
-                        const cluster = WA_CLUSTERS.find(c => c.pos.includes(d.po));
-                        const attained = d.avgAttainment >= threshold;
-                        return (
-                          <tr key={d.po} className={attained ? 'hover:bg-gray-50' : 'bg-red-50/40 hover:bg-red-50'}>
-                            <td className="py-2.5 px-4 font-black text-gray-900">{d.po}</td>
-                            <td className="py-2.5 px-4 text-gray-700">{PO_NAMES[d.po]}</td>
-                            <td className="py-2.5 px-4">{cluster && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${cluster.bg} ${cluster.text} border ${cluster.border}`}>{cluster.short}</span>}</td>
-                            <td className="py-2.5 px-4 text-center"><span className={`font-black text-sm ${attained ? 'text-emerald-700' : 'text-red-600'}`}>{d.avgAttainment}%</span></td>
-                            <td className="py-2.5 px-4 text-center"><span className={`font-bold ${d.passRate >= 50 ? 'text-emerald-700' : 'text-red-600'}`}>{d.passRate}%</span></td>
-                            <td className="py-2.5 px-4 text-center">{attained ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3 h-3" /> Attained</span> : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-800"><ShieldAlert className="w-3 h-3" /> Needs CQI</span>}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                {isMasterTableExpanded && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-semibold">
+                      <thead className="bg-gray-100 text-gray-600 font-bold uppercase tracking-wider border-b border-gray-200">
+                        <tr><th className="py-3 px-4">PO</th><th className="py-3 px-4">Competency Description (WA)</th><th className="py-3 px-4">Cluster</th><th className="py-3 px-4 text-center">Batch Mean (%)</th><th className="py-3 px-4 text-center">Pass Rate (%)</th><th className="py-3 px-4 text-center">Benchmark</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {batchStats.batchChartData.map(d => {
+                          const cluster = WA_CLUSTERS.find(c => c.pos.includes(d.po));
+                          const attained = d.avgAttainment >= threshold;
+                          return (
+                            <tr key={d.po} className={attained ? 'hover:bg-gray-50' : 'bg-red-50/40 hover:bg-red-50'}>
+                              <td className="py-2.5 px-4 font-black text-gray-900">{d.po}</td>
+                              <td className="py-2.5 px-4 text-gray-700">{PO_NAMES[d.po]}</td>
+                              <td className="py-2.5 px-4">{cluster && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${cluster.bg} ${cluster.text} border ${cluster.border}`}>{cluster.short}</span>}</td>
+                              <td className="py-2.5 px-4 text-center"><span className={`font-black text-sm ${attained ? 'text-emerald-700' : 'text-red-600'}`}>{d.avgAttainment}%</span></td>
+                              <td className="py-2.5 px-4 text-center"><span className={`font-bold ${d.passRate >= 50 ? 'text-emerald-700' : 'text-red-600'}`}>{d.passRate}%</span></td>
+                              <td className="py-2.5 px-4 text-center">{attained ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3 h-3" /> Attained</span> : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-800"><ShieldAlert className="w-3 h-3" /> Needs CQI</span>}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* CQI Action Matrix */}
               {batchStats.cqiItems.length > 0 && (
                 <div className="bg-white rounded-2xl shadow-sm border border-orange-200 overflow-hidden">
-                  <div className="p-5 border-b border-orange-200 bg-orange-50 flex items-center gap-3">
-                    <div className="p-2 bg-orange-100 text-orange-700 rounded-xl"><Lightbulb size={16} /></div>
-                    <div><h4 className="text-sm font-black text-orange-900 uppercase tracking-wider">BAETE CQI — Continuous Quality Improvement Action Matrix</h4><p className="text-xs text-orange-700 font-medium">{batchStats.cqiItems.length} PO{batchStats.cqiItems.length !== 1 ? 's' : ''} below {threshold}% threshold — pedagogical remediation recommendations</p></div>
+                  <div className="p-5 border-b border-orange-200 bg-orange-50/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-orange-100 text-orange-700 rounded-xl flex-shrink-0 mt-0.5">
+                        <Lightbulb size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-orange-950 uppercase tracking-wider">
+                          BAETE CQI — Continuous Quality Improvement Action Matrix
+                        </h4>
+                        <p className="text-xs text-orange-800 font-medium mt-0.5">
+                          {batchStats.cqiItems.length} PO{batchStats.cqiItems.length !== 1 ? 's' : ''} below {threshold}% threshold — pedagogical remediation &amp; curriculum gap recommendations
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Toolbar */}
+                    <div className="flex items-center gap-2 flex-wrap self-end md:self-center no-print">
+                      <button
+                        onClick={() => handleGenerateBatchCQI(true)}
+                        disabled={aiCQILoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                        title="Re-analyze batch PO attainments and generate tailored pedagogical remediations"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${aiCQILoading ? 'animate-spin' : ''}`} />
+                        {aiCQILoading ? 'Generating Remediation...' : 'Generate Remediation'}
+                      </button>
+
+                      <button
+                        onClick={() => setShowMeetingModal(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-900 hover:bg-indigo-950 text-white shadow-xs transition-all active:scale-95 cursor-pointer border border-indigo-800/30"
+                        title="Open BAETE Criterion 3 & 9 Faculty CQI Review Meeting Report"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-indigo-300" />
+                        View Faculty CQI Report
+                      </button>
+                    </div>
                   </div>
+
                   <div className="divide-y divide-orange-100">
                     {batchStats.cqiItems.map(item => (
                       <div key={item.po} className="p-4 flex flex-col md:flex-row gap-4 hover:bg-orange-50/40 transition-colors">
-                        <div className="flex-shrink-0 flex items-start gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center flex-shrink-0">{item.po}</div>
+                        <div className="flex-shrink-0 flex items-start gap-3 md:w-64">
+                          <div className={`w-12 h-12 rounded-xl text-white font-black text-sm flex items-center justify-center flex-shrink-0 shadow-xs ${item.isZero ? 'bg-amber-600' : 'bg-red-600'}`}>
+                            {item.po}
+                          </div>
                           <div>
-                            <div className="text-xs font-extrabold text-gray-900">{item.name}</div>
-                            <div className="flex items-center gap-3 mt-1"><span className="text-sm font-black text-red-600">{item.avgAttainment}%</span><span className="text-[10px] font-bold text-gray-400">Target: {threshold}%</span><span className="text-[10px] font-extrabold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full">-{item.gap}% gap</span></div>
-                            <div className="text-[10px] text-gray-500 font-medium mt-0.5">Pass Rate: {item.passRate}% of students</div>
+                            <div className="text-xs font-extrabold text-gray-900 leading-tight">{item.name}</div>
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              <span className={`text-sm font-black ${item.isZero ? 'text-amber-700' : 'text-red-600'}`}>
+                                {item.avgAttainment}%
+                              </span>
+                              <span className="text-[10px] font-bold text-gray-400">Target: {threshold}%</span>
+                              {item.isZero ? (
+                                <span className="text-[10px] font-extrabold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                                  Unmapped (0%)
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-extrabold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full">
+                                  -{item.gap}% gap
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-500 font-medium mt-1">
+                              Pass Rate: {item.passRate}% of students
+                            </div>
                           </div>
                         </div>
-                        <div className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                          <div className="text-[10px] font-extrabold text-amber-700 uppercase tracking-wider mb-1">CQI Pedagogical Recommendation</div>
-                          <p className="text-xs text-gray-700 font-medium leading-relaxed">{item.remediation}</p>
+
+                        {/* Remediation & Course Allocation Box */}
+                        <div className={`flex-1 rounded-xl p-3.5 border transition-all ${item.isZero ? 'bg-amber-50/80 border-amber-300/80' : 'bg-orange-50/60 border-orange-200'}`}>
+                          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                            <span className={`text-[10px] font-black uppercase tracking-wider ${item.isZero ? 'text-amber-900' : 'text-orange-900'}`}>
+                              {item.isZero ? 'Curriculum Gap Analysis & Course Allocation (BAETE Criterion 4)' : 'CQI Pedagogical Recommendation (BAETE Criterion 9)'}
+                            </span>
+                            
+                            <div className="flex items-center gap-2 no-print">
+                              {editingPO === item.po ? (
+                                <button
+                                  onClick={() => handleSavePORemediation(item.po)}
+                                  className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-700 text-white hover:bg-emerald-800 transition cursor-pointer"
+                                >
+                                  <Save size={11} /> Save
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setEditingPO(item.po);
+                                    setPoEditText(item.remediation);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+                                  title="Edit custom recommendation text for this PO"
+                                >
+                                  <Edit3 size={11} /> Edit
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {editingPO === item.po ? (
+                            <div className="space-y-1.5">
+                              <textarea
+                                value={poEditText}
+                                onChange={e => setPoEditText(e.target.value)}
+                                rows={3}
+                                className="w-full text-xs p-2 rounded-lg border border-orange-300 bg-white text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-orange-500"
+                              />
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => setEditingPO(null)}
+                                  className="text-[11px] font-bold text-gray-500 hover:text-gray-700 px-2 py-0.5"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-800 font-medium leading-relaxed">
+                              {item.remediation}
+                            </p>
+                          )}
+
+                          {/* Allocated Courses Recommendation for 0% / Unmapped PO */}
+                          {item.isZero && item.allocatedCourses && item.allocatedCourses.length > 0 && (
+                            <div className="mt-2.5 pt-2 border-t border-amber-200/70 flex items-center gap-2 flex-wrap text-xs">
+                              <span className="text-[10px] font-extrabold text-amber-950 uppercase tracking-wider">
+                                Recommended Course Basket:
+                              </span>
+                              {item.allocatedCourses.map((cName, idx) => (
+                                <span
+                                  key={idx}
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white text-amber-900 border border-amber-300 shadow-2xs"
+                                >
+                                  {cName}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1221,6 +1422,57 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
                   </div>
                 </div>
               )}
+
+              {/* Individual Student CQI Advisory Remediation */}
+              {computedProfile.weakPOs.length > 0 && (
+                <div className="bg-gradient-to-br from-amber-50 via-white to-orange-50/40 rounded-2xl border border-amber-200 p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-amber-100 text-amber-800 rounded-xl">
+                        <Lightbulb size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">
+                          Individual Student CQI Advisory &amp; Recovery Roadmap
+                        </h4>
+                        <p className="text-xs text-amber-800 font-medium">
+                          Pedagogical interventions for {computedProfile.studentName || 'this student'} to remediate {computedProfile.weakPOs.length} deficit Program Outcome(s)
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                      Academic Advising Protocol
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+                    {computedProfile.weakPOs.map(w => {
+                      const advice = CQI_REMEDIATION[w.po] || 'Complete targeted problem-solving tutorials and hands-on lab projects to satisfy competency benchmarks.';
+                      return (
+                        <div key={w.po} className="bg-white p-4 rounded-xl border border-amber-200/80 shadow-xs flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <span className="px-2 py-0.5 rounded-md text-xs font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                {w.po}
+                              </span>
+                              <span className="text-[11px] font-bold text-rose-600">
+                                Current: {w.attainment}% (Gap: -{w.gapPercentage}%)
+                              </span>
+                            </div>
+                            <div className="text-xs font-extrabold text-gray-900 mb-1">{w.description}</div>
+                            <p className="text-xs text-gray-600 font-medium leading-relaxed">{advice}</p>
+                          </div>
+                          <div className="mt-2.5 pt-2 border-t border-gray-100 text-[10px] font-bold text-amber-700 flex items-center justify-between">
+                            <span>Advising Directive:</span>
+                            <span>Target ≥ {threshold}% in upcoming semester</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -1247,20 +1499,44 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
               </div>
               {/* PO detail table */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-5 border-b border-gray-200 bg-gray-50"><h4 className="text-base font-black text-gray-900">PO1&#8211;PO12 Longitudinal Attainment Summary</h4><p className="text-xs text-gray-500">Credit-weighted average across selected course offerings</p></div>
-                <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-                  <thead className="bg-gray-100/70 text-gray-700 text-xs font-bold uppercase tracking-wider border-b border-gray-200"><tr><th className="py-3 px-4">PO Code</th><th className="py-3 px-4">Outcome Competency Description</th><th className="py-3 px-4 text-center">Mapped Credits</th><th className="py-3 px-4 text-center">Evaluated Courses</th><th className="py-3 px-4 text-right">Student Attainment (%)</th><th className="py-3 px-4 text-center">Status</th></tr></thead>
-                  <tbody className="divide-y divide-gray-200 font-medium">
-                    {computedProfile.longitudinalPOs.map(p => (
-                      <tr key={p.po} className={p.isPassed ? 'hover:bg-gray-50' : 'bg-red-50/50 hover:bg-red-50'}>
-                        <td className="py-3 px-4 font-black text-gray-900">{p.po}</td><td className="py-3 px-4 text-gray-800 font-semibold">{p.name}</td>
-                        <td className="py-3 px-4 text-center font-bold text-gray-600">{p.mappedCredits || 0} credits</td><td className="py-3 px-4 text-center font-bold text-gray-600">{p.evaluatedCoursesCount || 0} courses</td>
-                        <td className="py-3 px-4 text-right font-black text-base"><span className={p.isPassed ? 'text-emerald-700' : 'text-red-600'}>{p.attainment}%</span></td>
-                        <td className="py-3 px-4 text-center">{p.isPassed ? <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3.5 h-3.5" /> Satisfied</span> : <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-red-100 text-red-800"><XCircle className="w-3.5 h-3.5" /> Gap (-{(threshold - p.attainment).toFixed(1)}%)</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table></div>
+                <div
+                  onClick={() => setIsLongitudinalSummaryExpanded(prev => !prev)}
+                  className={`p-5 bg-gray-50 flex items-center justify-between gap-3 cursor-pointer hover:bg-gray-100/70 transition-colors select-none ${isLongitudinalSummaryExpanded ? 'border-b border-gray-200' : ''}`}
+                >
+                  <div>
+                    <h4 className="text-base font-black text-gray-900">PO1&#8211;PO12 Longitudinal Attainment Summary</h4>
+                    <p className="text-xs text-gray-500">Credit-weighted average across selected course offerings</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setIsLongitudinalSummaryExpanded(prev => !prev); }}
+                    className="p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-200/80 transition-colors cursor-pointer"
+                    title={isLongitudinalSummaryExpanded ? 'Collapse Summary Table' : 'Expand Summary Table'}
+                  >
+                    {isLongitudinalSummaryExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </button>
+                </div>
+                {isLongitudinalSummaryExpanded && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-gray-100/70 text-gray-700 text-xs font-bold uppercase tracking-wider border-b border-gray-200">
+                        <tr><th className="py-3 px-4">PO Code</th><th className="py-3 px-4">Outcome Competency Description</th><th className="py-3 px-4 text-center">Mapped Credits</th><th className="py-3 px-4 text-center">Evaluated Courses</th><th className="py-3 px-4 text-right">Student Attainment (%)</th><th className="py-3 px-4 text-center">Status</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 font-medium">
+                        {computedProfile.longitudinalPOs.map(p => (
+                          <tr key={p.po} className={p.isPassed ? 'hover:bg-gray-50' : 'bg-red-50/50 hover:bg-red-50'}>
+                            <td className="py-3 px-4 font-black text-gray-900">{p.po}</td>
+                            <td className="py-3 px-4 text-gray-800 font-semibold">{p.name}</td>
+                            <td className="py-3 px-4 text-center font-bold text-gray-600">{p.mappedCredits || 0} credits</td>
+                            <td className="py-3 px-4 text-center font-bold text-gray-600">{p.evaluatedCoursesCount || 0} courses</td>
+                            <td className="py-3 px-4 text-right font-black text-base"><span className={p.isPassed ? 'text-emerald-700' : 'text-red-600'}>{p.attainment}%</span></td>
+                            <td className="py-3 px-4 text-center">{p.isPassed ? <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3.5 h-3.5" /> Satisfied</span> : <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-red-100 text-red-800"><XCircle className="w-3.5 h-3.5" /> Gap (-{(threshold - p.attainment).toFixed(1)}%)</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
               {/* Course filter and expandable CO drilldowns */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
@@ -1479,6 +1755,17 @@ export default function PORecommendationMatrix({ offering = null, initialStudent
           )}
         </>
       )}
+
+      {/* BAETE CQI Faculty Meeting Report Modal */}
+      <BatchCQIFacultyMeetingModal
+        isOpen={showMeetingModal}
+        onClose={() => setShowMeetingModal(false)}
+        batchId={batchDisplay}
+        section={selectedSection}
+        threshold={threshold}
+        cqiReport={batchCQIResult}
+        completedCoursesCount={batchAvailableCourses.length}
+      />
     </div>
   );
 }

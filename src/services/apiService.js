@@ -1,4 +1,4 @@
-const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
+﻿const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
 export const DEFAULT_PROD_ML_URL = "https://student-outcome-analyzer-ml.onrender.com";
 
 export function getApiBaseUrl() {
@@ -1238,5 +1238,73 @@ export const apiService = {
       console.warn("Failed to delete image from Cloudinary:", err);
       return null;
     }
+  },
+
+  // ----------------------------------------------------------------
+  // STUDENT FEEDBACK / QR EVALUATION SYSTEM
+  // ----------------------------------------------------------------
+
+  /** Get all evaluations for a course offering (teacher-side) */
+  async getEvaluations(offeringId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations/offering/${offeringId}`);
+    return handleResponse(res);
+  },
+
+  /** Create a new evaluation form (draft) */
+  async createEvaluation(payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  /** Update an evaluation's title, dates, questions, or description */
+  async updateEvaluation(evaluationId, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations/${evaluationId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  /** Delete an evaluation and all its associated responses */
+  async deleteEvaluation(evaluationId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations/${evaluationId}`, {
+      method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  /** Publish an evaluation - generates QR code, public link, and unique evaluation ID */
+  async publishEvaluation(evaluationId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations/${evaluationId}/publish`, {
+      method: "POST",
+    });
+    return handleResponse(res);
+  },
+
+  /** Public (no auth): Fetch evaluation form by evaluationId or _id */
+  async getPublicEvaluation(evaluationId) {
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/public/evaluations/${evaluationId}`);
+    return handleResponse(res);
+  },
+
+  /** Public (no auth): Submit student feedback response */
+  async submitEvaluationResponse(evaluationId, payload) {
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/public/evaluations/${evaluationId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  /** Get analytics and all responses for an evaluation (teacher/admin) */
+  async getEvaluationAnalytics(evaluationId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/evaluations/${evaluationId}/analytics`);
+    return handleResponse(res);
   },
 };

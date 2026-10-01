@@ -4366,15 +4366,49 @@ function EditorLoadingFallback() {
 
           {/* TAB 6: CO-PO MAPPING */}
           {activeTab === 'coMapping' && (() => {
-            const coListSorted = Array.from({ length: 12 }, (_, i) => `CO${i + 1}`)
             const poListSorted = Array.from({ length: 12 }, (_, i) => `PO${i + 1}`)
 
-            // Combine DB COs + proposed COs for display
-            const allDisplayCOs = [...coListSorted]
-            proposedCOs.forEach(p => {
-              if (!allDisplayCOs.includes(p.code)) {
-                allDisplayCOs.push(p.code)
+            // Dynamically collect only active & proposed COs (hide all unused/unadded COs)
+            const activeCoSet = new Set()
+
+            if (dbCourseOutcomes && dbCourseOutcomes.length > 0) {
+              dbCourseOutcomes.forEach(c => {
+                const code = (c.code || '').replace(/\s+/g, '').toUpperCase()
+                if (code) activeCoSet.add(code)
+              })
+            }
+
+            if (coMapping && typeof coMapping === 'object') {
+              Object.keys(coMapping).forEach(coKey => {
+                const code = coKey.replace(/\s+/g, '').toUpperCase()
+                const hasMappings = Object.values(coMapping[coKey] || {}).some(v => v === 1)
+                if (hasMappings && code) {
+                  activeCoSet.add(code)
+                }
+              })
+            }
+
+            // Fallback if course has no COs defined in DB or mapping yet
+            if (activeCoSet.size === 0) {
+              const num = offering?.course?.numCOs || 4
+              for (let i = 1; i <= num; i++) {
+                activeCoSet.add(`CO${i}`)
               }
+            }
+
+            // In editing mode, dynamically include any proposed new COs
+            if (proposedCOs && proposedCOs.length > 0) {
+              proposedCOs.forEach(p => {
+                const code = (p.code || '').replace(/\s+/g, '').toUpperCase()
+                if (code) activeCoSet.add(code)
+              })
+            }
+
+            // Sort dynamically by numeric index (e.g. CO1, CO2, CO3, CO4, CO6, CO9...)
+            const allDisplayCOs = Array.from(activeCoSet).sort((a, b) => {
+              const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+              const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+              return numA - numB
             })
 
             const activeRequest = teacherRequests.find(r => r.status === 'pending' || r.status === 'in_review')
@@ -4551,6 +4585,23 @@ function EditorLoadingFallback() {
                           )
                         })}
                       </tr>
+
+                      {/* In Edit Mode: Quick Propose Row */}
+                      {isEditingCoMapping && availableCoCodes.length > 0 && (
+                        <tr className="bg-purple-50/40 border-t border-dashed border-purple-200">
+                          <td colSpan={poListSorted.length + 1} className="py-2.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                document.getElementById('propose-new-co-section')?.scrollIntoView({ behavior: 'smooth' })
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-700 hover:text-purple-900 bg-purple-100 hover:bg-purple-200/80 px-3.5 py-1.5 rounded-xl transition border border-purple-300 shadow-2xs cursor-pointer"
+                            >
+                              <Plus size={14} /> Propose &amp; Add New CO ({availableCoCodes[0]}) to Table
+                            </button>
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -4669,7 +4720,7 @@ function EditorLoadingFallback() {
 
                 {/* Proposed New CO Form (Visible in Edit Mode) */}
                 {isEditingCoMapping && (
-                  <div className="p-5 bg-purple-50/60 border border-purple-200 rounded-2xl space-y-4">
+                  <div id="propose-new-co-section" className="p-5 bg-purple-50/60 border border-purple-200 rounded-2xl space-y-4 scroll-mt-6">
                     <div className="flex items-center justify-between border-b border-purple-200 pb-3">
                       <h4 className="text-xs font-black uppercase tracking-wider text-purple-900 flex items-center gap-2">
                         <Plus size={16} />

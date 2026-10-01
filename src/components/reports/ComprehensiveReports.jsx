@@ -41,6 +41,7 @@ import {
 } from 'lucide-react'
 import SWOTAnalysisReport from './SWOTAnalysisReport'
 import SelfAssessmentReport from './SelfAssessmentReport'
+import CourseLevelCQIReport from './CourseLevelCQIReport'
 import * as XLSX from 'xlsx'
 import { calculateAllAttainments, getCOMarkAllocations } from '../../utils/comprehensiveCalculations'
 import { downloadChartAsJPG } from '../../utils/chartDownload'
@@ -2732,6 +2733,24 @@ const ComprehensiveReports = ({
                 </div>
               </div>
             </div>
+
+            {/* BAETE Criterion 9.2: Course Continuous Quality Improvement (CQI) Action Report */}
+            <CourseLevelCQIReport
+              offering={courseInfo}
+              courseCode={courseInfo?.courseCode || courseInfo?.code || 'Course'}
+              courseTitle={courseInfo?.courseName || courseInfo?.name || courseInfo?.title || 'Course'}
+              semesterName={courseInfo?.semester?.name || courseInfo?.semesterName || 'Semester'}
+              academicYear={courseInfo?.academicYear || courseInfo?.semester?.academicYear || ''}
+              sectionName={courseInfo?.section || 'A'}
+              targetPassMarks={targetPassMarks}
+              kpiCO={kpiCO}
+              kpiPO={kpiPO}
+              activeCOs={activeCOs}
+              activePOs={activePOs}
+              calculations={calculations}
+              coDescriptions={coDescriptions}
+              poDescriptions={poDescriptions}
+            />
 
             {/* CO Attainment Heatmap */}
             <div id="co-heatmap-chart" className="bg-gradient-to-br from-white to-green-50/50 backdrop-blur-lg rounded-2xl shadow-2xl p-6 border border-green-100">
