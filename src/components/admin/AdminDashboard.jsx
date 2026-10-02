@@ -1,8 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { apiService } from "../../services/apiService";
 import { formatTimeAgo, formatDetailedDateTime } from "../../utils/timeAgo";
 import AdminProfileAvatar from "../layout/AdminProfileAvatar";
+import ExcelImportModal from "./ExcelImportModal";
+import StudentBatchMigrationModal from "./StudentBatchMigrationModal";
+import StudentDeleteModal from "./StudentDeleteModal";
 import {
   Calendar,
   UserPlus,
@@ -24,6 +27,7 @@ import {
   X,
   Check,
   GitMerge,
+  GitFork,
   Sparkles,
   CheckSquare,
   ChevronUp,
@@ -41,6 +45,7 @@ import {
   UserCheck,
   User,
   Search,
+  FileSpreadsheet,
 } from "lucide-react";
 
 export default function AdminDashboard() {
@@ -153,6 +158,11 @@ export default function AdminDashboard() {
   const [studentForm, setStudentForm] = useState({ studentId: "", name: "" });
   const [editingStudentId, setEditingStudentId] = useState(null);
   const [editStudentForm, setEditStudentForm] = useState({ studentId: "", name: "" });
+  const [showExcelImportModal, setShowExcelImportModal] = useState(false);
+  const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+  const [migratingStudent, setMigratingStudent] = useState(null);
+  const [deletingStudent, setDeletingStudent] = useState(null);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
   const [sections, setSections] = useState([]);
   const [sectionsLoading, setSectionsLoading] = useState(false);
@@ -160,6 +170,41 @@ export default function AdminDashboard() {
   const [sectionForm, setSectionForm] = useState({ sectionName: "" });
   const [editingSectionId, setEditingSectionId] = useState(null);
   const [offeringSections, setOfferingSections] = useState([]);
+
+  const batchLeftColRef = useRef(null);
+  const [batchLeftColHeight, setBatchLeftColHeight] = useState(null);
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      const desktop = window.innerWidth >= 1024;
+      setIsDesktop(desktop);
+      if (batchLeftColRef.current) {
+        const h = batchLeftColRef.current.offsetHeight;
+        if (h > 0) setBatchLeftColHeight(h);
+      }
+    };
+    handleResize();
+
+    let observer = null;
+    if (batchLeftColRef.current && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        if (batchLeftColRef.current) {
+          const h = batchLeftColRef.current.offsetHeight;
+          if (h > 0) setBatchLeftColHeight(h);
+        }
+      });
+      observer.observe(batchLeftColRef.current);
+    }
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [activeTab, batches, sections, selectedBatchId, selectedSectionId]);
 
   const [offerings, setOfferings] = useState([]);
   const [offeringsLoading, setOfferingsLoading] = useState(false);
@@ -442,10 +487,12 @@ export default function AdminDashboard() {
     try {
       const data = await apiService.getSectionStudents(batchId, sectionId);
       setBatchStudents(data.students || []);
+      setSelectedStudentIds(new Set()); // clear selection on section change
     } catch (err) {
       console.error("Failed to load section students:", err);
     }
   };
+
 
   // ======================== RETAKE STUDENT HANDLERS ========================
   const openRetakeModal = async (offering) => {
@@ -1121,15 +1168,13 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteBatchStudent = async (studentId) => {
-    if (!window.confirm("Are you sure you want to delete this student from the section?")) return;
-    if (!selectedBatchId || !selectedSectionId) return;
-    try {
-      await apiService.deleteSectionStudent(selectedBatchId, selectedSectionId, studentId);
-      await fetchSectionStudents(selectedBatchId, selectedSectionId);
-    } catch (err) {
-      alert(err.message || "Failed to remove student.");
-    }
+  const handleDeleteBatchStudent = (student) => {
+    setDeletingStudent(student);
+  };
+
+  const handleBulkDeleteStudents = () => {
+    if (selectedStudentIds.size === 0) return;
+    setIsBulkDeleteModalOpen(true);
   };
 
   const startEditStudent = (student) => {
@@ -3032,9 +3077,9 @@ export default function AdminDashboard() {
         )}
 
         {activeTab === "batches" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
             {/* Left Column - Batch List & Add Batch */}
-            <div className="lg:col-span-1 space-y-6">
+            <div ref={batchLeftColRef} className="lg:col-span-1 space-y-6">
               <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-150">
                 <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-3">
                   <Users className="text-purple-600" />
@@ -3209,12 +3254,19 @@ export default function AdminDashboard() {
             {/* Right Column - Student List & Add Student */}
             <div className="lg:col-span-2">
               {selectedBatchId && selectedSectionId ? (
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-150 space-y-6">
-                  <div>
+                <div
+                  className="bg-white p-6 lg:p-7 rounded-2xl shadow-xl border border-gray-150 flex flex-col gap-4 overflow-hidden"
+                  style={
+                    isDesktop && batchLeftColHeight
+                      ? { height: `${batchLeftColHeight}px` }
+                      : { minHeight: "480px" }
+                  }
+                >
+                  <div className="flex-shrink-0">
                     <h2 className="text-2xl font-bold text-gray-800">
                       Manage Students
                     </h2>
-                    <div className="flex gap-4 mt-1">
+                    <div className="flex flex-wrap gap-4 mt-1">
                       <p className="text-purple-600 font-semibold text-sm">
                         Batch: {batches.find((b) => b._id === selectedBatchId)?.name || "Loading..."}
                       </p>
@@ -3230,9 +3282,20 @@ export default function AdminDashboard() {
                   {/* Add Student inline form */}
                   <form
                     onSubmit={handleAddStudentToBatch}
-                    className="bg-gray-50/70 p-4 rounded-xl border border-gray-200/60"
+                    className="flex-shrink-0 bg-gray-50/70 p-3.5 lg:p-4 rounded-xl border border-gray-200/60"
                   >
-                    <h3 className="font-semibold text-gray-700 mb-3 text-sm">Add Student to Section</h3>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <h3 className="font-semibold text-gray-700 text-sm">Add Student to Section</h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowExcelImportModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-green-700 text-white rounded-lg text-xs font-bold shadow-sm hover:from-emerald-700 hover:to-green-800 active:scale-95 transition-all cursor-pointer border border-emerald-600/30"
+                        title="Bulk import students from Excel/CSV file"
+                      >
+                        <FileSpreadsheet size={13} className="text-emerald-100" />
+                        Import Excel
+                      </button>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                       <div className="md:col-span-2">
                         <label className="block text-xs font-semibold text-gray-600 mb-1">
@@ -3269,7 +3332,7 @@ export default function AdminDashboard() {
                       </div>
                       <button
                         type="submit"
-                        className="md:col-span-1 w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg text-sm font-semibold shadow-md transition-all active:scale-[0.98]"
+                        className="md:col-span-1 w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg text-sm font-semibold shadow-md transition-all active:scale-[0.98] cursor-pointer"
                       >
                         Add Student
                       </button>
@@ -3277,119 +3340,202 @@ export default function AdminDashboard() {
                   </form>
 
                   {/* Students Table */}
-                  <div className="overflow-x-auto border border-gray-150 rounded-xl">
-                    <table className="w-full table-auto min-w-[500px]">
-                      <thead>
-                        <tr className="border-b bg-gray-50/70 text-gray-600 text-xs font-semibold uppercase tracking-wider">
-                          <th className="text-left py-3 px-4 w-1/3">Student ID</th>
-                          <th className="text-left py-3 px-4 w-5/12">Student Name</th>
-                          <th className="text-center py-3 px-4 w-3/12">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-150 text-sm">
-                        {batchStudents.length === 0 ? (
-                          <tr>
-                            <td
-                              colSpan="3"
-                              className="text-center py-8 text-gray-500 italic"
-                            >
-                              No students registered in this section yet.
-                            </td>
+                  <div className="flex-1 min-h-0 flex flex-col border border-gray-150 rounded-xl overflow-hidden bg-white shadow-xs">
+                    {/* Bulk-selection action bar */}
+                    {selectedStudentIds.size > 0 && (
+                      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 bg-red-50 border-b border-red-200">
+                        <span className="text-sm font-semibold text-red-700">
+                          {selectedStudentIds.size} student{selectedStudentIds.size !== 1 ? "s" : ""} selected
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedStudentIds(new Set())}
+                            className="text-xs text-gray-500 hover:text-gray-700 font-medium px-2 py-1 rounded hover:bg-gray-100 transition-all cursor-pointer"
+                          >
+                            Deselect All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleBulkDeleteStudents}
+                            className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
+                          >
+                            <Trash2 size={12} />
+                            Delete Selected ({selectedStudentIds.size})
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto custom-scrollbar">
+                      <table className="w-full table-auto min-w-[500px]">
+                        <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200 shadow-2xs">
+                          <tr className="text-gray-600 text-xs font-semibold uppercase tracking-wider">
+                            <th className="py-3 px-3 w-10 bg-gray-50">
+                              <input
+                                type="checkbox"
+                                className="w-4 h-4 rounded border-gray-300 text-purple-600 cursor-pointer"
+                                checked={
+                                  batchStudents.length > 0 &&
+                                  batchStudents.every((s) => selectedStudentIds.has(s._id))
+                                }
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedStudentIds(new Set(batchStudents.map((s) => s._id)));
+                                  } else {
+                                    setSelectedStudentIds(new Set());
+                                  }
+                                }}
+                                title="Select all students"
+                              />
+                            </th>
+                            <th className="text-left py-3 px-4 w-3/12 bg-gray-50">Student ID</th>
+                            <th className="text-left py-3 px-4 w-4/12 bg-gray-50">Student Name</th>
+                            <th className="text-center py-3 px-4 w-5/12 min-w-[210px] bg-gray-50">Actions</th>
                           </tr>
-                        ) : (
-                          batchStudents.map((student) => {
-                            const isEditing = editingStudentId === student._id;
-                            return (
-                              <tr key={student._id} className="hover:bg-gray-50/30">
-                                <td className="py-3 px-4">
-                                  {isEditing ? (
+                        </thead>
+                        <tbody className="divide-y divide-gray-150 text-sm">
+                          {batchStudents.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan="4"
+                                className="text-center py-12 text-gray-500 italic"
+                              >
+                                No students registered in this section yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            batchStudents.map((student) => {
+                              const isEditing = editingStudentId === student._id;
+                              const isSelected = selectedStudentIds.has(student._id);
+                              return (
+                                <tr
+                                  key={student._id}
+                                  className={`transition-colors ${
+                                    isSelected
+                                      ? "bg-red-50/60 hover:bg-red-50"
+                                      : "hover:bg-gray-50/30"
+                                  }`}
+                                >
+                                  <td className="py-3 px-3">
                                     <input
-                                      type="text"
-                                      value={editStudentForm.studentId}
-                                      onChange={(e) =>
-                                        setEditStudentForm({
-                                          ...editStudentForm,
-                                          studentId: e.target.value,
-                                        })
-                                      }
-                                      className="w-full border border-purple-300 focus:border-purple-500 px-2 py-1 rounded text-sm outline-none focus:ring-1 focus:ring-purple-500"
-                                      required
+                                      type="checkbox"
+                                      className="w-4 h-4 rounded border-gray-300 text-purple-600 cursor-pointer"
+                                      checked={isSelected}
+                                      onChange={(e) => {
+                                        setSelectedStudentIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (e.target.checked) next.add(student._id);
+                                          else next.delete(student._id);
+                                          return next;
+                                        });
+                                      }}
                                     />
-                                  ) : (
-                                    <span className="font-semibold text-gray-800">
-                                      {student.studentId}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-4">
-                                  {isEditing ? (
-                                    <input
-                                      type="text"
-                                      value={editStudentForm.name}
-                                      onChange={(e) =>
-                                        setEditStudentForm({
-                                          ...editStudentForm,
-                                          name: e.target.value,
-                                        })
-                                      }
-                                      className="w-full border border-purple-300 focus:border-purple-500 px-2 py-1 rounded text-sm outline-none focus:ring-1 focus:ring-purple-500"
-                                      required
-                                    />
-                                  ) : (
-                                    <span className="text-gray-700">{student.name}</span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-4 text-center">
-                                  {isEditing ? (
-                                    <div className="flex justify-center gap-1.5">
-                                      <button
-                                        onClick={() => handleUpdateBatchStudent(student._id)}
-                                        className="inline-flex items-center gap-1 bg-green-50 hover:bg-green-100 text-green-700 px-2.5 py-1 rounded-lg text-xs font-semibold border border-green-200 transition-all shadow-sm"
-                                        title="Save Student Details"
-                                      >
-                                        <Save size={12} />
-                                        Save
-                                      </button>
-                                      <button
-                                        onClick={() => setEditingStudentId(null)}
-                                        className="inline-flex items-center gap-1 bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 transition-all shadow-sm"
-                                        title="Cancel editing"
-                                      >
-                                        <X size={12} />
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex justify-center gap-1.5">
-                                      <button
-                                        onClick={() => startEditStudent(student)}
-                                        className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-600 px-2.5 py-1 rounded-lg text-xs font-semibold border border-blue-200 transition-all shadow-sm"
-                                        title="Edit Student Details"
-                                      >
-                                        <Edit2 size={12} />
-                                        Edit
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteBatchStudent(student._id)}
-                                        className="inline-flex items-center gap-1 bg-red-55/70 hover:bg-red-100 text-red-650 px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 transition-all shadow-sm"
-                                        title="Remove Student from Section"
-                                      >
-                                        <Trash2 size={12} />
-                                        Delete
-                                      </button>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editStudentForm.studentId}
+                                        onChange={(e) =>
+                                          setEditStudentForm({
+                                            ...editStudentForm,
+                                            studentId: e.target.value,
+                                          })
+                                        }
+                                        className="w-full border border-purple-300 focus:border-purple-500 px-2 py-1 rounded text-sm outline-none focus:ring-1 focus:ring-purple-500"
+                                        required
+                                      />
+                                    ) : (
+                                      <span className="font-semibold text-gray-800">
+                                        {student.studentId}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editStudentForm.name}
+                                        onChange={(e) =>
+                                          setEditStudentForm({
+                                            ...editStudentForm,
+                                            name: e.target.value,
+                                          })
+                                        }
+                                        className="w-full border border-purple-300 focus:border-purple-500 px-2 py-1 rounded text-sm outline-none focus:ring-1 focus:ring-purple-500"
+                                        required
+                                      />
+                                    ) : (
+                                      <span className="text-gray-700">{student.name}</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    {isEditing ? (
+                                      <div className="flex justify-center gap-1.5">
+                                        <button
+                                          onClick={() => handleUpdateBatchStudent(student._id)}
+                                          className="inline-flex items-center gap-1 bg-green-50 hover:bg-green-100 text-green-700 px-2.5 py-1 rounded-lg text-xs font-semibold border border-green-200 transition-all shadow-sm cursor-pointer"
+                                          title="Save Student Details"
+                                        >
+                                          <Save size={12} />
+                                          Save
+                                        </button>
+                                        <button
+                                          onClick={() => setEditingStudentId(null)}
+                                          className="inline-flex items-center gap-1 bg-gray-50 hover:bg-gray-100 text-gray-600 px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 transition-all shadow-sm cursor-pointer"
+                                          title="Cancel editing"
+                                        >
+                                          <X size={12} />
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex justify-center gap-1.5 flex-wrap">
+                                        <button
+                                          onClick={() => startEditStudent(student)}
+                                          className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-600 px-2.5 py-1 rounded-lg text-xs font-semibold border border-blue-200 transition-all shadow-sm cursor-pointer"
+                                          title="Edit Student Details"
+                                        >
+                                          <Edit2 size={12} />
+                                          Edit
+                                        </button>
+                                        <button
+                                          onClick={() => setMigratingStudent(student)}
+                                          className="inline-flex items-center gap-1 bg-purple-50 hover:bg-purple-100 text-purple-700 px-2.5 py-1 rounded-lg text-xs font-semibold border border-purple-200 transition-all shadow-sm cursor-pointer"
+                                          title="Migrate Student to another Batch (Academic Retake / Demotion)"
+                                        >
+                                          <GitFork size={12} />
+                                          Migrate
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteBatchStudent(student)}
+                                          className="inline-flex items-center gap-1 bg-red-55/70 hover:bg-red-100 text-red-650 px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 transition-all shadow-sm cursor-pointer"
+                                          title="Remove or Delete Student"
+                                        >
+                                          <Trash2 size={12} />
+                                          Delete
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               ) : selectedBatchId ? (
-                <div className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]">
+                <div
+                  className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]"
+                  style={
+                    isDesktop && batchLeftColHeight
+                      ? { height: `${batchLeftColHeight}px` }
+                      : undefined
+                  }
+                >
                   <Users className="text-gray-300 mb-4" size={48} />
                   <h3 className="text-lg font-bold text-gray-700">No Section Selected</h3>
                   <p className="text-gray-400 text-sm mt-1 max-w-sm">
@@ -3397,7 +3543,14 @@ export default function AdminDashboard() {
                   </p>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]">
+                <div
+                  className="flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl shadow-xl border border-gray-150 min-h-[300px]"
+                  style={
+                    isDesktop && batchLeftColHeight
+                      ? { height: `${batchLeftColHeight}px` }
+                      : undefined
+                  }
+                >
                   <Users className="text-gray-300 mb-4" size={48} />
                   <h3 className="text-lg font-bold text-gray-700">No Batch Selected</h3>
                   <p className="text-gray-400 text-sm mt-1 max-w-sm">
@@ -4891,6 +5044,58 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── Excel Import Modal ── */}
+      {showExcelImportModal && selectedBatchId && selectedSectionId && (
+        <ExcelImportModal
+          batchId={selectedBatchId}
+          sectionId={selectedSectionId}
+          batchName={batches.find((b) => b._id === selectedBatchId)?.name || ""}
+          sectionName={sections.find((s) => s._id === selectedSectionId)?.sectionName || ""}
+          existingStudentIds={batchStudents.map((s) => s.studentId)}
+          onSuccess={async () => {
+            await fetchSectionStudents(selectedBatchId, selectedSectionId);
+          }}
+          onClose={() => setShowExcelImportModal(false)}
+        />
+      )}
+
+      {/* ── Student Batch Migration Modal ── */}
+      {migratingStudent && (
+        <StudentBatchMigrationModal
+          isOpen={!!migratingStudent}
+          student={migratingStudent}
+          currentBatch={batches.find((b) => b._id === selectedBatchId)}
+          currentSection={sections.find((s) => s._id === selectedSectionId)}
+          batches={batches}
+          onSuccess={async (msg) => {
+            alert(msg);
+            await fetchSectionStudents(selectedBatchId, selectedSectionId);
+          }}
+          onClose={() => setMigratingStudent(null)}
+        />
+      )}
+
+      {/* ── Student Smart Delete Modal (Single or Bulk) ── */}
+      {(deletingStudent || isBulkDeleteModalOpen) && (
+        <StudentDeleteModal
+          isOpen={!!deletingStudent || isBulkDeleteModalOpen}
+          student={deletingStudent}
+          selectedStudentIds={isBulkDeleteModalOpen ? Array.from(selectedStudentIds) : []}
+          currentBatch={batches.find((b) => b._id === selectedBatchId)}
+          currentSection={sections.find((s) => s._id === selectedSectionId)}
+          onSuccess={async (msg) => {
+            alert(msg);
+            setSelectedStudentIds(new Set());
+            await fetchSectionStudents(selectedBatchId, selectedSectionId);
+          }}
+          onClose={() => {
+            setDeletingStudent(null);
+            setIsBulkDeleteModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
+

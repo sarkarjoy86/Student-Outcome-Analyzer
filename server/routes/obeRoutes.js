@@ -12,6 +12,10 @@ import Enrollment from "../models/Enrollment.js";
 import Assessment from "../models/Assessment.js";
 import User from "../models/User.js";
 import StudentMarks from "../models/StudentMarks.js";
+import StudentLongitudinalPO from "../models/StudentLongitudinalPO.js";
+import PORecommendation from "../models/PORecommendation.js";
+import SurveyResponse from "../models/SurveyResponse.js";
+import Response from "../models/Response.js";
 import QuestionMetadata from "../models/QuestionMetadata.js";
 import QuestionPaper from "../models/QuestionPaper.js";
 import COAttainment from "../models/COAttainment.js";
@@ -20,8 +24,483 @@ import COPORequest from "../models/COPORequest.js";
 import { syncAllStudentsLongitudinalPO } from "./poRecommendationRoutes.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { recalculateAttainments, isStudentInSection } from "./teacherRoutes.js";
+import multer from "multer";
+import * as XLSX from "xlsx";
 
 const router = express.Router();
+
+// ==========================================
+// INTELLIGENT EXCEL PARSER UTILITIES
+// ==========================================
+
+/**
+ * Junk words to filter out from student name detection.
+ * Any cell containing ONLY these words is ignored.
+ */
+const JUNK_NAME_WORDS = new Set([
+  'name', 'student', 'studentname', 'roll', 'rollno', 'remarks', 'signature',
+  'total', 'department', 'dept', 'baiust', 'passed', 'grade', 'result',
+  'page', 'no', 'sl', 'serial', 'sno', 'id', 'studentid', 'reg', 'registration',
+  'section', 'batch', 'course', 'semester', 'year', 'date', 'exam', 'marks',
+  'subject', 'code', 'credit', 'gpa', 'cgpa', 'fail', 'pass', 'absent',
+  'present', 'attendance', 'index', 'number', 'sr', 'sl.no', 'university',
+  'college', 'faculty', 'instructor', 'teacher', 'professor', 'head', 'dean',
+  'controller', 'prepared', 'checked', 'approved', 'signed', 'authority',
+  'official', 'list', 'detail', 'information', 'record', 'data', 'sheet',
+  'class', 'group', 'program', 'programme', 'engineering', 'photo',
+  'guardian', 'father', 'mother', 'contact', 'phone', 'mobile', 'level',
+  'term', 'status', 'admission', 'enrolled', 'action', 'actions'
+]);
+
+/**
+ * Column header keywords that indicate the STUDENT ID column.
+ * Ordered by priority — first match wins (Registration Number has top priority).
+ */
+const ID_HEADER_PATTERNS = [
+  // Top priority: explicit Registration Number headers
+  /registration\s*(number|no\.?|#)?/i,
+  /reg\.?\s*no\.?/i,
+  /reg\.?\s*number/i,
+  // Student ID synonyms
+  /student\s*id/i,
+  /studentid/i,
+  // Roll number
+  /roll\s*no\.?/i,
+  /roll\s*number/i,
+  // ID / Serial
+  /^id$/i,
+  /^id\s*no\.?$/i,
+  /^serial\s*no\.?$/i,
+  /^sl\.?\s*no\.?$/i,
+];
+
+/**
+ * Column header keywords that indicate the STUDENT NAME column.
+ */
+const NAME_HEADER_PATTERNS = [
+  /full\s*name/i,
+  /student\s*name/i,
+  /^name$/i,
+  /participant\s*name/i,
+  /candidate\s*name/i,
+];
+
+/**
+ * Column header keywords that indicate a PHONE / GUARDIAN column to SKIP.
+ * Values from these columns will never be used as Student IDs.
+ */
+const PHONE_HEADER_PATTERNS = [
+  /guardian/i,
+  /father/i,
+  /mother/i,
+  /parent/i,
+  /mobile/i,
+  /phone/i,
+  /contact/i,
+  /cell/i,
+  /tel/i,
+];
+
+/**
+ * Converts Excel scientific-notation strings (e.g. "1.12E+06") to integer strings.
+ * Also strips trailing ".0" from numeric strings.
+ */
+function normalizeNumericCell(val) {
+  const s = String(val || '').trim();
+  if (!s) return s;
+  // Scientific notation
+  if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
+    return String(Math.round(parseFloat(s)));
+  }
+  // Strip trailing ".0" or ".00"
+  return s.replace(/\.0+$/, '');
+}
+
+/**
+ * Returns true if a value looks like a phone / mobile number.
+ * Phone numbers in Bangladesh: 01XXXXXXXXX (11 digits), or stored without
+ * leading 0 as 1XXXXXXXXX (10 digits), or with country code 880XXXXXXXXXX.
+ * Internationally: typically 10-13 all-digit strings starting with 0 or +.
+ */
+function looksLikePhoneNumber(val) {
+  const clean = String(val || '').trim().replace(/[\s\-\(\)\.+]/g, '');
+  if (!/^\d+$/.test(clean)) return false;
+
+  const len = clean.length;
+
+  // Bangladesh mobile: 01XXXXXXXXX (11 digits)
+  if (len === 11 && clean.startsWith('01')) return true;
+  // Stored without leading 0: 1XXXXXXXXX (10 digits, prefix 1[3-9])
+  if (len === 10 && /^1[3-9]/.test(clean)) return true;
+  // With country code: 880XXXXXXXXXX (13 digits) or 8801XXXXXXXXX (13 digits)
+  if (len === 13 && clean.startsWith('880')) return true;
+  // With +88: +8801XXXXXXXXX parsed to 8801XXXXXXXXX = 13 digits
+  if (len === 12 && clean.startsWith('88')) return true;
+  // Generic: any 10-digit number starting with 0
+  if (len === 10 && clean.startsWith('0')) return true;
+
+  return false;
+}
+
+/**
+ * Checks if a string looks like a valid student name.
+ * Must be alphabetical + spaces/dots/hyphens, length > 3, not a junk word.
+ */
+function looksLikeName(val) {
+  if (!val || typeof val !== 'string') return false;
+  const clean = val.trim();
+  if (clean.length <= 3) return false;
+  // Must be mostly alphabetical (allow spaces, dots, hyphens, apostrophes)
+  if (!/^[A-Za-z][A-Za-z\s\.\-\']+$/.test(clean)) return false;
+  // Must not be a junk word
+  const lower = clean.toLowerCase().replace(/\s+/g, '');
+  if (JUNK_NAME_WORDS.has(lower)) return false;
+  // Must have at least 3 letter characters
+  const letters = clean.replace(/[^A-Za-z]/g, '');
+  if (letters.length < 3) return false;
+  return true;
+}
+
+/**
+ * Checks if a string looks like a valid Student ID in the heuristic fallback.
+ * Accepts university-style IDs: 5-16 alphanumeric chars, possibly with dashes.
+ * EXCLUDES phone numbers explicitly.
+ */
+function looksLikeStudentIdHeuristic(val) {
+  if (!val || typeof val !== 'string') return false;
+  const clean = val.trim().replace(/\s+/g, '');
+  if (clean.length < 5 || clean.length > 20) return false;
+
+  // Must be alphanumeric (with optional dashes/dots as separators)
+  if (!/^[A-Z0-9][A-Z0-9\-\.]+$/i.test(clean)) return false;
+
+  // Must contain at least 4 digits
+  const digits = clean.replace(/[^0-9]/g, '');
+  if (digits.length < 4) return false;
+
+  // Reject if it looks like a phone number
+  if (looksLikePhoneNumber(clean)) return false;
+
+  return true;
+}
+
+/**
+ * Scan the first ~15 rows of a sheet to find a header row.
+ * Returns { headerRowIdx, idColIdx, nameColIdx, skipColIdxSet }
+ * Returns null if no recognisable header found.
+ */
+function detectHeaderRow(rows) {
+  for (let ri = 0; ri < Math.min(15, rows.length); ri++) {
+    const row = rows[ri];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    let idColIdx = -1;
+    let idPriority = 999; // lower = higher priority
+    let nameColIdx = -1;
+    const skipColIdxSet = new Set();
+
+    for (let ci = 0; ci < row.length; ci++) {
+      const cell = String(row[ci] || '').trim();
+      if (!cell) continue;
+
+      // Check for phone/guardian columns to skip
+      if (PHONE_HEADER_PATTERNS.some(p => p.test(cell))) {
+        skipColIdxSet.add(ci);
+        continue;
+      }
+
+      // Check for ID column (pick highest priority match)
+      for (let pi = 0; pi < ID_HEADER_PATTERNS.length; pi++) {
+        if (ID_HEADER_PATTERNS[pi].test(cell)) {
+          if (pi < idPriority) {
+            idPriority = pi;
+            idColIdx = ci;
+          }
+          break;
+        }
+      }
+
+      // Check for name column
+      if (nameColIdx === -1 && NAME_HEADER_PATTERNS.some(p => p.test(cell))) {
+        nameColIdx = ci;
+      }
+    }
+
+    // Only accept this as a header row if we found at least an ID column
+    if (idColIdx !== -1) {
+      return { headerRowIdx: ri, idColIdx, nameColIdx, skipColIdxSet };
+    }
+  }
+
+  return null; // No header found
+}
+
+/**
+ * Core intelligent Excel parsing engine — two-pass strategy:
+ *
+ * PASS 1 (Header-guided): Find column headers first. If "Registration Number"
+ *   or any ID-column header is found, extract IDs strictly from that column.
+ *   Phone/guardian columns are identified and fully skipped.
+ *
+ * PASS 2 (Heuristic fallback): Used only when no recognisable header row
+ *   exists. Applies per-cell heuristics but actively excludes phone numbers.
+ */
+function smartExcelParser(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellText: false, cellDates: false });
+  const resultMap = new Map(); // keyed by normalised studentId to deduplicate
+  const sheetResults = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+
+    if (!rows || rows.length < 2) continue;
+
+    let sheetCount = 0;
+    const headerInfo = detectHeaderRow(rows);
+
+    if (headerInfo) {
+      // ── PASS 1: Header-guided extraction ───────────────────────────────
+      const { headerRowIdx, idColIdx, nameColIdx, skipColIdxSet } = headerInfo;
+
+      for (let ri = headerRowIdx + 1; ri < rows.length; ri++) {
+        const row = rows[ri];
+        if (!Array.isArray(row) || row.length === 0) continue;
+
+        // Skip completely empty rows
+        const nonEmpty = row.filter(c => String(c).trim() !== '');
+        if (nonEmpty.length === 0) continue;
+
+        // Extract ID from the designated column
+        let rawId = normalizeNumericCell(row[idColIdx]);
+        if (!rawId || rawId === '0' || rawId === '') continue;
+
+        // Extra safety: skip if the designated column somehow has a phone number
+        if (looksLikePhoneNumber(rawId)) continue;
+
+        // Extract name from designated column if available
+        let rawName = '';
+        if (nameColIdx !== -1 && row[nameColIdx] !== undefined) {
+          rawName = String(row[nameColIdx] || '').trim();
+        }
+
+        // Fallback: search other (non-skip) columns for a name
+        if (!rawName || !looksLikeName(rawName)) {
+          for (let ci = 0; ci < row.length; ci++) {
+            if (ci === idColIdx || skipColIdxSet.has(ci)) continue;
+            const s = String(row[ci] || '').trim();
+            if (looksLikeName(s)) { rawName = s; break; }
+          }
+        }
+
+        const normalizedId = rawId.toUpperCase();
+        if (!resultMap.has(normalizedId)) {
+          resultMap.set(normalizedId, {
+            student_id: rawId,
+            student_name: rawName || ''
+          });
+          sheetCount++;
+        }
+      }
+    } else {
+      // ── PASS 2: Heuristic fallback ──────────────────────────────────────
+      // Used when no structured headers are found.
+      for (const row of rows) {
+        if (!Array.isArray(row) || row.length === 0) continue;
+        const nonEmpty = row.filter(c => String(c).trim() !== '');
+        if (nonEmpty.length === 0) continue;
+
+        let detectedId = null;
+        let detectedName = null;
+
+        for (let ci = 0; ci < row.length; ci++) {
+          const cellVal = normalizeNumericCell(row[ci]);
+          if (!cellVal) continue;
+
+          if (!detectedId && looksLikeStudentIdHeuristic(cellVal)) {
+            detectedId = cellVal.replace(/\s+/g, '');
+          } else if (!detectedName && looksLikeName(cellVal)) {
+            detectedName = cellVal.trim();
+          }
+
+          if (detectedId && detectedName) break;
+        }
+
+        // Widen name search if ID found but name not
+        if (detectedId && !detectedName) {
+          for (const cellVal of row) {
+            const s = String(cellVal || '').trim();
+            if (s && looksLikeName(s)) { detectedName = s; break; }
+          }
+        }
+
+        if (detectedId) {
+          const normalizedId = detectedId.toUpperCase();
+          if (!resultMap.has(normalizedId)) {
+            resultMap.set(normalizedId, {
+              student_id: detectedId,
+              student_name: detectedName || ''
+            });
+            sheetCount++;
+          }
+        }
+      }
+    }
+
+    if (sheetCount > 0) {
+      sheetResults.push({ sheet: sheetName, count: sheetCount });
+    }
+  }
+
+  return {
+    students: Array.from(resultMap.values()),
+    sheet_results: sheetResults,
+    total_scanned: resultMap.size,
+    valid_count: Array.from(resultMap.values()).filter(s => s.student_name).length
+  };
+}
+
+
+// Multer setup for Excel files (memory storage)
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const name = (file.originalname || '').toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    if (
+      name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv') ||
+      mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('csv') ||
+      mime === 'application/octet-stream'
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel (.xlsx, .xls) and CSV files are allowed.'));
+    }
+  }
+});
+
+// ==========================================
+// POST /api/admin/students/parse-excel
+// Parses an uploaded Excel/CSV file and returns detected student records
+// ==========================================
+router.post('/admin/students/parse-excel', requireAuth, (req, res, next) => {
+  excelUpload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File too large. Maximum size is 10MB.' });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'No file uploaded.' });
+    }
+
+    const result = smartExcelParser(req.file.buffer);
+
+    if (!result.students || result.students.length === 0) {
+      return res.status(422).json({
+        message: 'Could not find valid Student ID/Name patterns in the file. Please check the uploaded file.',
+        total_scanned: 0,
+        valid_count: 0,
+        students: []
+      });
+    }
+
+    return res.status(200).json({
+      message: `Successfully parsed ${result.students.length} student records.`,
+      students: result.students,
+      sheet_results: result.sheet_results,
+      total_scanned: result.total_scanned,
+      valid_count: result.valid_count
+    });
+  } catch (error) {
+    console.error('[Excel Parse Error]:', error);
+    res.status(500).json({ message: 'Failed to parse Excel file.', error: error.message });
+  }
+});
+
+// ==========================================
+// POST /api/admin/batches/:batchId/sections/:sectionId/students/bulk
+// Bulk-inserts parsed students into the specified batch/section
+// ==========================================
+router.post('/admin/batches/:batchId/sections/:sectionId/students/bulk', requireAuth, async (req, res) => {
+  try {
+    const { batchId, sectionId } = req.params;
+    const { students } = req.body;
+
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ message: 'No students provided for bulk import.' });
+    }
+
+    const batch = await Batch.findById(batchId);
+    if (!batch) return res.status(404).json({ message: 'Batch not found.' });
+
+    const section = await Section.findOne({ _id: sectionId, batchId });
+    if (!section) return res.status(404).json({ message: 'Section not found in this batch.' });
+
+    const inserted = [];
+    const skipped = [];
+    const updated = [];
+
+    for (const s of students) {
+      const rawId = String(s.student_id || '').trim();
+      const rawName = String(s.student_name || '').trim();
+
+      if (!rawId) {
+        skipped.push({ student_id: rawId, student_name: rawName, reason: 'Missing student ID' });
+        continue;
+      }
+
+      try {
+        const existing = await Student.findOne({ studentId: rawId });
+        if (existing) {
+          // Check if already in THIS section
+          if (
+            existing.sectionId?.toString() === sectionId &&
+            existing.batchId?.toString() === batchId
+          ) {
+            skipped.push({ student_id: rawId, student_name: rawName, reason: 'Already exists in this section' });
+            continue;
+          }
+          // Update to this section if they're being reassigned
+          existing.studentName = rawName || existing.studentName;
+          existing.batchId = batch._id;
+          existing.sectionId = section._id;
+          await existing.save();
+          updated.push({ student_id: rawId, student_name: rawName });
+        } else {
+          await Student.create({
+            studentId: rawId,
+            studentName: rawName || 'Unknown',
+            batchId: batch._id,
+            sectionId: section._id
+          });
+          inserted.push({ student_id: rawId, student_name: rawName });
+        }
+      } catch (rowErr) {
+        skipped.push({ student_id: rawId, student_name: rawName, reason: rowErr.message });
+      }
+    }
+
+    return res.status(200).json({
+      message: `Bulk import complete. Inserted: ${inserted.length}, Updated: ${updated.length}, Skipped: ${skipped.length}.`,
+      inserted_count: inserted.length,
+      updated_count: updated.length,
+      skipped_count: skipped.length,
+      inserted,
+      updated,
+      skipped
+    });
+  } catch (error) {
+    console.error('[Bulk Import Error]:', error);
+    res.status(500).json({ message: 'Bulk import failed.', error: error.message });
+  }
+});
 
 async function ensureSisterMidFinalInheritance(targetOfferingId) {
   try {
@@ -850,23 +1329,377 @@ router.put("/batches/:batchId/sections/:sectionId/students/:studentId", requireA
   }
 });
 
-// Delete student from section
+/**
+ * Permanently delete a student and cascade delete all their related records
+ * (Enrollments, StudentMarks, StudentLongitudinalPO, PORecommendation, SurveyResponses)
+ * to prevent orphaned junk data in MongoDB.
+ */
+export async function permanentlyDeleteStudent(studentDocOrId) {
+  if (!studentDocOrId) return null;
+  let student;
+  if (typeof studentDocOrId === "string" || studentDocOrId.constructor?.name === "ObjectId") {
+    student = await Student.findById(studentDocOrId);
+  } else {
+    student = studentDocOrId;
+  }
+  if (!student) return null;
+
+  const studentObjId = student._id;
+  const studentCode = student.studentId;
+
+  // Cascade clean-up to prevent any orphaned junk data in the database
+  await Promise.allSettled([
+    Enrollment.deleteMany({ student: studentObjId }),
+    StudentMarks.deleteMany({ student: studentObjId }),
+    StudentLongitudinalPO.deleteMany({
+      $or: [
+        { student: studentObjId },
+        ...(studentCode ? [{ studentId: studentCode }] : []),
+      ],
+    }),
+    PORecommendation.deleteMany({
+      $or: [
+        { student: studentObjId },
+        ...(studentCode ? [{ studentIdStr: studentCode }] : []),
+      ],
+    }),
+    SurveyResponse.deleteMany({ studentId: studentObjId }),
+    Response.deleteMany({ studentId: studentObjId }),
+  ]);
+
+  // Permanently delete the student document itself from database
+  await Student.findByIdAndDelete(studentObjId);
+  return student;
+}
+
+/**
+ * Permanently delete multiple students and cascade delete their related records in bulk.
+ */
+export async function permanentlyDeleteStudents(studentsListOrIds) {
+  if (!Array.isArray(studentsListOrIds) || studentsListOrIds.length === 0) return 0;
+
+  let students;
+  if (typeof studentsListOrIds[0] === "string" || studentsListOrIds[0].constructor?.name === "ObjectId") {
+    students = await Student.find({ _id: { $in: studentsListOrIds } });
+  } else {
+    students = studentsListOrIds;
+  }
+
+  if (!students || students.length === 0) return 0;
+
+  const objIds = students.map((s) => s._id);
+  const studentCodes = students.map((s) => s.studentId).filter(Boolean);
+
+  await Promise.allSettled([
+    Enrollment.deleteMany({ student: { $in: objIds } }),
+    StudentMarks.deleteMany({ student: { $in: objIds } }),
+    StudentLongitudinalPO.deleteMany({
+      $or: [
+        { student: { $in: objIds } },
+        ...(studentCodes.length > 0 ? [{ studentId: { $in: studentCodes } }] : []),
+      ],
+    }),
+    PORecommendation.deleteMany({
+      $or: [
+        { student: { $in: objIds } },
+        ...(studentCodes.length > 0 ? [{ studentIdStr: { $in: studentCodes } }] : []),
+      ],
+    }),
+    SurveyResponse.deleteMany({ studentId: { $in: objIds } }),
+    Response.deleteMany({ studentId: { $in: objIds } }),
+  ]);
+
+  const result = await Student.deleteMany({ _id: { $in: objIds } });
+  return result.deletedCount ?? students.length;
+}
+
+// Get student academic summary (marks, enrollments, migration history)
+router.get("/students/:studentId/academic-summary", requireAuth, async (req, res) => {
+  try {
+    const student = await Student.findById(req.params.studentId);
+    if (!student) {
+      return res.status(404).json({ message: "Student not found." });
+    }
+
+    const [marksCount, enrollments] = await Promise.all([
+      StudentMarks.countDocuments({ student: student._id }),
+      Enrollment.find({ student: student._id })
+        .populate({
+          path: "courseOffering",
+          populate: [
+            { path: "course", select: "courseCode courseTitle code title" },
+            { path: "batch", select: "name" },
+            { path: "semester", select: "name" },
+          ],
+        })
+        .lean(),
+    ]);
+
+    const hasHistory = marksCount > 0 || enrollments.length > 0;
+
+    res.status(200).json({
+      studentId: student.studentId,
+      studentName: student.studentName,
+      status: student.status || "active",
+      hasHistory,
+      marksCount,
+      enrollmentsCount: enrollments.length,
+      enrollments: enrollments.map((e) => ({
+        id: e._id,
+        type: e.enrollmentType,
+        courseCode: e.courseOffering?.course?.courseCode || e.courseOffering?.course?.code || "N/A",
+        courseTitle: e.courseOffering?.course?.courseTitle || e.courseOffering?.course?.title || "N/A",
+        batchName: e.courseOffering?.batch?.name || "N/A",
+        section: e.courseOffering?.section || "N/A",
+        semesterName: e.courseOffering?.semester?.name || "N/A",
+      })),
+      migrationHistory: student.migrationHistory || [],
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching student academic summary", error: error.message });
+  }
+});
+
+// Student Batch Migration (Retake / Transfer to another Batch or Section)
+router.post("/students/:studentId/migrate", requireAuth, async (req, res) => {
+  try {
+    const { targetBatchId, targetSectionId, reason } = req.body;
+    if (!targetBatchId || !targetSectionId) {
+      return res.status(400).json({ message: "Target batch and section are required." });
+    }
+
+    const student = await Student.findById(req.params.studentId);
+    if (!student) {
+      return res.status(404).json({ message: "Student not found." });
+    }
+
+    const [targetBatch, targetSection, currentBatch, currentSection] = await Promise.all([
+      Batch.findById(targetBatchId),
+      Section.findOne({ _id: targetSectionId, batchId: targetBatchId }),
+      student.batchId ? Batch.findById(student.batchId) : null,
+      student.sectionId ? Section.findById(student.sectionId) : null,
+    ]);
+
+    if (!targetBatch) {
+      return res.status(404).json({ message: "Target batch not found." });
+    }
+    if (!targetSection) {
+      return res.status(404).json({ message: "Target section not found in selected batch." });
+    }
+
+    if (
+      student.batchId?.toString() === targetBatchId.toString() &&
+      student.sectionId?.toString() === targetSectionId.toString()
+    ) {
+      return res.status(400).json({ message: "Student is already in this batch and section." });
+    }
+
+    // Academic Retake Policy: Students cannot migrate backward into senior/older batches
+    if (currentBatch?.name && targetBatch?.name) {
+      const extractNum = (str) => {
+        const m = String(str).match(/\d+/);
+        return m ? parseInt(m[0], 10) : null;
+      };
+      const curNum = extractNum(currentBatch.name);
+      const tgtNum = extractNum(targetBatch.name);
+      if (curNum !== null && tgtNum !== null && tgtNum < curNum) {
+        return res.status(400).json({
+          message: `Cannot migrate backward to senior Batch ${targetBatch.name}. Academic retakes only allow migration to junior/subsequent batches (Batch ${curNum} or later).`,
+        });
+      }
+    }
+
+    // Record migration history while preserving all existing course outcomes & grades
+    student.migrationHistory = student.migrationHistory || [];
+    student.migrationHistory.push({
+      fromBatchId: student.batchId || null,
+      fromSectionId: student.sectionId || null,
+      toBatchId: targetBatch._id,
+      toSectionId: targetSection._id,
+      fromBatchName: currentBatch?.name || "Unassigned",
+      fromSectionName: currentSection?.sectionName || "Unassigned",
+      toBatchName: targetBatch.name,
+      toSectionName: targetSection.sectionName,
+      reason: reason || "Semester Retake / Batch Migration",
+      migratedAt: new Date(),
+      migratedBy: req.user?._id || null,
+    });
+
+    student.batchId = targetBatch._id;
+    student.sectionId = targetSection._id;
+    student.status = "active";
+    await student.save();
+
+    // Log Activity
+    try {
+      await logActivity(
+        req.user?._id,
+        "STUDENT_MIGRATED",
+        `Migrated student ${student.studentName} (${student.studentId}) from Batch ${currentBatch?.name || 'N/A'} (Sec ${currentSection?.sectionName || 'N/A'}) to Batch ${targetBatch.name} (Sec ${targetSection.sectionName}). Reason: ${reason || 'N/A'}`
+      );
+    } catch (err) {
+      console.warn("Could not log activity:", err.message);
+    }
+
+    res.status(200).json({
+      message: `Student successfully migrated to Batch ${targetBatch.name} (Section ${targetSection.sectionName}). All past coursework and CO-PO attainment history remain fully preserved.`,
+      student,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error migrating student", error: error.message });
+  }
+});
+
+// Delete student from section with smart preservation mode:
+// mode: 'auto' (default: archives if past marks exist, purges if fresh) | 'archive' | 'purge'
 router.delete("/batches/:batchId/sections/:sectionId/students/:studentId", requireAuth, async (req, res) => {
   try {
     const student = await Student.findOne({
       _id: req.params.studentId,
       batchId: req.params.batchId,
-      sectionId: req.params.sectionId
+      sectionId: req.params.sectionId,
     });
     if (!student) {
       return res.status(404).json({ message: "Student not found in this section." });
     }
-    student.batchId = null;
-    student.sectionId = null;
-    await student.save();
-    res.status(200).json({ message: "Student removed from section successfully." });
+
+    const mode = req.query.mode || req.body?.mode || "auto";
+
+    if (mode === "purge") {
+      // Force permanent purge (removes student and all cascade records)
+      await permanentlyDeleteStudent(student);
+      return res.status(200).json({
+        message: "Student and all associated records permanently purged from database.",
+        action: "purged",
+      });
+    }
+
+    if (mode === "archive") {
+      // Archive: remove from active section while protecting past marks & attainments
+      student.batchId = null;
+      student.sectionId = null;
+      student.status = "archived";
+      await student.save();
+      return res.status(200).json({
+        message: "Student removed from active section. Historical academic records and CO-PO attainments have been safely preserved.",
+        action: "archived",
+      });
+    }
+
+    // mode === 'auto'
+    const hasMarks = await StudentMarks.exists({ student: student._id });
+    if (hasMarks) {
+      // Protect teacher CO-PO calculations: archive instead of corrupting historical data
+      student.batchId = null;
+      student.sectionId = null;
+      student.status = "archived";
+      await student.save();
+      return res.status(200).json({
+        message: "Student removed from active section. Historical course marks and CO-PO attainments are preserved.",
+        action: "archived",
+      });
+    } else {
+      // No academic history: safely purge to prevent junk accumulation
+      await permanentlyDeleteStudent(student);
+      return res.status(200).json({
+        message: "Student permanently deleted from database (no historical coursework found).",
+        action: "purged",
+      });
+    }
   } catch (error) {
-    res.status(500).json({ message: "Error removing student from section", error: error.message });
+    res.status(500).json({ message: "Error deleting student", error: error.message });
+  }
+});
+
+// Bulk delete students from section with smart preservation mode
+router.post("/batches/:batchId/sections/:sectionId/students/bulk-delete", requireAuth, async (req, res) => {
+  try {
+    const { studentIds, mode = "auto" } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ message: "No student IDs provided for deletion." });
+    }
+
+    const students = await Student.find({
+      _id: { $in: studentIds },
+      batchId: req.params.batchId,
+      sectionId: req.params.sectionId,
+    });
+
+    if (students.length === 0) {
+      return res.status(404).json({ message: "No matching students found in this section." });
+    }
+
+    let archivedCount = 0;
+    let purgedCount = 0;
+
+    if (mode === "purge") {
+      purgedCount = await permanentlyDeleteStudents(students);
+    } else if (mode === "archive") {
+      const objIds = students.map((s) => s._id);
+      await Student.updateMany(
+        { _id: { $in: objIds } },
+        { $set: { batchId: null, sectionId: null, status: "archived" } }
+      );
+      archivedCount = students.length;
+    } else {
+      // Auto mode: partition into with marks vs without marks
+      const studentObjIds = students.map((s) => s._id);
+      const studentsWithMarksRaw = await StudentMarks.distinct("student", {
+        student: { $in: studentObjIds },
+      });
+      const studentsWithMarksSet = new Set(studentsWithMarksRaw.map((id) => id.toString()));
+
+      const toArchive = [];
+      const toPurge = [];
+
+      for (const st of students) {
+        if (studentsWithMarksSet.has(st._id.toString())) {
+          toArchive.push(st._id);
+        } else {
+          toPurge.push(st);
+        }
+      }
+
+      if (toArchive.length > 0) {
+        await Student.updateMany(
+          { _id: { $in: toArchive } },
+          { $set: { batchId: null, sectionId: null, status: "archived" } }
+        );
+        archivedCount = toArchive.length;
+      }
+
+      if (toPurge.length > 0) {
+        purgedCount = await permanentlyDeleteStudents(toPurge);
+      }
+    }
+
+    res.status(200).json({
+      message: `Operation complete. ${purgedCount} student(s) purged, ${archivedCount} student(s) archived with historical marks preserved.`,
+      purgedCount,
+      archivedCount,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error bulk deleting students", error: error.message });
+  }
+});
+
+// Clean up any orphaned students in the database
+router.post("/students/cleanup-orphans", requireAuth, async (req, res) => {
+  try {
+    const orphans = await Student.find({
+      $or: [
+        { batchId: null },
+        { batchId: { $exists: false } },
+      ],
+      status: { $ne: "archived" }, // Do not purge intentional archived students
+    });
+    const deletedCount = await permanentlyDeleteStudents(orphans);
+    res.status(200).json({
+      message: `Cleaned up ${deletedCount} orphaned junk student(s) from database.`,
+      deletedCount,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error cleaning up orphan students", error: error.message });
   }
 });
 
@@ -979,20 +1812,46 @@ router.delete(
           .status(404)
           .json({ message: "Student not found in this batch." });
       }
-      student.batchId = null;
-      student.sectionId = null;
-      await student.save();
+
+      await permanentlyDeleteStudent(student);
+
       res
         .status(200)
-        .json({ message: "Student removed from batch successfully." });
+        .json({ message: "Student deleted permanently from database." });
     } catch (error) {
       res.status(500).json({
-        message: "Error removing student from batch",
+        message: "Error deleting student from batch",
         error: error.message,
       });
     }
   },
 );
+
+router.post("/batches/:batchId/students/bulk-delete", requireAuth, async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ message: "No student IDs provided for deletion." });
+    }
+
+    const students = await Student.find({
+      _id: { $in: studentIds },
+      batchId: req.params.batchId,
+    });
+
+    if (students.length === 0) {
+      return res.status(404).json({ message: "No matching students found in this batch." });
+    }
+
+    const deletedCount = await permanentlyDeleteStudents(students);
+    res.status(200).json({
+      message: `Successfully deleted ${deletedCount} student(s) permanently from database.`,
+      deletedCount,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error bulk deleting batch students", error: error.message });
+  }
+});
 
 // ==========================================
 // COURSE OFFERING ROUTES

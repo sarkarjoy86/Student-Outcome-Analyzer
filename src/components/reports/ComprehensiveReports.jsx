@@ -21,6 +21,7 @@ import {
   AreaChart,
   Area,
   ReferenceLine,
+  LabelList,
 } from 'recharts'
 import {
   Download,
@@ -117,6 +118,53 @@ const formatScorerNames = (names, assessmentName, isHighest) => {
   }
   return names.join(', ')
 }
+
+// Custom vertical percentage label rendered inside the upper section of active CO/PO bars
+const renderVerticalBarLabel = (textColor = '#ffffff', withShadow = false) => {
+  return function BarVerticalLabel(props) {
+    const { x, y, width, height, value } = props
+    let val = value
+    if (Array.isArray(val)) {
+      val = val[1] ?? val[0]
+    }
+    if (val === undefined || val === null || isNaN(val)) return null
+    const numVal = parseFloat(val)
+    if (numVal <= 0) return null
+
+    // If the bar is too short or too narrow to cleanly fit the label, omit to prevent overflow
+    if (!height || height < 34 || !width || width < 14) return null
+
+    const formatted = `${numVal.toFixed(1)}%`
+    const cx = x + width / 2
+    // y is the top edge of the bar. For a bar with 8px corner radius,
+    // placing center at y + 24 places the 30px label neatly between y + 9 and y + 39 (inside the top of the bar).
+    const cy = y + Math.min(24, Math.max(16, height / 2))
+
+    return (
+      <text
+        x={cx}
+        y={cy}
+        fill={textColor}
+        textAnchor="middle"
+        dominantBaseline="central"
+        transform={`rotate(-90, ${cx}, ${cy})`}
+        style={{
+          fontSize: width < 26 ? '9.5px' : '11px',
+          fontWeight: 700,
+          letterSpacing: '0.02em',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          filter: withShadow ? 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.5))' : 'none',
+        }}
+      >
+        {formatted}
+      </text>
+    )
+  }
+}
+
+const renderPassMarksVerticalLabel = renderVerticalBarLabel('#ffffff', true)
+const renderKPIVerticalLabel = renderVerticalBarLabel('#0f172a', false)
 
 const ComprehensiveReports = ({
   students = [],
@@ -2436,7 +2484,14 @@ const ComprehensiveReports = ({
                         strokeWidth={1}
                         barSize={coChartActiveOnly && activeCOs.length > 0 ? (activeCOs.length <= 3 ? 44 : activeCOs.length <= 5 ? 38 : activeCOs.length <= 8 ? 28 : 22) : undefined}
                         maxBarSize={48}
-                      />
+                      >
+                        {coChartActiveOnly && activeCOs.length > 0 && (
+                          <LabelList
+                            dataKey={`Above Pass Marks (${targetPassMarks}%)`}
+                            content={renderPassMarksVerticalLabel}
+                          />
+                        )}
+                      </Bar>
                       <Bar
                         isAnimationActive={true}
                         animationDuration={1100}
@@ -2449,7 +2504,14 @@ const ComprehensiveReports = ({
                         strokeWidth={1}
                         barSize={coChartActiveOnly && activeCOs.length > 0 ? (activeCOs.length <= 3 ? 44 : activeCOs.length <= 5 ? 38 : activeCOs.length <= 8 ? 28 : 22) : undefined}
                         maxBarSize={48}
-                      />
+                      >
+                        {coChartActiveOnly && activeCOs.length > 0 && (
+                          <LabelList
+                            dataKey={`Above KPI (${kpiCO}%)`}
+                            content={renderKPIVerticalLabel}
+                          />
+                        )}
+                      </Bar>
                       <Legend wrapperStyle={{ paddingTop: '16px' }} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -2596,7 +2658,14 @@ const ComprehensiveReports = ({
                         strokeWidth={1}
                         barSize={poChartActiveOnly && activePOs.length > 0 ? (activePOs.length <= 3 ? 44 : activePOs.length <= 5 ? 38 : activePOs.length <= 8 ? 28 : 22) : undefined}
                         maxBarSize={48}
-                      />
+                      >
+                        {poChartActiveOnly && activePOs.length > 0 && (
+                          <LabelList
+                            dataKey={`Above Pass Marks (${targetPassMarks}%)`}
+                            content={renderPassMarksVerticalLabel}
+                          />
+                        )}
+                      </Bar>
                       <Bar
                         isAnimationActive={true}
                         animationDuration={1100}
@@ -2609,7 +2678,14 @@ const ComprehensiveReports = ({
                         strokeWidth={1}
                         barSize={poChartActiveOnly && activePOs.length > 0 ? (activePOs.length <= 3 ? 44 : activePOs.length <= 5 ? 38 : activePOs.length <= 8 ? 28 : 22) : undefined}
                         maxBarSize={48}
-                      />
+                      >
+                        {poChartActiveOnly && activePOs.length > 0 && (
+                          <LabelList
+                            dataKey={`Above KPI (${kpiPO}%)`}
+                            content={renderKPIVerticalLabel}
+                          />
+                        )}
+                      </Bar>
                       <Legend wrapperStyle={{ paddingTop: '16px' }} />
                     </BarChart>
                   </ResponsiveContainer>

@@ -58,4 +58,6 @@ ml-service/checkpoints/
 *.onnx
 huggingface/
 
-
+# Data exports and text logs
+data/
+*.txt

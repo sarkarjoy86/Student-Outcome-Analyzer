@@ -1,4 +1,4 @@
-﻿const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
+const DEFAULT_PROD_API_URL = "https://student-outcome-analyzer-api.onrender.com";
 export const DEFAULT_PROD_ML_URL = "https://student-outcome-analyzer-ml.onrender.com";
 
 export function getApiBaseUrl() {
@@ -1043,9 +1043,73 @@ export const apiService = {
     return handleResponse(res);
   },
 
-  async deleteSectionStudent(batchId, sectionId, studentId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students/${studentId}`, {
+  async deleteSectionStudent(batchId, sectionId, studentId, mode = "auto") {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students/${studentId}?mode=${encodeURIComponent(mode)}`, {
       method: "DELETE",
+    });
+    return handleResponse(res);
+  },
+
+  async bulkDeleteSectionStudents(batchId, sectionId, studentIds, mode = "auto") {
+    const res = await fetchWithDefaults(`${API_BASE}/api/batches/${batchId}/sections/${sectionId}/students/bulk-delete`, {
+      method: "POST",
+      body: JSON.stringify({ studentIds, mode }),
+    });
+    return handleResponse(res);
+  },
+
+  async getStudentAcademicSummary(studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/academic-summary`, {
+      method: "GET",
+    });
+    return handleResponse(res);
+  },
+
+  async migrateStudent(studentId, payload) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/migrate`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async cleanupOrphanStudents() {
+    const res = await fetchWithDefaults(`${API_BASE}/api/students/cleanup-orphans`, {
+      method: "POST",
+    });
+    return handleResponse(res);
+  },
+
+  // Intelligent Excel Parser Endpoints
+  async parseExcelStudents(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const API_BASE_URL = getApiBaseUrl();
+
+    // Build auth headers (exclude Content-Type so browser sets multipart boundary)
+    const token = localStorage.getItem("obe-auth-token");
+    const adminSession = localStorage.getItem("obe-admin-session") === "true";
+    const authHeaders = {};
+    if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+    if (adminSession) {
+      authHeaders["x-admin-email"] = "admin@gmail.com";
+      authHeaders["x-admin-password"] = "Admin@123";
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/admin/students/parse-excel`, {
+      method: "POST",
+      credentials: "include",
+      headers: authHeaders,
+      body: formData,
+    });
+    return handleResponse(res);
+  },
+
+
+  async bulkImportSectionStudents(batchId, sectionId, students) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/admin/batches/${batchId}/sections/${sectionId}/students/bulk`, {
+      method: "POST",
+      body: JSON.stringify({ students }),
     });
     return handleResponse(res);
   },
