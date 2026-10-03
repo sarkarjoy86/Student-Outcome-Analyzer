@@ -1022,10 +1022,10 @@ npm run deploy
 
 **Copyright (c) 2026 Joy Sarkar & Development Team. All Rights Reserved.**
 
-This software and its documentation are proprietary and confidential academic intellectual property developed as a Bachelor Capstone Project. Unauthorized copying, distribution, modification, reverse engineering, public deployment, or commercial exploitation is strictly prohibited without explicit written permission from the copyright holders. See `LICENSE` for complete terms.
+This software and its documentation are proprietary academic intellectual property developed as an Undergraduate Final Year Senior Capstone Project by **Joy Sarkar (Team Leader)** and his project team members. Unauthorized copying, distribution, modification, reverse engineering, public deployment, or commercial exploitation is strictly prohibited without explicit written permission from the copyright holders. See `LICENSE` for complete terms.
 
 ---
 
 <p align="center">
-  <b>Developed with ❤️ by Joy Sarkar & His Team for Outcome-Based Education (OBE) Excellence & Accreditation Automation.</b>
+  <b>Developed by Joy Sarkar (Team Leader) & Project Team Members as a Bachelor Final Year Capstone Project for Outcome-Based Education (OBE) Excellence & Accreditation Automation.</b>
 </p>
