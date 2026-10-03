@@ -552,39 +552,119 @@ Generates comprehensive institutional Excel workbooks matching official universi
 
 ## 🎯 4. Student PO Recommendation & Batch CQI Governance
 
-Beyond simple GPA metrics, the **PO Recommendation System** tracks a student’s true engineering competence across all 12 Washington Accord Program Outcomes throughout their academic degree.
+Beyond simple GPA metrics, the **PO Recommendation & Batch Governance Suite** evaluates true engineering competence across all 12 Washington Accord Program Outcomes over a student's entire 4-year degree, while providing department heads with macro-level cohort quality improvement tools.
+
+### 🚀 Ending the 4-Year Academic Tracking Nightmare
+Historically, tracking a student's longitudinal competency across 40+ courses over 8 semesters was virtually impossible. Faculty members had no way of knowing whether a graduating senior with a 3.6 CGPA actually possessed adequate competence in critical engineering attributes like *Problem Analysis (PO2)*, *Modern Tool Usage (PO5)*, or *Ethics (PO8)*. Computing whole-batch graduate profiles required cross-referencing thousands of disconnected spreadsheet rows.
+
+Our platform unifies longitudinal student records into two specialized operating modes: **Individual Student Competency Profiling** and **Whole-Batch PO Overview & BAETE Criterion 3/9 Faculty Review**.
 
 ```mermaid
-flowchart LR
-    A[Student Academic History\nCompleted Courses & Marks] --> B(PO Attainment Engine\nAcross 12 Washington Accord Outcomes)
-    B --> C{Eligibility Evaluation\nCGPA >= 3.50 & All POs >= 60%}
-    C -->|Criteria Met| D[Eligible for Faculty Recommendation\nOfficial Dean Endorsement]
-    C -->|Competency Deficit| E[Ineligible Status\nDeficit Gap Analysis]
-    E --> F[Critical PO Gap Alerts\ne.g., PO1: -11.7%, PO2: -5.4%]
-    F --> G[Data-Backed Intervention\nCareer & Academic Track Guidance]
-    D --> H[Export PO Transcript PDF]
-    G --> H
-```
+graph TB
+    subgraph DataSources ["4-Year Longitudinal Academic Records"]
+        Hist["Completed Semester Courses\n(40+ Courses over 8 Semesters)"]
+        MarksData["Continuous & Term Exam Marks\n(Direct Question-to-CO Mappings)"]
+        BatchRoster["Graduating Batch Cohort\n(Regular Cohort vs. Retake Students)"]
+    end
 
-### 4.1 Individual Longitudinal Competency Profiling
-- **Comprehensive Competency Scorecard**: Displays Cumulative GPA (e.g., *3.62 / 4.00*), Overall PO Average (e.g., *74.2%*), and a Composite Recommendation Score (0–100).
-- **Configurable Target Threshold Slider**: Adjust institutional recommendation benchmarks (e.g., *60% Target Threshold*).
-- **Automated Eligibility Decision**: Formally evaluates if a student meets the dual standard for official faculty endorsements (**CGPA $\ge$ 3.50 and All POs $\ge$ 60%**).
-- **Competency Gap Deficit Detection**: Pinpoints exact areas of underperformance with negative percentage margins (e.g., *PO2 Problem Analysis: 54.6% vs 60.0% Target → Deficit: -5.4%*).
-- **Printable Competency Transcript**: Generates an official, print-ready PDF transcript of the student's complete Washington Accord competency profile.
+    subgraph DualTrackEngine ["PO Recommendation & Longitudinal Engine"]
+        subgraph TrackA ["Track A: Individual Student Competency Profiling"]
+            IndCalc["12-PO Long-Term Aggregation\n(Course Weight & Credit Integration)"]
+            IndRadar["Visual Radar & Bar Profile\n(Dual Metric vs. Target Threshold)"]
+            Eligibility["Dual Criteria Check\n(CGPA >= 3.50 & All 12 POs >= 60%)"]
+            GapAlerts["Critical Gap Deficit Alerts\n(e.g., PO1: -11.7%, PO2: -5.4%)"]
+            CareerGuidance["Data-Backed Career Guidance\n(Specialization & Remedial Advice)"]
+        end
+
+        subgraph TrackB ["Track B: Whole-Batch PO Overview & BAETE Criterion 3 & 9 Review"]
+            BatchCohort["Batch-Wide Aggregate Engine\n(Cohort Isolation: Regular vs Retake)"]
+            Clusters["Washington Accord Clusters\n(Technical, Modern Practice, Professional)"]
+            Tiers["4-Tier Performance Breakdown\n(Exemplary, Competent, Developing, At-Risk)"]
+            CourseSim["Dynamic Course Filter Mode\n(Curriculum Impact Simulation)"]
+            AICQI["AI Batch CQI Diagnosis\n(Root Cause Analysis & Action Plan)"]
+            MinutesGen["Departmental Meeting Minutes\n(Agenda, Attendees, Action Items)"]
+        end
+    end
+
+    subgraph Deliverables ["Accreditation & Career Deliverables"]
+        PDFTranscript["📑 Official PO Transcript (PDF)\n(Dean's Endorsement Block)"]
+        WordMinutes["📄 Batch CQI Meeting Minutes (.docx)\n(HOD & Coordinator Signatures)"]
+    end
+
+    Hist --> IndCalc
+    MarksData --> IndCalc
+    Hist --> BatchCohort
+    MarksData --> BatchCohort
+    BatchRoster --> BatchCohort
+
+    IndCalc --> IndRadar --> Eligibility
+    Eligibility -->|Passed| CareerGuidance
+    Eligibility -->|Deficit| GapAlerts --> CareerGuidance
+    CareerGuidance --> PDFTranscript
+
+    BatchCohort --> Clusters
+    BatchCohort --> Tiers
+    BatchCohort --> CourseSim
+    Clusters --> AICQI
+    Tiers --> AICQI
+    AICQI --> MinutesGen --> WordMinutes
+```
 
 ---
 
-### 4.2 Batch PO Recommendation & BAETE Criterion 3/9 Faculty Review
-- **Washington Accord Outcome Clusters**: Aggregates batch-wide attainment across three core engineering pillars:
-  - 🔷 **Technical Foundations (PO1–PO4)**: Engineering Knowledge, Problem Analysis, Design of Solutions, Investigation.
-  - 🟢 **Modern Engineering & Society (PO5–PO8)**: Modern Tool Usage, Engineer & Society, Environment, Ethics.
-  - 🔶 **Professional & Lifelong Skills (PO9–PO12)**: Teamwork, Communication, Project Management, Lifelong Learning.
-- **Cohort Isolation (Regular vs. Cross-Batch Retakes)**: Automatically separates regular batch cohort students from senior/junior retake students to prevent sample contamination in batch accreditation reviews.
-- **Batch CQI Faculty Review & Meeting Minutes Modal (`BatchCQIFacultyMeetingModal.jsx`)**:
-  - Automatically synthesizes official departmental Continuous Quality Improvement meeting minutes.
-  - Outlines meeting agenda, participating faculty, cluster achievement summaries, root cause analyses, and approved corrective action commitments.
-  - Exports official **Microsoft Word (.docx)** meeting minutes with signature blocks for Department Head and Accreditation Coordinator.
+### 4.1 Individual Longitudinal Competency Profiling
+- **4-Year Holistic Competency Scorecard**: Pulls every completed course across all completed semesters to compute Cumulative GPA (e.g., *3.62 / 4.00*), Overall PO Average (e.g., *74.2%*), and a composite Recommendation Score (0–100).
+- **Interactive Target Threshold Slider**: Configurable threshold (default: *60% Target Threshold*) to align with evolving institutional and departmental accreditation standards.
+- **Automated Dual-Standard Recommendation Engine**:
+  - Formally evaluates whether a graduating student qualifies for official faculty recommendation letters:
+    $$\text{Status} = \begin{cases} \mathbf{Eligible\ for\ Recommendation}, & \text{if } \text{CGPA} \ge 3.50 \text{ and } \forall j \in [1,12], \text{PO}_j \ge \text{Threshold} \\ \mathbf{Ineligible\ (Competency\ Deficit)}, & \text{otherwise} \end{cases}$$
+- **Microscopic Radar & Bar Profiling**: Renders interactive 12-axis **Radar Charts** and **Bar Charts** comparing the student's mastery against the institutional benchmark line.
+- **Critical Competency Gap Alerts**: Pinpoints exact areas of underperformance with negative percentage margins:
+  - *PO1: Engineering Knowledge (48.3% vs 60% Target → Deficit: -11.7% gap)*
+  - *PO2: Problem Analysis (54.6% vs 60% Target → Deficit: -5.4% gap)*
+  - *PO3: Design/Development of Solutions (55.0% vs 60% Target → Deficit: -5.0% gap)*
+- **Data-Driven Career & Remedial Guidance**: Automatically recommends technical career paths matching the student's highest-performing POs, while highlighting deficient competencies requiring targeted industry certifications or clinic hours.
+- **Course-by-Course Longitudinal Audit**: Teachers can expand completed courses to inspect exact grade points, credits, and contribution percentages across every semester.
+- **Official Print-Ready PDF Transcript**: One-click generation of the student's official **Washington Accord Engineering Competency Transcript** complete with course credit weights, outcome breakdowns, and official Dean endorsement signatures.
+
+---
+
+### 4.2 Whole-Batch PO Overview & BAETE Criterion 3/9 Faculty Review
+Designed specifically for Department Heads, Program Coordinators, and Internal Quality Assurance Cells (IQAC) to monitor graduating cohorts and execute **BAETE Criteria 3 & 9 Continuous Quality Improvement**:
+
+#### 1. Washington Accord 3-Cluster Framework
+Aggregates all 12 Program Outcomes into the three internationally recognized engineering competency pillars:
+- 🔷 **Technical Foundations (PO1–PO4)**: *Engineering Knowledge, Problem Analysis, Design/Development of Solutions, and Investigation*.
+- 🟢 **Modern Engineering & Society (PO5–PO8)**: *Modern Tool Usage, The Engineer & Society, Environment & Sustainability, and Ethics*.
+- 🔶 **Professional & Lifelong Skills (PO9–PO12)**: *Individual & Teamwork, Communication, Project Management & Finance, and Lifelong Learning*.
+
+#### 2. Cohort Isolation (Regular Batch vs. Cross-Batch Retake Students)
+In traditional spreadsheets, retake students from senior or junior batches distort graduating batch statistics. The platform provides automated cohort isolation:
+- **Regular Batch Cohort**: Evaluates strictly regular students belonging to the evaluated intake (e.g., *Batch 21*).
+- **Cross-Batch Retake Cohort**: Segregates repeaters and retake students into a dedicated view, preventing sample contamination in official institutional accreditation filings.
+
+#### 3. 4-Tier Cohort Performance Stratification
+Automatically tabulates batch students into four clear competency tiers:
+- 🌟 **Exemplary ($\ge 75\%$)**: Students demonstrating advanced engineering mastery across all outcomes.
+- 🟢 **Competent ($50\% - 74\%$)**: Solid core meeting all institutional benchmarks.
+- 🟡 **Developing ($40\% - 49\%$)**: Marginal achievement requiring targeted tutorial support.
+- 🔴 **At-Risk ($< 40\%$)**: Critical underperformance requiring remedial intervention.
+
+#### 4. Dynamic Course Filtering & Curriculum Impact Simulation
+- Instructors can dynamically toggle individual completed courses on/off from the batch analysis.
+- Enables academic committees to simulate how specific elective modules or curriculum revisions impact overall batch Program Outcome attainment.
+
+#### 5. AI-Powered Batch CQI Faculty Review & Meeting Minutes Generator (`BatchCQIFacultyMeetingModal.jsx`)
+- **Automated Root Cause Diagnosis**: Google Gemini AI analyzes the entire batch's outcome metrics across all sections and courses, diagnosing specific curriculum bottlenecks that caused deficits in weak PO clusters.
+- **Actionable Remediation Planning**: Synthesizes concrete, multi-semester corrective interventions (e.g., *restructuring laboratory manuals, introducing IEEE code-of-ethics modules, mandating simulation software rubrics*).
+- **Official Departmental Meeting Minutes**: Auto-generates the complete formal review meeting documentation:
+  - *Meeting Title, Date, Academic Batch, and Departmental Header*
+  - *Faculty Attendees and Presiding Officers*
+  - *Cluster Achievement Summaries and Identified Deficits*
+  - *Approved Remediation Resolutions and Accountability Timelines*
+- **Official Microsoft Word (.docx) Export**: Exports publication-ready meeting minutes with dark-green institutional styling, running footers, and formal signature blocks for Department Head and Accreditation Coordinator.
+- **Custom Remediation Persistence**: Faculty can edit, customize, and save PO remediation recommendations with persistent local storage.
+- **Collapsible Master Outcome Attainment & Longitudinal Summary Tables**: Clean UI with expandable tables to view granular student-by-student scores without cluttering the screen.
 
 ---
 
