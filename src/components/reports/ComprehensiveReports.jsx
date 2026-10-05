@@ -191,8 +191,8 @@ const ComprehensiveReports = ({
   const [poDescriptions, setPoDescriptions] = useState({})
   const [chartAnimKey, setChartAnimKey] = useState(0)
   const [isExportingCOPOWord, setIsExportingCOPOWord] = useState(false)
-  const [coChartActiveOnly, setCoChartActiveOnly] = useState(false)
-  const [poChartActiveOnly, setPoChartActiveOnly] = useState(false)
+  const [coChartActiveOnly, setCoChartActiveOnly] = useState(true)
+  const [poChartActiveOnly, setPoChartActiveOnly] = useState(true)
 
   // Re-trigger smooth chart entrance animations when Reports tab mounts or sub-tab switches
   React.useEffect(() => {

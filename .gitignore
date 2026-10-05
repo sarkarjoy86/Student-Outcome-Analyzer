@@ -47,7 +47,8 @@ ml-service/__pycache__/
 ml-service/.cache/
 
 # Large Model Binaries & Caches (Fine-tuned weights hosted on HF Hub: obe-ai-system/sbert-obe-csematch)
-models/
+/models/
+!server/models/
 ml-service/models/
 ml-service/cache/
 checkpoints/

@@ -1349,15 +1349,27 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         if (savedDraftRaw) {
           const savedDraft = JSON.parse(savedDraftRaw)
           if (savedDraft && savedDraft.tempMarks && Object.keys(savedDraft.tempMarks).length > 0) {
+            let hasAnyRealDraftValue = false
             Object.keys(savedDraft.tempMarks).forEach(sId => {
-              if (temp[sId]) {
-                temp[sId] = { ...temp[sId], ...savedDraft.tempMarks[sId] }
+              if (temp[sId] && savedDraft.tempMarks[sId]) {
+                Object.entries(savedDraft.tempMarks[sId]).forEach(([k, v]) => {
+                  // Never overwrite an existing database mark with an empty string/blank from an unintended draft!
+                  if (v !== '' && v !== undefined && v !== null) {
+                    temp[sId][k] = v
+                    hasAnyRealDraftValue = true
+                  }
+                })
               }
             })
-            setRestoredDraftInfo({
-              timestamp: savedDraft.timestamp ? new Date(savedDraft.timestamp).toLocaleTimeString() : 'recently',
-              assessmentId
-            })
+            if (hasAnyRealDraftValue) {
+              setRestoredDraftInfo({
+                timestamp: savedDraft.timestamp ? new Date(savedDraft.timestamp).toLocaleTimeString() : 'recently',
+                assessmentId
+              })
+            } else {
+              setRestoredDraftInfo(null)
+              try { localStorage.removeItem(draftKey) } catch (e) {}
+            }
           } else {
             setRestoredDraftInfo(null)
           }
@@ -1395,10 +1407,16 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
       const draftKey = getMarksDraftKey(selectedAssessmentId)
       if (draftKey) {
         try {
-          localStorage.setItem(draftKey, JSON.stringify({
-            tempMarks,
-            timestamp: Date.now()
-          }))
+          // Only save to localStorage if tempMarks actually has entered values
+          const hasValues = Object.values(tempMarks).some(sMarks => 
+            sMarks && Object.values(sMarks).some(v => v !== '' && v !== undefined && v !== null)
+          )
+          if (hasValues) {
+            localStorage.setItem(draftKey, JSON.stringify({
+              tempMarks,
+              timestamp: Date.now()
+            }))
+          }
         } catch (e) {}
       }
     }
@@ -3826,42 +3844,55 @@ function EditorLoadingFallback() {
                     {qBankPath.type && !qBankPath.session && (() => {
                       const papersForType = validQBankPapers.filter(p => getQBankGroupName(p) === qBankPath.type)
                       const uniqueSessions = [...new Set(papersForType.map(p => getQBankSessionName(p)).filter(Boolean))].sort()
+                      const isMidOrFinal = ['final', 'mid term', 'midterm', 'mid'].some(kw => (qBankPath.type || '').toLowerCase().includes(kw))
+
                       return (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          {uniqueSessions.map(sessionName => (
-                            <div
-                              key={sessionName}
-                              onClick={() => setQBankPath({ ...qBankPath, session: sessionName })}
-                              className="bg-white hover:bg-blue-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-blue-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className="p-3 bg-blue-50 text-blue-700 rounded-xl group-hover:bg-blue-100 transition-colors">
-                                  <BookOpen size={22} />
+                          {uniqueSessions.map(sessionName => {
+                            const papersInSession = papersForType.filter(p => getQBankSessionName(p) === sessionName)
+                            const hasSections = !isMidOrFinal && papersInSession.some(p => p.courseOffering?.section)
+                            return (
+                              <div
+                                key={sessionName}
+                                onClick={() => setQBankPath({ ...qBankPath, session: sessionName })}
+                                className="bg-white hover:bg-blue-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-blue-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className="p-3 bg-blue-50 text-blue-700 rounded-xl group-hover:bg-blue-100 transition-colors">
+                                    <BookOpen size={22} />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-base font-bold text-gray-800 group-hover:text-blue-700 transition-colors">{sessionName}</h4>
+                                    <p className="text-[11px] text-gray-400 font-semibold mt-0.5">
+                                      {hasSections ? 'Click to view sections' : 'Click to view papers'}
+                                    </p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <h4 className="text-base font-bold text-gray-800 group-hover:text-blue-700 transition-colors">{sessionName}</h4>
-                                  <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view sections</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] bg-blue-105 text-blue-850 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
+                                    {papersInSession.length}
+                                  </span>
+                                  <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] bg-blue-105 text-blue-850 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
-                                  {papersForType.filter(p => getQBankSessionName(p) === sessionName).length}
-                                </span>
-                                <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
-                              </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )
                     })()}
 
-                    {/* LEVEL 3: Select Section */}
+                    {/* LEVEL 3: Select Section (Only for CTs/Assessments that actually have sections) */}
                     {qBankPath.type && qBankPath.session && !qBankPath.section && (() => {
                       const papersForSession = validQBankPapers.filter(
                         p => getQBankGroupName(p) === qBankPath.type &&
                           getQBankSessionName(p) === qBankPath.session
                       )
+                      const isMidOrFinal = ['final', 'mid term', 'midterm', 'mid'].some(kw => (qBankPath.type || '').toLowerCase().includes(kw))
                       const uniqueSections = [...new Set(papersForSession.map(p => p.courseOffering?.section).filter(Boolean))].sort()
+
+                      // If Mid/Final or no sections exist, skip Level 3
+                      if (isMidOrFinal || uniqueSections.length === 0) return null
+
                       return (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                           {uniqueSections.map(sectionName => (
@@ -3892,16 +3923,37 @@ function EditorLoadingFallback() {
                     })()}
 
                     {/* LEVEL 4: Render individual papers */}
-                    {qBankPath.type && qBankPath.session && qBankPath.section && (() => {
-                      const finalPapers = validQBankPapers.filter(
+                    {qBankPath.type && qBankPath.session && (() => {
+                      const papersForSession = validQBankPapers.filter(
                         p => getQBankGroupName(p) === qBankPath.type &&
-                          getQBankSessionName(p) === qBankPath.session &&
-                          p.courseOffering?.section === qBankPath.section
+                          getQBankSessionName(p) === qBankPath.session
                       )
+                      const isMidOrFinal = ['final', 'mid term', 'midterm', 'mid'].some(kw => (qBankPath.type || '').toLowerCase().includes(kw))
+                      const uniqueSections = [...new Set(papersForSession.map(p => p.courseOffering?.section).filter(Boolean))].sort()
+                      const shouldShowSections = !isMidOrFinal && uniqueSections.length > 0
+
+                      // If section selection is active and not yet chosen, let Level 3 handle it
+                      if (shouldShowSections && !qBankPath.section) return null
+
+                      let finalPapers = qBankPath.section
+                        ? papersForSession.filter(p => p.courseOffering?.section === qBankPath.section)
+                        : papersForSession
+
+                      // Deduplicate Mid/Final if multiple identical section copies exist
+                      if (isMidOrFinal && finalPapers.length > 1) {
+                        const seen = new Set()
+                        finalPapers = finalPapers.filter(p => {
+                          const key = (p.content || p._id || '').substring(0, 100)
+                          if (seen.has(key)) return false
+                          seen.add(key)
+                          return true
+                        })
+                      }
+
                       return (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {finalPapers.map(paper => {
-                            const isOwn = paper.createdBy?._id === user.id
+                            const isOwn = paper.createdBy?._id === user?.id
                             return (
                               <div key={paper._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
                                 <div className="space-y-4">
@@ -3915,9 +3967,12 @@ function EditorLoadingFallback() {
                                     </span>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
-                                    <div>Teacher: <span className="font-bold text-gray-800">{paper.courseOffering?.teacher?.fullName || 'System'}</span></div>
+                                    <div>Teacher: <span className="font-bold text-gray-800">{paper.courseOffering?.teacher?.fullName || 'Department Archive'}</span></div>
                                     <div>Semester: <span className="font-bold text-gray-800">{getQBankSessionName(paper)}</span></div>
-                                    <div>Max Marks: <span className="font-bold text-gray-800">{paper.assessment?.maxMarks}</span></div>
+                                    {paper.courseOffering?.section && !isMidOrFinal && (
+                                      <div>Section: <span className="font-bold text-gray-800">{paper.courseOffering.section}</span></div>
+                                    )}
+                                    <div>Max Marks: <span className="font-bold text-gray-800">{paper.assessment?.maxMarks || 20}</span></div>
                                     <div>Questions: <span className="font-bold text-gray-800">{paper.assessment?.numQuestions || 0}</span></div>
                                   </div>
                                 </div>

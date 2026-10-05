@@ -2908,7 +2908,11 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       const curAssessmentId = String(assessment?._id || '')
       const curAssessmentName = (assessment?.name || '').toLowerCase().trim()
       const curSection = (offering?.section || '').toLowerCase().trim()
-      const curSemesterId = String(offering?.semester?._id || offering?.semester || '')
+      const curSem = offering?.semester
+      const curSemId = String(curSem?._id || curSem || '')
+      const curSemesterId = curSemId
+      const curSemName = (curSem?.semesterName || '').toLowerCase().trim()
+      const curSemYear = String(curSem?.academicYear || offering?.academicYear || '').toLowerCase().trim()
 
       // Classify assessment types
       const examTypeKeywords = ['ct', 'class test', 'mid', 'midterm', 'mid term', 'final', 'final exam', 'quiz', 'test', 'exam', 'viva']
@@ -3017,11 +3021,6 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         setSimilarityLoading(false)
         return
       }
-
-      const curSem = offering?.semester
-      const curSemId = String(curSem?._id || curSem || '')
-      const curSemName = (curSem?.semesterName || '').toLowerCase().trim()
-      const curSemYear = String(curSem?.academicYear || offering?.academicYear || '').toLowerCase().trim()
 
       const currentQuestions = extractQuestionsFromEditorContent(currentContent)
       const currentPaperStructuredText = currentQuestions.length > 0

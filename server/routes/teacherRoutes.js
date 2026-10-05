@@ -1,3 +1,6 @@
+import Course from '../models/Course.js'
+import ArchivedQuestionBank from '../models/ArchivedQuestionBank.js'
+import { isCourseMatch } from '../utils/courseMatcher.js'
 import express from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import CourseOffering from '../models/CourseOffering.js'
@@ -823,8 +826,10 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
 // 8. Get all question papers in Question Bank (with optional courseId filtering)
 router.get('/teacher/question-bank', requireAuth, async (req, res) => {
   try {
+    let targetCourse = null
     const filter = {}
     if (req.query.courseId) {
+      targetCourse = await Course.findById(req.query.courseId)
       const offerings = await CourseOffering.find({ course: req.query.courseId })
       const offeringIds = offerings.map(o => o._id)
       filter.courseOffering = { $in: offeringIds }
@@ -861,7 +866,55 @@ router.get('/teacher/question-bank', requireAuth, async (req, res) => {
 
     // Filter out deleted assessments and direct marks assessments (Class Participation, Attendance, Performance)
     const activePapers = papers.filter(p => p.assessment && p.courseOffering && !isDirectMarksAssessment(p.assessment))
-    res.status(200).json({ papers: activePapers })
+
+    // Query historical ArchivedQuestionBank papers matching this course (or all archives if no courseId specified)
+    let archivedPapers = []
+    try {
+      const allArchives = await ArchivedQuestionBank.find({}).lean()
+      const matchingArchives = targetCourse
+        ? allArchives.filter(arch => isCourseMatch(
+            { code: targetCourse.courseCode, name: targetCourse.courseName },
+            { code: arch.courseCode, name: arch.courseName }
+          ))
+        : allArchives
+
+      archivedPapers = matchingArchives.map(arch => ({
+        _id: String(arch._id),
+        isArchivedPaper: true,
+        assessment: {
+          _id: String(arch._id),
+          name: arch.assessmentName,
+          type: arch.assessmentType,
+          maxMarks: arch.assessmentType === 'midTerm' ? 20 : (arch.assessmentType === 'final' ? 50 : 15),
+          numQuestions: arch.numQuestions || arch.questions?.length || 0
+        },
+        courseOffering: {
+          _id: `arch_offering_${arch._id}`,
+          course: {
+            _id: targetCourse ? targetCourse._id : `arch_course_${arch.courseCodeKey}`,
+            courseCode: arch.courseCode,
+            courseName: arch.courseName
+          },
+          semester: {
+            _id: `sem_${arch.semester.replace(/\s+/g, '_')}`,
+            semesterName: arch.semester,
+            academicYear: arch.academicYear
+          },
+          section: null, // Sectionless for historical archives
+          academicYear: arch.academicYear,
+          teacher: { fullName: 'Department Archive' }
+        },
+        content: arch.content,
+        rawText: arch.rawText,
+        createdBy: { fullName: 'Central Exam Archive', email: 'archive@baiust.edu.bd' },
+        createdAt: arch.createdAt
+      }))
+    } catch (archErr) {
+      console.warn('Failed to query ArchivedQuestionBank:', archErr.message)
+    }
+
+    const combinedPapers = [...activePapers, ...archivedPapers]
+    res.status(200).json({ papers: combinedPapers })
   } catch (error) {
     res.status(500).json({ message: 'Error fetching question bank', error: error.message })
   }
