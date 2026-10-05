@@ -694,6 +694,15 @@ router.delete('/teacher/assessments/:id', requireAuth, async (req, res) => {
   }
 })
 
+// Helper to detect direct marks entry assessments (no question papers)
+const isDirectMarksAssessment = (a) => {
+  if (!a) return false
+  const type = (a.type || '').toLowerCase().trim()
+  const name = (a.name || '').toLowerCase().trim()
+  const directTypes = ['attendance', 'performance', 'participation']
+  return directTypes.includes(type) || directTypes.some(t => type.includes(t) || name.includes(t))
+}
+
 // 6. Get question paper and metadata for an assessment
 router.get('/teacher/assessments/:id/question-paper', requireAuth, async (req, res) => {
   try {
@@ -701,6 +710,10 @@ router.get('/teacher/assessments/:id/question-paper', requireAuth, async (req, r
     const assessment = await Assessment.findById(assessmentId)
     if (!assessment) {
       return res.status(404).json({ message: 'Assessment not found.' })
+    }
+
+    if (isDirectMarksAssessment(assessment)) {
+      return res.status(400).json({ message: 'Direct marks assessments do not have question papers.' })
     }
 
     const paper = await QuestionPaper.findOne({ assessment: assessmentId })
@@ -738,6 +751,10 @@ router.post('/teacher/assessments/:id/question-paper', requireAuth, async (req, 
     const assessment = await Assessment.findById(assessmentId)
     if (!assessment) {
       return res.status(404).json({ message: 'Assessment not found.' })
+    }
+
+    if (isDirectMarksAssessment(assessment)) {
+      return res.status(400).json({ message: 'Direct marks assessments do not support question papers.' })
     }
 
     // Save/update QuestionPaper
@@ -830,8 +847,20 @@ router.get('/teacher/question-bank', requireAuth, async (req, res) => {
       })
       .populate('createdBy', 'fullName email')
 
-    // Filter out deleted assessments
-    const activePapers = papers.filter(p => p.assessment && p.courseOffering)
+    // Proactively clean up any rogue QuestionPaper documents linked to direct marks assessments
+    const roguePaperIds = papers
+      .filter(p => p.assessment && isDirectMarksAssessment(p.assessment))
+      .map(p => p._id)
+    if (roguePaperIds.length > 0) {
+      try {
+        await QuestionPaper.deleteMany({ _id: { $in: roguePaperIds } })
+      } catch (cleanupErr) {
+        console.warn('Failed to clean up rogue question papers:', cleanupErr.message)
+      }
+    }
+
+    // Filter out deleted assessments and direct marks assessments (Class Participation, Attendance, Performance)
+    const activePapers = papers.filter(p => p.assessment && p.courseOffering && !isDirectMarksAssessment(p.assessment))
     res.status(200).json({ papers: activePapers })
   } catch (error) {
     res.status(500).json({ message: 'Error fetching question bank', error: error.message })
@@ -844,6 +873,10 @@ router.post('/teacher/question-bank/:id/duplicate', requireAuth, async (req, res
     const sourcePaper = await QuestionPaper.findById(req.params.id).populate('assessment')
     if (!sourcePaper || !sourcePaper.assessment) {
       return res.status(404).json({ message: 'Source question paper not found.' })
+    }
+
+    if (isDirectMarksAssessment(sourcePaper.assessment)) {
+      return res.status(400).json({ message: 'Cannot duplicate direct marks assessment question paper.' })
     }
 
     const { targetCourseOfferingId } = req.body

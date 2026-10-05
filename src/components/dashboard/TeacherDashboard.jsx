@@ -110,7 +110,17 @@ const PO_TEXT_COLORS = {
   PO12: 'text-white',
 }
 
+export const isDirectMarksAssessment = (a) => {
+  if (!a) return false
+  const type = (a.type || '').toLowerCase().trim()
+  const name = (a.name || '').toLowerCase().trim()
+  const directTypes = ['attendance', 'performance', 'participation']
+  return directTypes.includes(type) ||
+    directTypes.some(t => type.includes(t) || name.includes(t))
+}
+
 const getQBankGroupName = (paper) => {
+  if (!paper || isDirectMarksAssessment(paper?.assessment)) return null
   const name = paper?.assessment?.name || ''
   if (/^ct[- ]?\d+/i.test(name) || name.toLowerCase() === 'cts' || paper?.assessment?.type === 'cts') {
     return 'CTs'
@@ -631,49 +641,6 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
     kpiConfig: { targetPassMarks: 40, kpiCO: 50, kpiPO: 50 }
   })
   const [kpiInput, setKpiInput] = useState({ targetPassMarks: 40, kpiCO: 50, kpiPO: 50 })
-  const [displayKpi, setDisplayKpi] = useState({ targetPassMarks: 0, kpiCO: 0, kpiPO: 0 })
-  const isKpiUserInteractingRef = useRef(false)
-  const kpiAnimRef = useRef(null)
-
-  // Smooth entrance animation for KPI threshold sliders when entering the Attainment tab
-  useEffect(() => {
-    if (activeTab === 'attainment') {
-      isKpiUserInteractingRef.current = false
-      if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
-
-      const targetPass = typeof kpiInput.targetPassMarks === 'number' ? kpiInput.targetPassMarks : 40
-      const targetCO = typeof kpiInput.kpiCO === 'number' ? kpiInput.kpiCO : 50
-      const targetPO = typeof kpiInput.kpiPO === 'number' ? kpiInput.kpiPO : 50
-
-      const startTime = performance.now()
-      const duration = 850 // ms
-
-      const step = (currentTime) => {
-        if (isKpiUserInteractingRef.current) return
-        const elapsed = currentTime - startTime
-        const progress = Math.min(elapsed / duration, 1)
-        // Smooth easeOutCubic curve
-        const ease = 1 - Math.pow(1 - progress, 3)
-
-        setDisplayKpi({
-          targetPassMarks: Math.round(targetPass * ease),
-          kpiCO: Math.round(targetCO * ease),
-          kpiPO: Math.round(targetPO * ease)
-        })
-
-        if (progress < 1) {
-          kpiAnimRef.current = requestAnimationFrame(step)
-        }
-      }
-
-      setDisplayKpi({ targetPassMarks: 0, kpiCO: 0, kpiPO: 0 })
-      kpiAnimRef.current = requestAnimationFrame(step)
-    }
-
-    return () => {
-      if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
-    }
-  }, [activeTab, kpiInput.targetPassMarks, kpiInput.kpiCO, kpiInput.kpiPO])
 
   // Live computed attainment data as threshold sliders change
   const liveAttainmentData = useMemo(() => {
@@ -1182,7 +1149,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
         const targetPaperId = params.get('paper')
         if (targetPaperId && flatAssessments.length > 0) {
           const match = flatAssessments.find(a => a._id === targetPaperId)
-          if (match) setActiveAssessmentForPaper(match)
+          if (match && !isDirectMarksAssessment(match)) setActiveAssessmentForPaper(match)
         }
       }
 
@@ -1196,7 +1163,8 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
       // 6. Unpack Question Bank
       if (qBankResult.status === 'fulfilled') {
-        setQBankPapers(qBankResult.value?.papers || [])
+        const rawPapers = qBankResult.value?.papers || []
+        setQBankPapers(rawPapers.filter(p => !isDirectMarksAssessment(p?.assessment)))
       }
 
       // 7. Unpack Course Outcomes & Program Outcomes
@@ -1555,12 +1523,7 @@ export default function TeacherDashboard({ offering: propOffering, onBackToDashb
 
   const handleOpenQuestionPaper = (assessment, pushHistory = true) => {
     if (!assessment) return;
-    const aType = (assessment.type || '').toLowerCase();
-    const aName = (assessment.name || '').toLowerCase();
-    const isDirect = ['attendance', 'performance', 'participation'].includes(assessment.type) ||
-      aType.includes('attendance') || aType.includes('performance') || aType.includes('participation') ||
-      aName.includes('attendance') || aName.includes('performance') || aName.includes('participation');
-    if (isDirect) {
+    if (isDirectMarksAssessment(assessment)) {
       alert('This assessment is for direct marks entry only and does not require a question paper. Please enter marks in the Marks Entry tab.');
       return;
     }
@@ -3313,11 +3276,7 @@ function EditorLoadingFallback() {
                   {assessments.map(a => {
                     const isExamType = ['cts', 'midTerm', 'final'].includes(a.type)
                     const isSubmissionType = ['assignments', 'presentation', 'projectReport'].includes(a.type)
-                    const aTypeLower = (a.type || '').toLowerCase()
-                    const aNameLower = (a.name || '').toLowerCase()
-                    const isDirectMarksType = ['attendance', 'performance', 'participation'].includes(a.type) ||
-                      aTypeLower === 'attendance' || aTypeLower === 'performance' || aTypeLower === 'participation' ||
-                      aNameLower.includes('attendance') || aNameLower.includes('performance') || aNameLower.includes('participation')
+                    const isDirectMarksType = isDirectMarksAssessment(a)
                     const isExtra = isExtraCT(a)
                     const stdCTsList = assessments.filter(c => c.type === 'cts' && !isExtraCT(c))
                     const targetParentName = isExtra ? getTargetCTName(a, stdCTsList) : ''
@@ -3772,273 +3731,277 @@ function EditorLoadingFallback() {
           )}
 
           {/* TAB 4: QUESTION BANK */}
-          {activeTab === 'questionBank' && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center border-b pb-3">
-                <h2 className="text-xl font-extrabold text-gray-800 font-sans">Stored Question Papers</h2>
-                <p className="text-sm text-gray-500 font-semibold">Search and reuse question papers</p>
-              </div>
+          {activeTab === 'questionBank' && (() => {
+            const validQBankPapers = qBankPapers.filter(p => !isDirectMarksAssessment(p?.assessment))
 
-              {/* Breadcrumb Navigation */}
-              {qBankPapers.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-gray-500 font-semibold mb-6 bg-gray-50 p-4 rounded-xl border border-gray-150">
-                  <button
-                    onClick={() => setQBankPath({ type: null, session: null, section: null })}
-                    className="text-green-700 hover:text-green-800 hover:underline transition-colors flex items-center gap-1"
-                  >
-                    <FolderOpen size={14} />
-                    Question Archives
-                  </button>
-
-                  {qBankPath.type && (
-                    <>
-                      <ChevronRight size={14} className="text-gray-400" />
-                      <button
-                        onClick={() => setQBankPath({ ...qBankPath, session: null, section: null })}
-                        className="text-green-700 hover:text-green-800 hover:underline transition-colors"
-                      >
-                        {qBankPath.type}
-                      </button>
-                    </>
-                  )}
-
-                  {qBankPath.session && (
-                    <>
-                      <ChevronRight size={14} className="text-gray-400" />
-                      <button
-                        onClick={() => setQBankPath({ ...qBankPath, section: null })}
-                        className="text-green-700 hover:text-green-800 hover:underline transition-colors"
-                      >
-                        {qBankPath.session}
-                      </button>
-                    </>
-                  )}
-
-                  {qBankPath.section && (
-                    <>
-                      <ChevronRight size={14} className="text-gray-400" />
-                      <span className="text-gray-800">Section {qBankPath.section}</span>
-                    </>
-                  )}
+            return (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center border-b pb-3">
+                  <h2 className="text-xl font-extrabold text-gray-800 font-sans">Stored Question Papers</h2>
+                  <p className="text-sm text-gray-500 font-semibold">Search and reuse question papers</p>
                 </div>
-              )}
 
-              {qBankPapers.length === 0 ? (
-                <div className="bg-white rounded-2xl border p-12 text-center text-gray-500 font-semibold shadow-sm">
-                  No question papers found for this course in the question archives.
-                </div>
-              ) : (
-                <div>
-                  {/* LEVEL 1: Select Assessment Name */}
-                  {!qBankPath.type && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      {[...new Set(qBankPapers.map(p => getQBankGroupName(p)).filter(Boolean))]
-                        .sort()
-                        .map(name => (
-                          <div
-                            key={name}
-                            onClick={() => setQBankPath({ type: name, session: null, section: null })}
-                            className="bg-white hover:bg-green-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-green-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
-                          >
-                            <div className="flex items-center gap-4">
-                              <div className="p-3 bg-green-50 text-green-700 rounded-xl group-hover:bg-green-100 transition-colors">
-                                <ClipboardList size={22} />
-                              </div>
-                              <div>
-                                <h4 className="text-base font-bold text-gray-800 group-hover:text-green-700 transition-colors">{name}</h4>
-                                <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view sessions</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] bg-green-105 text-green-850 font-bold px-2.5 py-0.5 rounded-full border border-green-200">
-                                {qBankPapers.filter(p => getQBankGroupName(p) === name).length}
-                              </span>
-                              <ChevronRight size={16} className="text-gray-400 group-hover:text-green-600 transition-colors" />
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  )}
+                {/* Breadcrumb Navigation */}
+                {validQBankPapers.length > 0 && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 font-semibold mb-6 bg-gray-50 p-4 rounded-xl border border-gray-150">
+                    <button
+                      onClick={() => setQBankPath({ type: null, session: null, section: null })}
+                      className="text-green-700 hover:text-green-800 hover:underline transition-colors flex items-center gap-1"
+                    >
+                      <FolderOpen size={14} />
+                      Question Archives
+                    </button>
 
-                  {/* LEVEL 2: Select Session */}
-                  {qBankPath.type && !qBankPath.session && (() => {
-                    const papersForType = qBankPapers.filter(p => getQBankGroupName(p) === qBankPath.type)
-                    const uniqueSessions = [...new Set(papersForType.map(p => getQBankSessionName(p)).filter(Boolean))].sort()
-                    return (
+                    {qBankPath.type && (
+                      <>
+                        <ChevronRight size={14} className="text-gray-400" />
+                        <button
+                          onClick={() => setQBankPath({ ...qBankPath, session: null, section: null })}
+                          className="text-green-700 hover:text-green-800 hover:underline transition-colors"
+                        >
+                          {qBankPath.type}
+                        </button>
+                      </>
+                    )}
+
+                    {qBankPath.session && (
+                      <>
+                        <ChevronRight size={14} className="text-gray-400" />
+                        <button
+                          onClick={() => setQBankPath({ ...qBankPath, section: null })}
+                          className="text-green-700 hover:text-green-800 hover:underline transition-colors"
+                        >
+                          {qBankPath.session}
+                        </button>
+                      </>
+                    )}
+
+                    {qBankPath.section && (
+                      <>
+                        <ChevronRight size={14} className="text-gray-400" />
+                        <span className="text-gray-800">Section {qBankPath.section}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {validQBankPapers.length === 0 ? (
+                  <div className="bg-white rounded-2xl border p-12 text-center text-gray-500 font-semibold shadow-sm">
+                    No question papers found for this course in the question archives.
+                  </div>
+                ) : (
+                  <div>
+                    {/* LEVEL 1: Select Assessment Name */}
+                    {!qBankPath.type && (
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {uniqueSessions.map(sessionName => (
-                          <div
-                            key={sessionName}
-                            onClick={() => setQBankPath({ ...qBankPath, session: sessionName })}
-                            className="bg-white hover:bg-blue-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-blue-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
-                          >
-                            <div className="flex items-center gap-4">
-                              <div className="p-3 bg-blue-50 text-blue-700 rounded-xl group-hover:bg-blue-100 transition-colors">
-                                <BookOpen size={22} />
+                        {[...new Set(validQBankPapers.map(p => getQBankGroupName(p)).filter(Boolean))]
+                          .sort()
+                          .map(name => (
+                            <div
+                              key={name}
+                              onClick={() => setQBankPath({ type: name, session: null, section: null })}
+                              className="bg-white hover:bg-green-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-green-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className="p-3 bg-green-50 text-green-700 rounded-xl group-hover:bg-green-100 transition-colors">
+                                  <ClipboardList size={22} />
+                                </div>
+                                <div>
+                                  <h4 className="text-base font-bold text-gray-800 group-hover:text-green-700 transition-colors">{name}</h4>
+                                  <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view sessions</p>
+                                </div>
                               </div>
-                              <div>
-                                <h4 className="text-base font-bold text-gray-800 group-hover:text-blue-700 transition-colors">{sessionName}</h4>
-                                <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view sections</p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] bg-green-105 text-green-850 font-bold px-2.5 py-0.5 rounded-full border border-green-200">
+                                  {validQBankPapers.filter(p => getQBankGroupName(p) === name).length}
+                                </span>
+                                <ChevronRight size={16} className="text-gray-400 group-hover:text-green-600 transition-colors" />
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] bg-blue-105 text-blue-850 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
-                                {papersForType.filter(p => getQBankSessionName(p) === sessionName).length}
-                              </span>
-                              <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
-                            </div>
-                          </div>
-                        ))}
+                          ))}
                       </div>
-                    )
-                  })()}
+                    )}
 
-                  {/* LEVEL 3: Select Section */}
-                  {qBankPath.type && qBankPath.session && !qBankPath.section && (() => {
-                    const papersForSession = qBankPapers.filter(
-                      p => getQBankGroupName(p) === qBankPath.type &&
-                        getQBankSessionName(p) === qBankPath.session
-                    )
-                    const uniqueSections = [...new Set(papersForSession.map(p => p.courseOffering?.section).filter(Boolean))].sort()
-                    return (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {uniqueSections.map(sectionName => (
-                          <div
-                            key={sectionName}
-                            onClick={() => setQBankPath({ ...qBankPath, section: sectionName })}
-                            className="bg-white hover:bg-purple-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-purple-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
-                          >
-                            <div className="flex items-center gap-4">
-                              <div className="p-3 bg-purple-50 text-purple-700 rounded-xl group-hover:bg-purple-100 transition-colors">
-                                <Users size={22} />
+                    {/* LEVEL 2: Select Session */}
+                    {qBankPath.type && !qBankPath.session && (() => {
+                      const papersForType = validQBankPapers.filter(p => getQBankGroupName(p) === qBankPath.type)
+                      const uniqueSessions = [...new Set(papersForType.map(p => getQBankSessionName(p)).filter(Boolean))].sort()
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          {uniqueSessions.map(sessionName => (
+                            <div
+                              key={sessionName}
+                              onClick={() => setQBankPath({ ...qBankPath, session: sessionName })}
+                              className="bg-white hover:bg-blue-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-blue-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className="p-3 bg-blue-50 text-blue-700 rounded-xl group-hover:bg-blue-100 transition-colors">
+                                  <BookOpen size={22} />
+                                </div>
+                                <div>
+                                  <h4 className="text-base font-bold text-gray-800 group-hover:text-blue-700 transition-colors">{sessionName}</h4>
+                                  <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view sections</p>
+                                </div>
                               </div>
-                              <div>
-                                <h4 className="text-base font-bold text-gray-800 group-hover:text-purple-700 transition-colors">Section {sectionName}</h4>
-                                <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view papers</p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] bg-blue-105 text-blue-850 font-bold px-2.5 py-0.5 rounded-full border border-blue-200">
+                                  {papersForType.filter(p => getQBankSessionName(p) === sessionName).length}
+                                </span>
+                                <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] bg-purple-105 text-purple-850 font-bold px-2.5 py-0.5 rounded-full border border-purple-200">
-                                {papersForSession.filter(p => p.courseOffering?.section === sectionName).length}
-                              </span>
-                              <ChevronRight size={16} className="text-gray-400 group-hover:text-purple-600 transition-colors" />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })()}
+                          ))}
+                        </div>
+                      )
+                    })()}
 
-                  {/* LEVEL 4: Render individual papers */}
-                  {qBankPath.type && qBankPath.session && qBankPath.section && (() => {
-                    const finalPapers = qBankPapers.filter(
-                      p => getQBankGroupName(p) === qBankPath.type &&
-                        getQBankSessionName(p) === qBankPath.session &&
-                        p.courseOffering?.section === qBankPath.section
-                    )
-                    return (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {finalPapers.map(paper => {
-                          const isOwn = paper.createdBy?._id === user.id
-                          return (
-                            <div key={paper._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
-                              <div className="space-y-4">
-                                <div className="flex items-center justify-between border-b pb-2">
-                                  <div>
-                                    <h3 className="text-lg font-bold text-gray-800">{paper.assessment?.name}</h3>
-                                    <p className="text-xs text-gray-400 font-semibold">Course Code: {paper.courseOffering?.course?.courseCode}</p>
+                    {/* LEVEL 3: Select Section */}
+                    {qBankPath.type && qBankPath.session && !qBankPath.section && (() => {
+                      const papersForSession = validQBankPapers.filter(
+                        p => getQBankGroupName(p) === qBankPath.type &&
+                          getQBankSessionName(p) === qBankPath.session
+                      )
+                      const uniqueSections = [...new Set(papersForSession.map(p => p.courseOffering?.section).filter(Boolean))].sort()
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          {uniqueSections.map(sectionName => (
+                            <div
+                              key={sectionName}
+                              onClick={() => setQBankPath({ ...qBankPath, section: sectionName })}
+                              className="bg-white hover:bg-purple-50/10 cursor-pointer p-6 rounded-2xl border-2 border-gray-150 hover:border-purple-300 shadow-sm hover:shadow-md transition-all duration-300 transform hover:-translate-y-1 flex items-center justify-between group"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className="p-3 bg-purple-50 text-purple-700 rounded-xl group-hover:bg-purple-100 transition-colors">
+                                  <Users size={22} />
+                                </div>
+                                <div>
+                                  <h4 className="text-base font-bold text-gray-800 group-hover:text-purple-700 transition-colors">Section {sectionName}</h4>
+                                  <p className="text-[11px] text-gray-400 font-semibold mt-0.5">Click to view papers</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] bg-purple-105 text-purple-850 font-bold px-2.5 py-0.5 rounded-full border border-purple-200">
+                                  {papersForSession.filter(p => p.courseOffering?.section === sectionName).length}
+                                </span>
+                                <ChevronRight size={16} className="text-gray-400 group-hover:text-purple-600 transition-colors" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+
+                    {/* LEVEL 4: Render individual papers */}
+                    {qBankPath.type && qBankPath.session && qBankPath.section && (() => {
+                      const finalPapers = validQBankPapers.filter(
+                        p => getQBankGroupName(p) === qBankPath.type &&
+                          getQBankSessionName(p) === qBankPath.session &&
+                          p.courseOffering?.section === qBankPath.section
+                      )
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {finalPapers.map(paper => {
+                            const isOwn = paper.createdBy?._id === user.id
+                            return (
+                              <div key={paper._id} className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 flex flex-col justify-between hover:shadow-lg transition-all duration-200">
+                                <div className="space-y-4">
+                                  <div className="flex items-center justify-between border-b pb-2">
+                                    <div>
+                                      <h3 className="text-lg font-bold text-gray-800">{paper.assessment?.name}</h3>
+                                      <p className="text-xs text-gray-400 font-semibold">Course Code: {paper.courseOffering?.course?.courseCode}</p>
+                                    </div>
+                                    <span className="text-xs bg-green-150 text-green-800 border border-green-200 font-bold px-2 py-0.5 rounded-full capitalize">
+                                      {paper.assessment?.type}
+                                    </span>
                                   </div>
-                                  <span className="text-xs bg-green-150 text-green-800 border border-green-200 font-bold px-2 py-0.5 rounded-full capitalize">
-                                    {paper.assessment?.type}
-                                  </span>
+                                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
+                                    <div>Teacher: <span className="font-bold text-gray-800">{paper.courseOffering?.teacher?.fullName || 'System'}</span></div>
+                                    <div>Semester: <span className="font-bold text-gray-800">{getQBankSessionName(paper)}</span></div>
+                                    <div>Max Marks: <span className="font-bold text-gray-800">{paper.assessment?.maxMarks}</span></div>
+                                    <div>Questions: <span className="font-bold text-gray-800">{paper.assessment?.numQuestions || 0}</span></div>
+                                  </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 font-semibold">
-                                  <div>Teacher: <span className="font-bold text-gray-800">{paper.courseOffering?.teacher?.fullName || 'System'}</span></div>
-                                  <div>Semester: <span className="font-bold text-gray-800">{getQBankSessionName(paper)}</span></div>
-                                  <div>Max Marks: <span className="font-bold text-gray-800">{paper.assessment?.maxMarks}</span></div>
-                                  <div>Questions: <span className="font-bold text-gray-800">{paper.assessment?.numQuestions || 0}</span></div>
+
+                                <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap gap-2 justify-between">
+                                  <button
+                                    onClick={() => setShowPreviewPaper(paper)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border text-gray-700 rounded-lg text-xs font-bold transition-all"
+                                  >
+                                    <Eye size={12} />
+                                    Preview
+                                  </button>
+
+                                  <button
+                                    onClick={() => exportToWord(paper.content, `${paper.assessment?.name || 'QP'}.doc`)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-bold transition-all"
+                                  >
+                                    <FileDown size={12} />
+                                    Word
+                                  </button>
+
+                                  <button
+                                    onClick={() => handlePrint(paper.content)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 rounded-lg text-xs font-bold transition-all"
+                                  >
+                                    <Printer size={12} />
+                                    Print
+                                  </button>
                                 </div>
                               </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
 
-                              <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap gap-2 justify-between">
-                                <button
-                                  onClick={() => setShowPreviewPaper(paper)}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border text-gray-700 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  <Eye size={12} />
-                                  Preview
-                                </button>
-
-                                <button
-                                  onClick={() => exportToWord(paper.content, `${paper.assessment?.name || 'QP'}.doc`)}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  <FileDown size={12} />
-                                  Word
-                                </button>
-
-                                <button
-                                  onClick={() => handlePrint(paper.content)}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  <Printer size={12} />
-                                  Print
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
+                {/* Preview Modal */}
+                {showPreviewPaper && (
+                  <div className="fixed inset-0 bg-black/55 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl border max-w-4xl w-full max-h-[85vh] flex flex-col p-6 space-y-4">
+                      <div className="flex justify-between items-center border-b pb-3">
+                        <h3 className="text-xl font-bold text-gray-800">
+                          Preview: {showPreviewPaper.assessment?.name}
+                        </h3>
+                        <button
+                          onClick={() => setShowPreviewPaper(null)}
+                          className="text-gray-500 hover:text-gray-700 font-extrabold text-lg"
+                        >
+                          ×
+                        </button>
                       </div>
-                    )
-                  })()}
-                </div>
-              )}
-
-              {/* Preview Modal */}
-              {showPreviewPaper && (
-                <div className="fixed inset-0 bg-black/55 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-2xl shadow-2xl border max-w-4xl w-full max-h-[85vh] flex flex-col p-6 space-y-4">
-                    <div className="flex justify-between items-center border-b pb-3">
-                      <h3 className="text-xl font-bold text-gray-800">
-                        Preview: {showPreviewPaper.assessment?.name}
-                      </h3>
-                      <button
-                        onClick={() => setShowPreviewPaper(null)}
-                        className="text-gray-500 hover:text-gray-700 font-extrabold text-lg"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto border rounded-xl p-6 bg-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                      <div dangerouslySetInnerHTML={{ __html: showPreviewPaper.content }} />
-                    </div>
-                    <div className="flex justify-end gap-2 pt-3 border-t">
-                      <button
-                        onClick={() => exportToWord(showPreviewPaper.content, `${showPreviewPaper.assessment?.name || 'QP'}.doc`)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md"
-                      >
-                        <FileDown size={14} />
-                        Export Word
-                      </button>
-                      <button
-                        onClick={() => handlePrint(showPreviewPaper.content)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-bold shadow-md"
-                      >
-                        <Printer size={14} />
-                        Print / Save PDF
-                      </button>
-                      <button
-                        onClick={() => setShowPreviewPaper(null)}
-                        className="px-4 py-2 bg-gray-150 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-bold border"
-                      >
-                        Close
-                      </button>
+                      <div className="flex-1 overflow-y-auto border rounded-xl p-6 bg-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                        <div dangerouslySetInnerHTML={{ __html: showPreviewPaper.content }} />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-3 border-t">
+                        <button
+                          onClick={() => exportToWord(showPreviewPaper.content, `${showPreviewPaper.assessment?.name || 'QP'}.doc`)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md"
+                        >
+                          <FileDown size={14} />
+                          Export Word
+                        </button>
+                        <button
+                          onClick={() => handlePrint(showPreviewPaper.content)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-bold shadow-md"
+                        >
+                          <Printer size={14} />
+                          Print / Save PDF
+                        </button>
+                        <button
+                          onClick={() => setShowPreviewPaper(null)}
+                          className="px-4 py-2 bg-gray-150 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-bold border"
+                        >
+                          Close
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )
+          })()}
 
           {/* TAB 5: MARKS ENTRY (SPREADSHEET UI) */}
           {activeTab === 'marksEntry' && (() => {
@@ -5078,11 +5041,11 @@ function EditorLoadingFallback() {
                     {/* Slider 1: Target Pass Marks */}
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between items-center">
-                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider select-none">
                           Target Pass Marks (%)
                         </label>
-                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {displayKpi.targetPassMarks}%
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200 min-w-[54px] text-center inline-block tabular-nums">
+                          {kpiInput.targetPassMarks}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -5090,21 +5053,18 @@ function EditorLoadingFallback() {
                           type="range"
                           min="1"
                           max="100"
-                          value={displayKpi.targetPassMarks}
+                          value={kpiInput.targetPassMarks}
                           onChange={(e) => {
-                            isKpiUserInteractingRef.current = true
-                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
-                            const val = parseInt(e.target.value) || 0
-                            setDisplayKpi(prev => ({ ...prev, targetPassMarks: val }))
+                            const val = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 0))
                             setKpiInput(prev => ({ ...prev, targetPassMarks: val }))
                           }}
                           style={{
-                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.targetPassMarks}%, #e5e7eb ${displayKpi.targetPassMarks}%, #e5e7eb 100%)`
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${kpiInput.targetPassMarks}%, #e5e7eb ${kpiInput.targetPassMarks}%, #e5e7eb 100%)`
                           }}
-                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400 select-none"
                         />
                       </div>
-                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400 select-none">
                         <span>0%</span>
                         <span>50%</span>
                         <span>100%</span>
@@ -5114,11 +5074,11 @@ function EditorLoadingFallback() {
                     {/* Slider 2: CO Attainment Target KPI */}
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between items-center">
-                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider select-none">
                           CO Attainment Target KPI (%)
                         </label>
-                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {displayKpi.kpiCO}%
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200 min-w-[54px] text-center inline-block tabular-nums">
+                          {kpiInput.kpiCO}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -5126,21 +5086,18 @@ function EditorLoadingFallback() {
                           type="range"
                           min="1"
                           max="100"
-                          value={displayKpi.kpiCO}
+                          value={kpiInput.kpiCO}
                           onChange={(e) => {
-                            isKpiUserInteractingRef.current = true
-                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
-                            const val = parseInt(e.target.value) || 0
-                            setDisplayKpi(prev => ({ ...prev, kpiCO: val }))
+                            const val = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 0))
                             setKpiInput(prev => ({ ...prev, kpiCO: val }))
                           }}
                           style={{
-                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.kpiCO}%, #e5e7eb ${displayKpi.kpiCO}%, #e5e7eb 100%)`
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${kpiInput.kpiCO}%, #e5e7eb ${kpiInput.kpiCO}%, #e5e7eb 100%)`
                           }}
-                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400 select-none"
                         />
                       </div>
-                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400 select-none">
                         <span>0%</span>
                         <span>50%</span>
                         <span>100%</span>
@@ -5150,11 +5107,11 @@ function EditorLoadingFallback() {
                     {/* Slider 3: PO Attainment Target KPI */}
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between items-center">
-                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">
+                        <label className="text-xs font-extrabold text-gray-700 uppercase tracking-wider select-none">
                           PO Attainment Target KPI (%)
                         </label>
-                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                          {displayKpi.kpiPO}%
+                        <span className="text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200 min-w-[54px] text-center inline-block tabular-nums">
+                          {kpiInput.kpiPO}%
                         </span>
                       </div>
                       <div className="relative flex items-center">
@@ -5162,21 +5119,18 @@ function EditorLoadingFallback() {
                           type="range"
                           min="1"
                           max="100"
-                          value={displayKpi.kpiPO}
+                          value={kpiInput.kpiPO}
                           onChange={(e) => {
-                            isKpiUserInteractingRef.current = true
-                            if (kpiAnimRef.current) cancelAnimationFrame(kpiAnimRef.current)
-                            const val = parseInt(e.target.value) || 0
-                            setDisplayKpi(prev => ({ ...prev, kpiPO: val }))
+                            const val = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 0))
                             setKpiInput(prev => ({ ...prev, kpiPO: val }))
                           }}
                           style={{
-                            background: `linear-gradient(to right, #059669 0%, #059669 ${displayKpi.kpiPO}%, #e5e7eb ${displayKpi.kpiPO}%, #e5e7eb 100%)`
+                            background: `linear-gradient(to right, #059669 0%, #059669 ${kpiInput.kpiPO}%, #e5e7eb ${kpiInput.kpiPO}%, #e5e7eb 100%)`
                           }}
-                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          className="w-full h-2.5 rounded-lg appearance-none cursor-pointer accent-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400 select-none"
                         />
                       </div>
-                      <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                      <div className="flex justify-between text-[11px] font-bold text-gray-400 select-none">
                         <span>0%</span>
                         <span>50%</span>
                         <span>100%</span>
@@ -5191,13 +5145,13 @@ function EditorLoadingFallback() {
                   <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
                     <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">CO Attainment Status</h3>
                     <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-sm text-left">
+                      <table className="w-full border-collapse text-sm text-left table-fixed">
                         <thead>
                           <tr className="bg-gray-50 border-b">
-                            <th className="px-4 py-2 border-r font-bold text-gray-700">CO</th>
+                            <th className="w-16 px-4 py-2 border-r font-bold text-gray-700">CO</th>
                             <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({kpiInput.targetPassMarks}%)</th>
                             <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({kpiInput.kpiCO}%)</th>
-                            <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
+                            <th className="w-36 px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y font-semibold text-gray-700">
@@ -5222,10 +5176,10 @@ function EditorLoadingFallback() {
                                 return (
                                   <tr key={co.co}>
                                     <td className="px-4 py-3 border-r font-bold text-blue-700">{co.co}</td>
-                                    <td className="px-4 py-3 border-r text-center">{passPct.toFixed(1)}%</td>
-                                    <td className="px-4 py-3 border-r text-center">{kpiPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center tabular-nums">{passPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center tabular-nums">{kpiPct.toFixed(1)}%</td>
                                     <td className="px-4 py-3 text-center">
-                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${
+                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm inline-block min-w-[96px] text-center ${
                                         isAttained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                       }`}>
                                         {isAttained ? 'Attained' : 'Not Attained'}
@@ -5248,13 +5202,13 @@ function EditorLoadingFallback() {
                   <div className="bg-white rounded-2xl shadow-md border border-gray-150 p-6 space-y-4">
                     <h3 className="text-lg font-extrabold text-gray-800 border-b pb-3">PO Attainment Status</h3>
                     <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-sm text-left">
+                      <table className="w-full border-collapse text-sm text-left table-fixed">
                         <thead>
                           <tr className="bg-gray-50 border-b">
-                            <th className="px-4 py-2 border-r font-bold text-gray-700">PO</th>
+                            <th className="w-16 px-4 py-2 border-r font-bold text-gray-700">PO</th>
                             <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">Above Pass Marks ({kpiInput.targetPassMarks}%)</th>
                             <th className="px-4 py-2 border-r font-bold text-gray-700 text-center">KPI Target ({kpiInput.kpiPO}%)</th>
-                            <th className="px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
+                            <th className="w-36 px-4 py-2 font-bold text-gray-700 text-center">Attainment Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y font-semibold text-gray-700">
@@ -5279,10 +5233,10 @@ function EditorLoadingFallback() {
                                 return (
                                   <tr key={po.po}>
                                     <td className="px-4 py-3 border-r font-bold text-purple-700" title={PO_NAMES[po.po]}>{po.po}</td>
-                                    <td className="px-4 py-3 border-r text-center">{passPct.toFixed(1)}%</td>
-                                    <td className="px-4 py-3 border-r text-center">{kpiPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center tabular-nums">{passPct.toFixed(1)}%</td>
+                                    <td className="px-4 py-3 border-r text-center tabular-nums">{kpiPct.toFixed(1)}%</td>
                                     <td className="px-4 py-3 text-center">
-                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm ${
+                                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm inline-block min-w-[96px] text-center ${
                                         isAttained ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                       }`}>
                                         {isAttained ? 'Attained' : 'Not Attained'}

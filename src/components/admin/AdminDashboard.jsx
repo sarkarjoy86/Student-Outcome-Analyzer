@@ -3095,7 +3095,7 @@ export default function AdminDashboard() {
                       value={batchForm.name}
                       onChange={(e) => setBatchForm({ name: e.target.value })}
                       className="w-full border border-gray-300 px-4 py-2 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none bg-gray-50/50 font-medium"
-                      placeholder="Batch 61"
+                      placeholder="16"
                       required
                     />
                   </div>
