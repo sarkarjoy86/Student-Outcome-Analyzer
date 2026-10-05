@@ -1880,26 +1880,48 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
   const clearedClass = isBordersCleared ? ' borders-cleared' : ''
   const clearedAttr = isBordersCleared ? ' data-obe-borders-cleared="true"' : ''
 
+  // Dynamic layout detection:
+  // If ANY question across all parts has multiple sub-questions (subCount > 1),
+  // we render the full 4-column layout (Q# | Sub-Q | Content | Marks).
+  // If NO question has sub-questions (all subCount <= 1), we render a clean 3-column layout
+  // (Q# | Content | Marks) with table-layout: fixed so content immediately follows Q# without an empty column!
+  const hasAnySubQ = parts.some(part =>
+    part.questions && part.questions.some(q => q && q.subCount > 1)
+  )
+  const totalCols = hasAnySubQ ? 4 : 3
+
   let html = `<table class="e-rte-table obe-paper-structure-table${clearedClass}" data-obe-paper-structure="true"${clearedAttr} style="border-collapse:collapse;width:100%;table-layout:fixed;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
-  html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-subq" style="width:24px;max-width:28px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
+  if (hasAnySubQ) {
+    html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-subq" style="width:24px;max-width:28px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
+  } else {
+    html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
+  }
 
   let globalQNum = 1
 
   parts.forEach((part) => {
-    // Part Header Row — merged across all 4 columns, bold centered (only if part.name is non-empty)
+    // Part Header Row — merged across all columns, bold centered (only if part.name is non-empty)
     if (part.name && part.name.trim()) {
       // Space before Part header
       const beforeCount = Math.max(0, parseInt(part.beforeSpace) || 0)
       for (let sp = 0; sp < beforeCount; sp++) {
-        html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        if (hasAnySubQ) {
+          html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        } else {
+          html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        }
       }
 
-      html += `<tr data-obe-row="part-header"><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
+      html += `<tr data-obe-row="part-header"><td colspan="${totalCols}" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
 
       // Space after Part header
       const afterCount = Math.max(0, parseInt(part.afterSpace) || 0)
       for (let sp = 0; sp < afterCount; sp++) {
-        html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        if (hasAnySubQ) {
+          html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        } else {
+          html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+        }
       }
     }
 
@@ -1912,18 +1934,22 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
         ? questionsList[globalQNum - 1].co
         : ''
 
-      // Helper to render spacing rows (always strictly 4-column layout for perfect grid alignment)
+      // Helper to render spacing rows (adapts to 3 or 4 columns based on whether sub-questions exist)
       const renderSpacingRows = (count = 1) => {
         let sHtml = ''
         for (let sp = 0; sp < count; sp++) {
-          sHtml += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+          if (hasAnySubQ) {
+            sHtml += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+          } else {
+            sHtml += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
+          }
         }
         return sHtml
       }
 
       // Helper to render prominent centered OR divider row (14pt, bold, Times New Roman)
       const renderOrRow = () => {
-        return `<tr data-obe-row="or-separator"><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:6px 8px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">OR</td></tr>`
+        return `<tr data-obe-row="or-separator"><td colspan="${totalCols}" style="${bd}text-align:center;font-weight:bold;padding:6px 8px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">OR</td></tr>`
       }
 
       // Helper to format question cell content with tags and clean formatting
@@ -2013,7 +2039,9 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
         html += `<tr>`
         html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}font-weight:bold;white-space:nowrap;">${qLabel}</td>`
-        html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+        if (hasAnySubQ) {
+          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+        }
         html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
         html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${markDisplay}</td>`
         html += `</tr>`
@@ -2044,7 +2072,9 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
           html += `<tr data-obe-row="sub-q-or" data-sub-idx="${s}">`
           html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
-          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}">&nbsp;</td>`
+          if (hasAnySubQ) {
+            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}">&nbsp;</td>`
+          }
           html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
           html += `</tr>`
@@ -2095,7 +2125,9 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
           html += `<tr data-obe-row="question-or" data-sub-idx="${s}">`
           html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
-          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}${effectiveSubCount > 1 ? 'font-weight:bold;' : ''}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+          if (hasAnySubQ) {
+            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}${effectiveSubCount > 1 ? 'font-weight:bold;' : ''}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+          }
           html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
           html += `</tr>`
@@ -8359,9 +8391,7 @@ Equation description: "${aiEquationPrompt}"`
       table.obe-paper-structure-table > tbody > tr > td.col-subq-cell,
       table.obe-paper-structure-table > tr > td.col-subq-cell,
       table[data-obe-paper-structure="true"] > tbody > tr > td.col-subq-cell,
-      table[data-obe-paper-structure="true"] > tr > td.col-subq-cell,
-      table[data-obe-paper-structure="true"] > tbody > tr:not([data-obe-row="or-separator"]) > td:nth-child(2):not([colspan]),
-      table[data-obe-paper-structure="true"] > tr:not([data-obe-row="or-separator"]) > td:nth-child(2):not([colspan]) {
+      table[data-obe-paper-structure="true"] > tr > td.col-subq-cell {
         width: 24px !important;
         max-width: 24px !important;
         padding: 4px 4px 4px 0px !important;
@@ -8371,9 +8401,7 @@ Equation description: "${aiEquationPrompt}"`
       table.obe-paper-structure-table > tbody > tr > td.col-content-cell,
       table.obe-paper-structure-table > tr > td.col-content-cell,
       table[data-obe-paper-structure="true"] > tbody > tr > td.col-content-cell,
-      table[data-obe-paper-structure="true"] > tr > td.col-content-cell,
-      table[data-obe-paper-structure="true"] > tbody > tr:not([data-obe-row="or-separator"]) > td:nth-child(3):not([colspan]),
-      table[data-obe-paper-structure="true"] > tr:not([data-obe-row="or-separator"]) > td:nth-child(3):not([colspan]) {
+      table[data-obe-paper-structure="true"] > tr > td.col-content-cell {
         padding: 4px 8px 4px 2px !important;
         word-break: break-word !important;
         overflow-wrap: break-word !important;
@@ -8382,9 +8410,7 @@ Equation description: "${aiEquationPrompt}"`
       table.obe-paper-structure-table > tbody > tr > td.col-marks-cell,
       table.obe-paper-structure-table > tr > td.col-marks-cell,
       table[data-obe-paper-structure="true"] > tbody > tr > td.col-marks-cell,
-      table[data-obe-paper-structure="true"] > tr > td.col-marks-cell,
-      table[data-obe-paper-structure="true"] > tbody > tr > td:last-child:not([colspan]),
-      table[data-obe-paper-structure="true"] > tr > td:last-child:not([colspan]) {
+      table[data-obe-paper-structure="true"] > tr > td.col-marks-cell {
         width: 50px !important;
         max-width: 50px !important;
         padding: 4px 0px 4px 4px !important;

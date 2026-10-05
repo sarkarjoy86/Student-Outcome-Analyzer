@@ -232,10 +232,11 @@ export function extractQuestionsFromEditorContent(htmlContent = '') {
       const cells = Array.from(tr.querySelectorAll(':scope > td, :scope > th'))
       if (cells.length < 3) return // spacing or empty row
 
+      const is3Col = cells.length === 3
       const qNumText = (cells[0]?.textContent || '').trim()
-      const subQText = (cells[1]?.textContent || '').trim()
-      const contentEl = cells[2]
-      const marksText = (cells[3]?.textContent || '').trim()
+      const subQText = is3Col ? '' : (cells[1]?.textContent || '').trim()
+      const contentEl = is3Col ? cells[1] : cells[2]
+      const marksText = is3Col ? (cells[2]?.textContent || '').trim() : (cells[3]?.textContent || '').trim()
 
       const contentText = (contentEl?.textContent || contentEl?.innerText || '').trim()
       if (!contentText && !qNumText && !subQText) return // empty row
