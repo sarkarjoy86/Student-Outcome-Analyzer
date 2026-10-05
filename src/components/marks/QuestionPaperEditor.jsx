@@ -1803,7 +1803,7 @@ function parseExamPaperStructureFromDom(tableEl) {
           parts.push(currentPart)
         }
         currentQ = {
-          subCount: is3Col ? 0 : 1,
+          subCount: (is3Col || !clean1) ? 0 : 1,
           marks: [markVal],
           blooms: [bloomVal],
           contents: [col2Html || ''],
@@ -1826,12 +1826,12 @@ function parseExamPaperStructureFromDom(tableEl) {
         currentPart.questions.push(currentQ)
       } else if (currentQ && isSubQLabel) {
         if (blankSpaceCount > 0 && Array.isArray(currentQ.subSpaceRows)) {
-          const prevSubIdx = (currentQ.subCount || 1) - 1
+          const prevSubIdx = Math.max(0, (currentQ.subCount || 1) - 1)
           currentQ.subSpaceRows[prevSubIdx] = blankSpaceCount
         }
         blankSpaceCount = 0
         pendingOrContext = null
-        currentQ.subCount = (currentQ.subCount || 0) + 1
+        currentQ.subCount = Math.max(1, currentQ.subCount || 0) + 1
         currentQ.marks.push(markVal)
         currentQ.blooms.push(bloomVal)
         currentQ.contents.push(col2Html || '')
@@ -1880,7 +1880,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
   const clearedClass = isBordersCleared ? ' borders-cleared' : ''
   const clearedAttr = isBordersCleared ? ' data-obe-borders-cleared="true"' : ''
 
-  let html = `<table class="e-rte-table obe-paper-structure-table${clearedClass}" data-obe-paper-structure="true"${clearedAttr} style="border-collapse:collapse;width:100%;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
+  let html = `<table class="e-rte-table obe-paper-structure-table${clearedClass}" data-obe-paper-structure="true"${clearedAttr} style="border-collapse:collapse;width:100%;table-layout:fixed;font-family:'Times New Roman',Times,serif;font-size:12pt;${bd}">`
   html += `<colgroup><col class="col-qnum" style="width:28px;max-width:32px;" /><col class="col-subq" style="width:24px;max-width:28px;" /><col class="col-content" style="width:auto;" /><col class="col-marks" style="width:50px;max-width:55px;" /></colgroup>`
 
   let globalQNum = 1
@@ -1891,7 +1891,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
       // Space before Part header
       const beforeCount = Math.max(0, parseInt(part.beforeSpace) || 0)
       for (let sp = 0; sp < beforeCount; sp++) {
-        html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+        html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
       }
 
       html += `<tr data-obe-row="part-header"><td colspan="4" style="${bd}text-align:center;font-weight:bold;padding:10px 6px;font-family:'Times New Roman',Times,serif;font-size:14pt;letter-spacing:2px;">${part.name.trim()}</td></tr>`
@@ -1899,7 +1899,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
       // Space after Part header
       const afterCount = Math.max(0, parseInt(part.afterSpace) || 0)
       for (let sp = 0; sp < afterCount; sp++) {
-        html += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
+        html += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
       }
     }
 
@@ -1912,15 +1912,11 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
         ? questionsList[globalQNum - 1].co
         : ''
 
-      // Helper to render spacing rows
+      // Helper to render spacing rows (always strictly 4-column layout for perfect grid alignment)
       const renderSpacingRows = (count = 1) => {
         let sHtml = ''
         for (let sp = 0; sp < count; sp++) {
-          if (isNoSubQ) {
-            sHtml += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td colspan="2" style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
-          } else {
-            sHtml += `<tr><td style="${bd}${qW}height:18px;">&nbsp;</td><td style="${bd}${sW}">&nbsp;</td><td style="${bd}">&nbsp;</td><td style="${bd}${mW}">&nbsp;</td></tr>`
-          }
+          sHtml += `<tr><td class="col-qnum-cell" style="${bd}${qW}height:18px;">&nbsp;</td><td class="col-subq-cell" style="${bd}${sW}">&nbsp;</td><td class="col-content-cell" style="${bd}">&nbsp;</td><td class="col-marks-cell" style="${bd}${mW}">&nbsp;</td></tr>`
         }
         return sHtml
       }
@@ -2009,7 +2005,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
       for (let s = 0; s < effectiveSubCount; s++) {
         const isFirst = s === 0
         const qLabel = isFirst ? `${globalQNum}.` : ''
-        const subLabel = isNoSubQ ? '' : (effectiveSubCount > 1 ? `${subLabels[s]}.` : '')
+        const subLabel = (!isNoSubQ && effectiveSubCount > 1) ? `${subLabels[s]}.` : ''
         const mark = q.marks && q.marks[s] !== undefined ? q.marks[s] : ''
         const markDisplay = mark !== '' ? `[${mark}]` : ''
         const subBloom = q.blooms && q.blooms[s] ? q.blooms[s] : ''
@@ -2017,12 +2013,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
         html += `<tr>`
         html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}font-weight:bold;white-space:nowrap;">${qLabel}</td>`
-        if (isNoSubQ) {
-          html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
-        } else {
-          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}white-space:nowrap;">${subLabel}</td>`
-          html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
-        }
+        html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+        html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${cellHtml}</td>`
         html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${markDisplay}</td>`
         html += `</tr>`
 
@@ -2052,12 +2044,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
           html += `<tr data-obe-row="sub-q-or" data-sub-idx="${s}">`
           html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
-          if (isNoSubQ) {
-            html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
-          } else {
-            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}">&nbsp;</td>`
-            html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
-          }
+          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}">&nbsp;</td>`
+          html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
           html += `</tr>`
         }
@@ -2094,7 +2082,7 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
         // Alternate set with numbering preserved (a., b., c.)
         for (let s = 0; s < effectiveSubCount; s++) {
-          const subLabel = isNoSubQ ? '' : (effectiveSubCount > 1 ? `${subLabels[s]}.` : '')
+          const subLabel = (!isNoSubQ && effectiveSubCount > 1) ? `${subLabels[s]}.` : ''
           const orMark = (q.questionOrMarks && q.questionOrMarks[s] !== undefined)
             ? q.questionOrMarks[s]
             : (q.marks && q.marks[s] !== undefined ? q.marks[s] : '')
@@ -2107,12 +2095,8 @@ function generateExamPaperStructureHtml(parts = [], questionsList = [], isBorder
 
           html += `<tr data-obe-row="question-or" data-sub-idx="${s}">`
           html += `<td class="col-qnum-cell" style="${bd}${qW}${vt}${qPad}">&nbsp;</td>`
-          if (isNoSubQ) {
-            html += `<td colspan="2" class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
-          } else {
-            html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}${effectiveSubCount > 1 ? 'font-weight:bold;' : ''}white-space:nowrap;">${subLabel}</td>`
-            html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
-          }
+          html += `<td class="col-subq-cell" style="${bd}${sW}${vt}${sPad}${effectiveSubCount > 1 ? 'font-weight:bold;' : ''}white-space:nowrap;">${subLabel || '&nbsp;'}</td>`
+          html += `<td class="col-content-cell" style="${bd}${vt}${cPad}min-height:50px;height:55px;">${orCellHtml}</td>`
           html += `<td class="col-marks-cell" style="${bd}${mW}${vt}${mPad}font-weight:bold;white-space:nowrap;">${orMarkDisplay}</td>`
           html += `</tr>`
 
@@ -11728,9 +11712,11 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
   }
 
   const handlePaperStructureAddQuestion = (partIdx) => {
+    const defaultSub = (isCT || isAssignmentOrReport) ? 0 : 2
+    const defaultMarks = (isCT || isAssignmentOrReport) ? [5] : [10, 10]
     setPaperStructureParts(prev => prev.map((part, i) => {
       if (i !== partIdx) return part
-      return { ...part, questions: [...part.questions, makePresetQuestion(2, [10, 10])] }
+      return { ...part, questions: [...part.questions, makePresetQuestion(defaultSub, defaultMarks)] }
     }))
   }
 
@@ -12149,13 +12135,12 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
             ]
           }
         ])
-      } else if (isCT || (!isTermFinal && !isMidTerm)) {
+      } else if (isCT || isAssignmentOrReport || (!isTermFinal && !isMidTerm)) {
         setPaperStructureParts([
           {
             name: '',
             questions: [
-              { subCount: 1, marks: [5], blooms: [''], subSpaceRows: [0], qSpaceRows: 1 },
-              { subCount: 1, marks: [5], blooms: [''], subSpaceRows: [0], qSpaceRows: 1 }
+              makePresetQuestion(0, [assessment.maxMarks || 10])
             ]
           }
         ])
@@ -17395,10 +17380,26 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                   </div>
                   <div>
                     <h3 className="font-extrabold text-base leading-tight">
-                      {isEditingExistingTable ? 'Edit Existing Paper Structure' : isMidTerm ? 'Mid Term Paper Structure Builder' : isCT ? 'Class Test (CT) Paper Structure Builder' : 'Term Final Paper Structure Builder'}
+                      {isEditingExistingTable 
+                        ? 'Edit Existing Paper Structure' 
+                        : isMidTerm 
+                          ? 'Mid Term Paper Structure Builder' 
+                          : isCT 
+                            ? 'Class Test (CT) Paper Structure Builder' 
+                            : isAssignmentOrReport 
+                              ? `${isAssignment ? 'Assignment' : isPresentation ? 'Presentation' : isProjectReport ? 'Project Report' : 'Assignment'} Paper Structure Builder` 
+                              : 'Term Final Paper Structure Builder'}
                     </h3>
                     <p className="text-xs text-emerald-200">
-                      {isEditingExistingTable ? 'Modify structure without losing typed question text' : isMidTerm ? 'Build professional Mid Term exam question paper table layout' : isCT ? 'Build professional Class Test exam paper layout (5M / 10M questions)' : 'Build professional Term Final exam question paper table layout with Parts'}
+                      {isEditingExistingTable 
+                        ? 'Modify structure without losing typed question text' 
+                        : isMidTerm 
+                          ? 'Build professional Mid Term exam question paper table layout' 
+                          : isCT 
+                            ? 'Build professional Class Test exam paper layout (5M / 10M questions)' 
+                            : isAssignmentOrReport
+                              ? `Build professional ${isAssignment ? 'Assignment' : isPresentation ? 'Presentation' : isProjectReport ? 'Project' : 'Assignment'} paper layout`
+                              : 'Build professional Term Final exam question paper table layout with Parts'}
                     </p>
                   </div>
                 </div>
@@ -17412,26 +17413,26 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                 {/* Quick Presets */}
                 <div>
                   <label className="block font-bold text-gray-700 text-xs mb-1.5">
-                    Quick Presets ({isMidTerm ? 'Mid Term' : isCT ? 'Class Test (CT)' : isAssignmentOrReport ? 'Assignment / Report' : 'Term Final'})
+                    Quick Presets ({isMidTerm ? 'Mid Term' : isCT ? 'Class Test (CT)' : isAssignmentOrReport ? (isAssignment ? 'Assignment' : isPresentation ? 'Presentation' : 'Assignment / Report') : 'Term Final'})
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {isCT ? (
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [makePresetQuestion(1, [5]), makePresetQuestion(1, [5])] }
+                            { name: '', questions: [makePresetQuestion(0, [assessment.maxMarks || 10])] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 1Q (No Sub) = {assessment.maxMarks || 10} Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [makePresetQuestion(0, [5]), makePresetQuestion(0, [5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
                           📝 2Q × 5 Marks = 10 Marks
-                        </button>
-                        <button
-                          onClick={() => setPaperStructureParts([
-                            { name: '', questions: [makePresetQuestion(1, [10])] }
-                          ])}
-                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
-                        >
-                          📋 1Q × 10 Marks = 10 Marks
                         </button>
                         <button
                           onClick={() => setPaperStructureParts([
@@ -17446,7 +17447,15 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                       <>
                         <button
                           onClick={() => setPaperStructureParts([
-                            { name: '', questions: [makePresetQuestion(1, [5]), makePresetQuestion(1, [5])] }
+                            { name: '', questions: [makePresetQuestion(0, [assessment.maxMarks || 10])] }
+                          ])}
+                          className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
+                        >
+                          📋 1Q (No Sub) = {assessment.maxMarks || 10} Marks
+                        </button>
+                        <button
+                          onClick={() => setPaperStructureParts([
+                            { name: '', questions: [makePresetQuestion(0, [5]), makePresetQuestion(0, [5])] }
                           ])}
                           className="px-2.5 py-1 bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold"
                         >
