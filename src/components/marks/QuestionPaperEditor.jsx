@@ -2918,7 +2918,17 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
       }
       const currentIsExamType = isExamType(curAssessmentName)
 
-      const availableArchives = papers.filter(p => {
+      // Mid Term and Final Exam have unified, common question papers across all sections in any semester.
+      // CTs and Assignments differ by section.
+      const getCommonExamType = (name = '', type = '') => {
+        const lower = `${name} ${type}`.toLowerCase().replace(/[-_]/g, ' ').trim()
+        if (lower.includes('mid term') || lower.includes('midterm') || /\bmid\b/.test(lower)) return 'mid'
+        if (lower.includes('final') || lower.includes('term final') || /\bfinal\b/.test(lower)) return 'final'
+        return null
+      }
+      const curCommonType = getCommonExamType(curAssessmentName, assessment?.type)
+
+      const rawArchives = papers.filter(p => {
         if (!p.content || p.content.trim().length < 10) return false
 
         const pOfferingId = String(p.courseOffering?._id || p.courseOffering || '')
@@ -2926,20 +2936,33 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
         const pAssessmentName = (p.assessment?.name || '').toLowerCase().trim()
         const pSection = (p.courseOffering?.section || '').toLowerCase().trim()
         const pSemesterId = String(p.courseOffering?.semester?._id || p.courseOffering?.semester || '')
+        const pSem = p.courseOffering?.semester
+        const pSemName = (pSem?.semesterName || '').toLowerCase().trim()
+        const pSemYear = String(pSem?.academicYear || p.courseOffering?.academicYear || '').toLowerCase().trim()
+
+        const isSameSemester = Boolean(
+          (pSemesterId && curSemesterId && pSemesterId === curSemesterId) ||
+          (pSemName && curSemName && pSemName === curSemName && pSemYear && curSemYear && pSemYear === curSemYear)
+        )
 
         // 1. Skip by ID match (exact same offering + assessment)
         if (pOfferingId === curOfferingId && pAssessmentId === curAssessmentId) return false
 
-        // 2. Skip by name + semester + section match (same assessment name in same semester & section = same paper)
-        if (pAssessmentName === curAssessmentName && pSemesterId === curSemesterId && pSection === curSection) return false
+        // 2. Skip by name + semester + section match (same assessment in same semester & section)
+        if (pAssessmentName === curAssessmentName && isSameSemester && pSection === curSection) return false
 
-        // 3. Skip if content is identical to what's currently in the editor (same paper saved previously)
+        // 3. Skip if current paper is Mid Term or Final and this archive is also Mid Term or Final of the SAME semester
+        // (because in the current semester, Mid/Final is a single shared exam across all sections)
+        const pCommonType = getCommonExamType(pAssessmentName, p.assessment?.type)
+        if (curCommonType && pCommonType === curCommonType && isSameSemester) return false
+
+        // 4. Skip if content is identical to what's currently in the editor (same paper saved previously)
         const div = document.createElement('div')
         div.innerHTML = p.content || ''
         const pText = (div.textContent || div.innerText || '').trim()
         if (pText === currentPlainText) return false
 
-        // 4. Type-based filtering
+        // 5. Type-based filtering
         if (currentIsExamType) {
           // Current is exam-type (CT, Mid, Final, Quiz) → only compare with other exam-type archives
           return isExamType(pAssessmentName)
@@ -2948,6 +2971,41 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
           return pAssessmentName === curAssessmentName
         }
       })
+
+      // Deduplicate Mid Term and Final per semester (since all sections share the exact same paper)
+      // CTs and Assignments remain section-specific
+      const commonExamMap = new Map()
+      const availableArchives = []
+
+      for (const p of rawArchives) {
+        const pCommonType = getCommonExamType(p.assessment?.name, p.assessment?.type)
+        if (pCommonType) {
+          const sem = p.courseOffering?.semester
+          const semId = String(sem?._id || sem || '')
+          const semName = (sem?.semesterName || '').toLowerCase().trim()
+          const semYear = String(sem?.academicYear || p.courseOffering?.academicYear || '').toLowerCase().trim()
+          const semKey = semId || `${semName}_${semYear}` || 'default_sem'
+          const groupKey = `${semKey}__${pCommonType}`
+
+          if (!commonExamMap.has(groupKey)) {
+            commonExamMap.set(groupKey, p)
+            availableArchives.push(p)
+          } else {
+            // If already present, prefer one matching the current section or with more content
+            const existing = commonExamMap.get(groupKey)
+            const pSec = (p.courseOffering?.section || '').toLowerCase().trim()
+            const existSec = (existing.courseOffering?.section || '').toLowerCase().trim()
+            if (existSec !== curSection && pSec === curSection) {
+              const idx = availableArchives.indexOf(existing)
+              if (idx !== -1) availableArchives[idx] = p
+              commonExamMap.set(groupKey, p)
+            }
+          }
+        } else {
+          // Non-common assessments (CT, Assignment, Quiz) stay section-specific
+          availableArchives.push(p)
+        }
+      }
 
       if (availableArchives.length === 0) {
         setSimilarityResults({
@@ -2991,13 +3049,17 @@ export default function QuestionPaperEditor({ assessment, offering, onBack }) {
            semYear && curSemYear && String(semYear).toLowerCase().trim() === curSemYear)
         )
 
+        const pCommonType = getCommonExamType(p.assessment?.name, p.assessment?.type)
+        const isCommonExam = Boolean(pCommonType)
+
         return {
           id: p._id,
-          assessmentName: p.assessment?.name || 'Assessment Paper',
+          assessmentName: p.assessment?.name || (pCommonType === 'mid' ? 'Mid Term' : pCommonType === 'final' ? 'Term Final' : 'Assessment Paper'),
           semester: fullSem || 'Previous Semester',
-          section: p.courseOffering?.section || 'A',
+          section: isCommonExam ? null : (p.courseOffering?.section || 'A'),
           batch: p.courseOffering?.batch?.name || '',
           isCurrentSemester,
+          isCommonExam,
           text: pStructuredText
         }
       })
@@ -14069,7 +14131,7 @@ Return ONLY comma-separated lines. The first line MUST be headers. The following
                                               archivedQ: match.archivedQ,
                                               explanation: match.explanation,
                                               similarity: match.similarity,
-                                              archiveInfo: `${item.assessmentName} — ${item.semester} (Sec ${item.section})`
+                                              archiveInfo: `${item.assessmentName} — ${item.semester}${item.section ? ` (Sec ${item.section})` : ''}`
                                             })
                                           }}
                                           className="text-[10px] font-extrabold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors flex items-center gap-1 cursor-pointer"
