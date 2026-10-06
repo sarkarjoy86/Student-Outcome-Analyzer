@@ -1314,10 +1314,13 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
 
   // Calculate dynamic responsive bounding box ensuring zero clipping across all 4 directions!
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  let minNodeX = Infinity, maxNodeX = -Infinity
 
   nodeList.forEach(node => {
     const p = positions[node]
     if (!p) return
+    minNodeX = Math.min(minNodeX, p.x)
+    maxNodeX = Math.max(maxNodeX, p.x)
     const isAccepting = acceptSet.has(node)
     const shape = resolveNodeShape(node, automataOptions.category, automataOptions.nodeShapes, syntaxShapes)
     const isRect = shape === 'rect'
@@ -1368,17 +1371,22 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
       const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
       if (geo) {
         if (geo.cx !== undefined) {
-          minX = Math.min(minX, geo.cx - 24)
-          maxX = Math.max(maxX, geo.cx + 24)
+          // Accurate quadratic bezier curve midpoint extent (control point cx/cy is outside the curve)
+          const curveMidX = 0.25 * p1.x + 0.5 * geo.cx + 0.25 * p2.x
+          const curveMidY = 0.25 * p1.y + 0.5 * geo.cy + 0.25 * p2.y
+          minX = Math.min(minX, p1.x, p2.x, curveMidX - 6)
+          maxX = Math.max(maxX, p1.x, p2.x, curveMidX + 6)
+          minY = Math.min(minY, p1.y, p2.y, curveMidY - 6)
+          maxY = Math.max(maxY, p1.y, p2.y, curveMidY + 6)
         }
-        if (geo.cy !== undefined) {
-          minY = Math.min(minY, geo.cy - 20)
-          maxY = Math.max(maxY, geo.cy + 20)
+        if (geo.midX !== undefined) {
+          minX = Math.min(minX, geo.midX - 12)
+          maxX = Math.max(maxX, geo.midX + 12)
         }
-        minX = Math.min(minX, geo.midX - 24)
-        maxX = Math.max(maxX, geo.midX + 24)
-        minY = Math.min(minY, geo.midY - 20)
-        maxY = Math.max(maxY, geo.midY + 20)
+        if (geo.midY !== undefined) {
+          minY = Math.min(minY, geo.midY - 12)
+          maxY = Math.max(maxY, geo.midY + 12)
+        }
       }
     }
 
@@ -1404,30 +1412,37 @@ function generateGraphSvg(edgeText = '', graphType = 'directed', theme = 'bw', c
         const geo = computeEdgeGeometry(edge, idx, edges, positions, nodeList, isAutomata, pairGroups)
         if (geo) { midX = geo.midX; midY = geo.midY }
       }
-      minX = Math.min(minX, midX - bW / 2 - 8)
-      maxX = Math.max(maxX, midX + bW / 2 + 8)
-      minY = Math.min(minY, midY - bH / 2 - 8)
-      maxY = Math.max(maxY, midY + bH / 2 + 8)
+      minX = Math.min(minX, midX - bW / 2 - 4)
+      maxX = Math.max(maxX, midX + bW / 2 + 4)
+      minY = Math.min(minY, midY - bH / 2 - 4)
+      maxY = Math.max(maxY, midY + bH / 2 + 4)
     }
   })
-
-  // Ensure caption width is accommodated if present
-  if (automataOptions.caption) {
-    const captionStr = automataOptions.caption.trim()
-    const captionW = captionStr.length * 8.5 + 30
-    const centerMidX = (minX + maxX) / 2
-    minX = Math.min(minX, centerMidX - captionW / 2)
-    maxX = Math.max(maxX, centerMidX + captionW / 2)
-  }
 
   if (!isFinite(minX)) {
     minX = 100; maxX = 500; minY = 50; maxY = 350;
   }
 
+  // Calculate visual horizontal center (favor node midpoint for balanced geometrical layout)
+  const nodeMidX = isFinite(minNodeX) && isFinite(maxNodeX) ? (minNodeX + maxNodeX) / 2 : (minX + maxX) / 2
+  const diagramCenterX = isFinite(nodeMidX) ? nodeMidX : ((minX + maxX) / 2)
+
+  // Ensure caption width is accommodated symmetrically around diagramCenterX
+  if (automataOptions.caption) {
+    const captionStr = automataOptions.caption.trim()
+    const captionW = captionStr.length * 8.5 + 30
+    minX = Math.min(minX, diagramCenterX - captionW / 2)
+    maxX = Math.max(maxX, diagramCenterX + captionW / 2)
+  }
+
+  // Symmetrically balance horizontal span around diagramCenterX so the graph diagram is 100% centered with equal margins on both sides!
+  const halfSpanX = Math.max(diagramCenterX - minX, maxX - diagramCenterX)
+  minX = diagramCenterX - halfSpanX
+  maxX = diagramCenterX + halfSpanX
+
   // Generous padding around the true bounding box so arrows, outlines, and borders NEVER clip.
-  // Note: Do NOT clamp cropX or cropY with Math.max(0, ...) — SVG viewBox supports negative coords!
-  const pad = 28
-  const captionPad = automataOptions.caption ? 38 : 0
+  const pad = 24
+  const captionPad = automataOptions.caption ? 36 : 0
   const cropX = Math.floor(minX - pad)
   const cropY = Math.floor(minY - pad)
   const cropW = Math.ceil((maxX + pad) - cropX)
@@ -8967,42 +8982,67 @@ Equation description: "${aiEquationPrompt}"`
   // Helper: Convert SVG Data URL or diagram payload to high-res PNG Data URL for Microsoft Word compatibility
   const convertSvgDataUrlToPng = (svgDataUrl, fallbackPayload = null) => {
     return new Promise(async (resolve) => {
-      const timer = setTimeout(() => resolve(null), 4000)
+      const timer = setTimeout(() => resolve(null), 5000)
       try {
         let svgMarkup = ''
+
+        // 1. If fallbackPayload has diagram data, reconstruct with exact custom positions, caption, nodeShapes
         if (fallbackPayload && fallbackPayload.edgesText) {
           try {
+            const nodePositions = fallbackPayload.customPositions || fallbackPayload.positions || {}
             svgMarkup = generateGraphSvg(
               fallbackPayload.edgesText,
-              fallbackPayload.type || 'directed',
-              'bw',
-              fallbackPayload.positions || {},
+              fallbackPayload.type || 'undirected',
+              fallbackPayload.theme || 'bw',
+              nodePositions,
               {
                 startState: fallbackPayload.startState || null,
-                acceptStates: fallbackPayload.acceptStates || []
+                acceptStates: fallbackPayload.acceptStates || [],
+                caption: fallbackPayload.caption || '',
+                category: fallbackPayload.category || '',
+                nodeShapes: fallbackPayload.nodeShapes || {}
               }
             )
-          } catch (e) {}
-        }
-
-        if (!svgMarkup && svgDataUrl) {
-          if (svgDataUrl.includes(';base64,')) {
-            const b64 = svgDataUrl.split(';base64,')[1]
-            try {
-              svgMarkup = decodeURIComponent(escape(atob(b64)))
-            } catch (e) {
-              try {
-                svgMarkup = atob(b64)
-              } catch (e2) {}
-            }
-          } else if (svgDataUrl.includes(',')) {
-            svgMarkup = decodeURIComponent(svgDataUrl.split(',')[1])
-          } else if (svgDataUrl.startsWith('<svg')) {
-            svgMarkup = svgDataUrl
+          } catch (e) {
+            console.warn('Graph SVG generation from payload error:', e)
           }
         }
 
-        if (!svgMarkup) {
+        // 2. If svgMarkup not generated from payload, decode from svgDataUrl
+        if (!svgMarkup && svgDataUrl && typeof svgDataUrl === 'string') {
+          const trimmed = svgDataUrl.trim()
+          if (trimmed.includes(';base64,')) {
+            const b64 = trimmed.split(';base64,')[1]
+            try {
+              const bin = atob(b64)
+              const bytes = new Uint8Array(bin.length)
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+              svgMarkup = new TextDecoder('utf-8').decode(bytes)
+            } catch (e) {
+              try {
+                svgMarkup = decodeURIComponent(escape(atob(b64)))
+              } catch (e2) {
+                try { svgMarkup = atob(b64) } catch (e3) {}
+              }
+            }
+          } else if (trimmed.startsWith('data:image/svg+xml')) {
+            const commaIdx = trimmed.indexOf(',')
+            if (commaIdx !== -1) {
+              const payload = trimmed.slice(commaIdx + 1)
+              try {
+                svgMarkup = decodeURIComponent(payload)
+              } catch (e) {
+                svgMarkup = payload
+              }
+            }
+          } else if (trimmed.includes('<svg') && trimmed.includes('</svg>')) {
+            const startIdx = trimmed.indexOf('<svg')
+            const endIdx = trimmed.lastIndexOf('</svg>') + 6
+            svgMarkup = trimmed.slice(startIdx, endIdx)
+          }
+        }
+
+        if (!svgMarkup || !svgMarkup.includes('<svg')) {
           clearTimeout(timer)
           resolve(null)
           return
@@ -9023,7 +9063,7 @@ Equation description: "${aiEquationPrompt}"`
           return `<svg width="${w}" height="${h}" ${cleanAttrs}>`
         })
 
-        // Attempt 1: html2canvas on off-screen DOM element (handles all CSS, markers, paths without canvas tainting)
+        // Use html2canvas on off-screen DOM element (renders DOM SVG directly with full styles and shapes)
         try {
           const container = document.createElement('div')
           container.style.cssText = `position:fixed;left:-9999px;top:-9999px;width:${w}px;height:${h}px;background:#ffffff;display:block;margin:0;padding:0;overflow:hidden;`
@@ -9055,42 +9095,8 @@ Equation description: "${aiEquationPrompt}"`
           console.warn('html2canvas SVG conversion error:', e)
         }
 
-        // Attempt 2: Image loader with Blob URL + Canvas
-        try {
-          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' })
-          const blobUrl = URL.createObjectURL(blob)
-          const img = new Image()
-          img.onload = () => {
-            clearTimeout(timer)
-            URL.revokeObjectURL(blobUrl)
-            try {
-              const canvas = document.createElement('canvas')
-              const scale = 2
-              canvas.width = w * scale
-              canvas.height = h * scale
-              const ctx = canvas.getContext('2d')
-              ctx.fillStyle = '#ffffff'
-              ctx.fillRect(0, 0, canvas.width, canvas.height)
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-              resolve({
-                dataUrl: canvas.toDataURL('image/png'),
-                width: w,
-                height: h
-              })
-            } catch (e2) {
-              resolve(null)
-            }
-          }
-          img.onerror = () => {
-            clearTimeout(timer)
-            URL.revokeObjectURL(blobUrl)
-            resolve(null)
-          }
-          img.src = blobUrl
-        } catch (e3) {
-          clearTimeout(timer)
-          resolve(null)
-        }
+        clearTimeout(timer)
+        resolve(null)
       } catch (err) {
         clearTimeout(timer)
         resolve(null)
@@ -9224,25 +9230,61 @@ Equation description: "${aiEquationPrompt}"`
             try { payload = JSON.parse(rawPayload) } catch (e2) {}
           }
         }
+        if (!payload && src && src.startsWith('data:image/svg+xml;base64,')) {
+          try {
+            const base64 = src.replace('data:image/svg+xml;base64,', '')
+            const decodedSvg = decodeURIComponent(escape(atob(base64)))
+            const match = decodedSvg.match(/data-diagram-payload="([^"]+)"/)
+            if (match && match[1]) {
+              payload = JSON.parse(decodeURIComponent(match[1]))
+            }
+          } catch (e) {}
+        }
 
         // Convert SVG diagram to high-res PNG for Microsoft Word compatibility
         const pngResult = await convertSvgDataUrlToPng(src, payload)
         if (pngResult && pngResult.dataUrl) {
           img.src = pngResult.dataUrl
-          const displayW = Math.min(Math.max(pngResult.width, 180), 480)
+          let explicitWidth = null
+          const styleWidth = img.style?.width || ''
+          const attrWidth = img.getAttribute('width') || ''
+          if (styleWidth.includes('px')) {
+            explicitWidth = parseInt(styleWidth, 10)
+          } else if (/^\d+$/.test(attrWidth)) {
+            explicitWidth = parseInt(attrWidth, 10)
+          }
+          const naturalW = pngResult.width
+          const displayW = explicitWidth && explicitWidth <= naturalW * 1.15
+            ? Math.min(Math.max(explicitWidth, 160), 480)
+            : Math.min(Math.max(naturalW, 180), 460)
           const displayH = Math.round(displayW * (pngResult.height / pngResult.width))
           img.setAttribute('width', String(displayW))
           img.setAttribute('height', String(displayH))
+          img.setAttribute('align', 'middle')
           img.style.width = `${displayW}px`
           img.style.height = 'auto'
           img.style.maxWidth = '100%'
           img.style.border = '0'
           img.style.transform = 'none'
+          img.style.display = 'inline-block'
+          img.style.margin = '0 auto'
+          img.style.verticalAlign = 'middle'
         }
         if (img.parentElement) {
           img.parentElement.setAttribute('align', 'center')
           img.parentElement.style.textAlign = 'center'
           img.parentElement.style.margin = '8px auto'
+          img.parentElement.style.lineHeight = 'normal'
+          img.parentElement.style.fontSize = '10pt'
+          img.parentElement.style.clear = 'both'
+        }
+        if (img.parentNode && img.parentNode.tagName !== 'CENTER') {
+          const centerTag = doc.createElement('center')
+          centerTag.setAttribute('align', 'center')
+          centerTag.style.textAlign = 'center'
+          centerTag.style.margin = '0 auto'
+          img.parentNode.insertBefore(centerTag, img)
+          centerTag.appendChild(img)
         }
       } else {
         // Other raster images (PNG, JPEG, etc.)
@@ -9263,10 +9305,24 @@ Equation description: "${aiEquationPrompt}"`
         img.style.transform = 'none'
 
         if (img.classList.contains('obe-graph-diagram') || img.hasAttribute('data-obe-diagram') || alt.includes('diagram')) {
+          img.setAttribute('align', 'middle')
+          img.style.display = 'inline-block'
+          img.style.margin = '0 auto'
+          img.style.verticalAlign = 'middle'
           if (img.parentElement) {
             img.parentElement.setAttribute('align', 'center')
             img.parentElement.style.textAlign = 'center'
             img.parentElement.style.margin = '6px auto'
+            img.parentElement.style.lineHeight = 'normal'
+            img.parentElement.style.fontSize = '10pt'
+          }
+          if (img.parentNode && img.parentNode.tagName !== 'CENTER') {
+            const centerTag = doc.createElement('center')
+            centerTag.setAttribute('align', 'center')
+            centerTag.style.textAlign = 'center'
+            centerTag.style.margin = '0 auto'
+            img.parentNode.insertBefore(centerTag, img)
+            centerTag.appendChild(img)
           }
         }
       }
@@ -9665,8 +9721,17 @@ Equation description: "${aiEquationPrompt}"`
             outline: none;
           }
           .obe-graph-diagram {
-            display: block;
-            margin: 6px auto;
+            display: inline-block !important;
+            margin: 6px auto !important;
+            text-align: center !important;
+            vertical-align: middle !important;
+          }
+          p.obe-diagram-wrapper,
+          div.obe-diagram-wrapper,
+          center {
+            text-align: center !important;
+            margin: 6px auto !important;
+            clear: both !important;
           }
 
           /* Raw LaTeX Equations */
