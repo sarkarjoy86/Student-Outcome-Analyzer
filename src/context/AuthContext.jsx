@@ -256,6 +256,20 @@ export function AuthProvider({ children }) {
         setStoredToken(data.token);
       }
 
+      // Guarantee fresh landing on the main "My Courses" page on login
+      localStorage.removeItem("selectedOffering");
+      localStorage.removeItem("teacherActiveTab");
+      localStorage.removeItem("adminActiveTab");
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("course");
+        url.searchParams.delete("batch");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
+      } catch (e) {}
+
       setUser(data.user || null);
       setUsers([]);
       setSuccess("Login successful.");
@@ -283,6 +297,22 @@ export function AuthProvider({ children }) {
       setUser(null);
       setUsers([]);
       apiService.clearCache();
+
+      // Clear course/offering persistence & restore URL to clean base dashboard
+      localStorage.removeItem("selectedOffering");
+      localStorage.removeItem("teacherActiveTab");
+      localStorage.removeItem("adminActiveTab");
+      sessionStorage.clear();
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("course");
+        url.searchParams.delete("batch");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
+      } catch (e) {}
+
       setSuccess("Logged out successfully.");
     } catch (error) {
       setError(parseErrorMessage(error, "Logout failed."));

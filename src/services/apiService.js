@@ -1059,8 +1059,9 @@ export const apiService = {
   },
 
   async getStudentAcademicSummary(studentId) {
-    const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/academic-summary`, {
+    const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/academic-summary?_t=${Date.now()}`, {
       method: "GET",
+      skipCache: true,
     });
     return handleResponse(res);
   },
@@ -1069,6 +1070,13 @@ export const apiService = {
     const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/migrate`, {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
+  async undoStudentMigration(studentId) {
+    const res = await fetchWithDefaults(`${API_BASE}/api/students/${studentId}/undo-migration`, {
+      method: "POST",
     });
     return handleResponse(res);
   },

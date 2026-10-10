@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense, useRef } from "react";
 import Sidebar from "./components/layout/Sidebar";
 import Dashboard from "./components/dashboard/Dashboard";
 import StudentManagement from "./components/students/StudentManagement";
@@ -44,23 +44,53 @@ function App() {
     }
   });
   const [currentStep, setCurrentStep] = useState("students");
+  const prevUserIdRef = useRef(user?.id || user?._id || null);
 
   useEffect(() => {
     if (authLoading) return;
+    const currentUserId = user?.id || user?._id || null;
+
     if (!user) {
+      prevUserIdRef.current = null;
+      setSelectedOffering(null);
       localStorage.removeItem("selectedOffering");
       localStorage.removeItem("teacherActiveTab");
       localStorage.removeItem("adminActiveTab");
-    } else if (selectedOffering) {
-      if (user.role === "admin") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("offering");
+        url.searchParams.delete("course");
+        url.searchParams.delete("batch");
+        url.searchParams.delete("tab");
+        url.searchParams.delete("paper");
+        window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
+      } catch (e) {}
+    } else {
+      // User just logged in or switched -> always reset to main "My Courses" page!
+      if (prevUserIdRef.current !== currentUserId) {
+        prevUserIdRef.current = currentUserId;
         setSelectedOffering(null);
         localStorage.removeItem("selectedOffering");
-      } else {
-        const userId = user.id || user._id;
-        const teacherId = selectedOffering.teacher?._id || selectedOffering.teacher;
-        if (teacherId && userId && teacherId !== userId) {
+        localStorage.removeItem("teacherActiveTab");
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("offering");
+          url.searchParams.delete("course");
+          url.searchParams.delete("batch");
+          url.searchParams.delete("tab");
+          url.searchParams.delete("paper");
+          window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
+        } catch (e) {}
+      } else if (selectedOffering) {
+        if (user.role === "admin") {
           setSelectedOffering(null);
           localStorage.removeItem("selectedOffering");
+        } else {
+          const teacherId = selectedOffering.teacher?._id || selectedOffering.teacher;
+          if (teacherId && currentUserId && teacherId !== currentUserId) {
+            setSelectedOffering(null);
+            localStorage.removeItem("selectedOffering");
+          }
         }
       }
     }

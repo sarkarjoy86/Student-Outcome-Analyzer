@@ -46,7 +46,8 @@ const studentSchema = new mongoose.Schema(
         toSectionName: { type: String, default: "" },
         reason: { type: String, default: "Semester Retake / Batch Migration" },
         migratedAt: { type: Date, default: Date.now },
-        migratedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        migratedBy: { type: mongoose.Schema.Types.Mixed, default: null },
+        migratedByName: { type: String, default: "" },
       },
     ],
     createdAt: {

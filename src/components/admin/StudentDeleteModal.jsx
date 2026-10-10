@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Trash2, Archive, AlertTriangle, ShieldCheck, X, Loader2, CheckCircle2 } from "lucide-react";
 import { apiService } from "../../services/apiService";
+import { useBodyScrollLock } from "../../hooks/useBodyScrollLock";
 
 export default function StudentDeleteModal({
   isOpen,
@@ -16,6 +17,8 @@ export default function StudentDeleteModal({
   const [academicSummary, setAcademicSummary] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  useBodyScrollLock(isOpen, !submitting ? onClose : null);
 
   useEffect(() => {
     if (!isOpen) return;

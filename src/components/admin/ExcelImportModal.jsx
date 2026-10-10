@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { apiService } from "../../services/apiService";
+import { useBodyScrollLock } from "../../hooks/useBodyScrollLock";
 import {
   X,
   Upload,
@@ -56,6 +57,8 @@ export default function ExcelImportModal({
   onSuccess,
   onClose,
 }) {
+  useBodyScrollLock(true, onClose);
+
   const [step, setStep] = useState("upload"); // upload | parsing | preview | saving | done
   const [dragActive, setDragActive] = useState(false);
   const [parseError, setParseError] = useState("");

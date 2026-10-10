@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import { requireAuth } from "../middleware/auth.js";
 import AcademicSession from "../models/AcademicSession.js";
 import Course from "../models/Course.js";
@@ -1416,7 +1417,11 @@ export async function permanentlyDeleteStudents(studentsListOrIds) {
 // Get student academic summary (marks, enrollments, migration history)
 router.get("/students/:studentId/academic-summary", requireAuth, async (req, res) => {
   try {
-    const student = await Student.findById(req.params.studentId);
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    let student = await Student.findById(req.params.studentId);
+    if (!student) {
+      student = await Student.findOne({ studentId: req.params.studentId });
+    }
     if (!student) {
       return res.status(404).json({ message: "Student not found." });
     }
@@ -1427,15 +1432,98 @@ router.get("/students/:studentId/academic-summary", requireAuth, async (req, res
         .populate({
           path: "courseOffering",
           populate: [
-            { path: "course", select: "courseCode courseTitle code title" },
-            { path: "batch", select: "name" },
-            { path: "semester", select: "name" },
+            { path: "course", select: "courseCode courseName courseTitle code title department level term creditHours" },
+            { path: "batch", select: "batchName name" },
+            { path: "semester", select: "semesterName academicYear name" },
           ],
         })
         .lean(),
     ]);
 
     const hasHistory = marksCount > 0 || enrollments.length > 0;
+
+    const offeringIds = enrollments
+      .map((e) => e.courseOffering?._id)
+      .filter(Boolean);
+
+    // Fetch marks and assessments across these offerings to evaluate pass/fail
+    const [allStudentMarks, allAssessments] = await Promise.all([
+      StudentMarks.find({ student: student._id, courseOffering: { $in: offeringIds } }).lean(),
+      Assessment.find({ courseOffering: { $in: offeringIds } }).lean(),
+    ]);
+
+    const assessmentsByOffering = {};
+    for (const a of allAssessments) {
+      const offId = a.courseOffering?.toString();
+      if (!offId) continue;
+      assessmentsByOffering[offId] = assessmentsByOffering[offId] || [];
+      assessmentsByOffering[offId].push(a);
+    }
+
+    const marksByOffering = {};
+    for (const sm of allStudentMarks) {
+      const offId = sm.courseOffering?.toString();
+      if (!offId) continue;
+      marksByOffering[offId] = marksByOffering[offId] || [];
+      marksByOffering[offId].push(sm);
+    }
+
+    let failedCoursesCount = 0;
+
+    const courseRecords = enrollments.map((e) => {
+      const offId = e.courseOffering?._id?.toString();
+      const offeringAssessments = (offId && assessmentsByOffering[offId]) || [];
+      const offeringMarks = (offId && marksByOffering[offId]) || [];
+      const targetPassMarks = e.courseOffering?.targetPassMarks || 40;
+
+      const totalMaxMarks = offeringAssessments.reduce((sum, a) => sum + (Number(a.maxMarks) || 0), 0);
+      const totalObtainedMarks = offeringMarks.reduce((sum, sm) => {
+        return sum + (Number(sm.totalMark) || 0);
+      }, 0);
+
+      const hasMarks = offeringMarks.length > 0 && totalMaxMarks > 0;
+      const percentage = hasMarks ? Math.round((totalObtainedMarks / totalMaxMarks) * 100) : null;
+
+      const isRetakeType = e.enrollmentType === "retake";
+      const isFailedByMarks = hasMarks && percentage !== null && percentage < targetPassMarks;
+      const isFailed = isRetakeType || isFailedByMarks;
+
+      if (isFailed) {
+        failedCoursesCount++;
+      }
+
+      let performanceStatus = "In Progress";
+      if (isRetakeType) {
+        performanceStatus = "Retake Course";
+      } else if (isFailedByMarks) {
+        performanceStatus = `Failed (${percentage}%)`;
+      } else if (hasMarks && percentage >= targetPassMarks) {
+        performanceStatus = `Passed (${percentage}%)`;
+      }
+
+      const rawBatch = e.courseOffering?.batch?.batchName || e.courseOffering?.batch?.name || "";
+      const rawSemester = e.courseOffering?.semester?.semesterName || e.courseOffering?.semester?.name || "";
+      const academicYear = e.courseOffering?.semester?.academicYear || e.courseOffering?.academicYear || "";
+
+      return {
+        id: e._id,
+        offeringId: offId,
+        type: e.enrollmentType || "regular",
+        courseCode: e.courseOffering?.course?.courseCode || e.courseOffering?.course?.code || "N/A",
+        courseTitle: e.courseOffering?.course?.courseName || e.courseOffering?.course?.courseTitle || e.courseOffering?.course?.title || "Course",
+        level: e.courseOffering?.course?.level || (e.courseOffering?.course?.courseCode ? e.courseOffering.course.courseCode.match(/\d/)?.[0] : "1") || "1",
+        term: e.courseOffering?.course?.term || "I",
+        creditHours: e.courseOffering?.course?.creditHours || 3,
+        batchName: rawBatch ? `Batch ${rawBatch}` : "N/A",
+        section: e.courseOffering?.section ? `Section ${e.courseOffering.section}` : "N/A",
+        semesterName: rawSemester ? `${rawSemester}${academicYear ? ` ${academicYear}` : ""}` : "N/A",
+        totalObtainedMarks: hasMarks ? Math.round(totalObtainedMarks * 10) / 10 : null,
+        totalMaxMarks: hasMarks ? totalMaxMarks : null,
+        percentage,
+        isFailed,
+        performanceStatus,
+      };
+    });
 
     res.status(200).json({
       studentId: student.studentId,
@@ -1444,15 +1532,8 @@ router.get("/students/:studentId/academic-summary", requireAuth, async (req, res
       hasHistory,
       marksCount,
       enrollmentsCount: enrollments.length,
-      enrollments: enrollments.map((e) => ({
-        id: e._id,
-        type: e.enrollmentType,
-        courseCode: e.courseOffering?.course?.courseCode || e.courseOffering?.course?.code || "N/A",
-        courseTitle: e.courseOffering?.course?.courseTitle || e.courseOffering?.course?.title || "N/A",
-        batchName: e.courseOffering?.batch?.name || "N/A",
-        section: e.courseOffering?.section || "N/A",
-        semesterName: e.courseOffering?.semester?.name || "N/A",
-      })),
+      failedCoursesCount,
+      enrollments: courseRecords,
       migrationHistory: student.migrationHistory || [],
     });
   } catch (error) {
@@ -1509,6 +1590,15 @@ router.post("/students/:studentId/migrate", requireAuth, async (req, res) => {
       }
     }
 
+    // Determine actor identity safely (supporting local admin string "admin-local" and ObjectId)
+    const isLocalAdmin = req.user?._id === "admin-local";
+    const isValidId = req.user?._id && mongoose.Types.ObjectId.isValid(req.user._id);
+    const migratedById = isValidId ? req.user._id : (isLocalAdmin ? "admin-local" : (req.user?._id || null));
+    const migratedByName =
+      req.user?.fullName ||
+      req.user?.name ||
+      (isLocalAdmin ? "System Admin" : "Administrator");
+
     // Record migration history while preserving all existing course outcomes & grades
     student.migrationHistory = student.migrationHistory || [];
     student.migrationHistory.push({
@@ -1522,7 +1612,8 @@ router.post("/students/:studentId/migrate", requireAuth, async (req, res) => {
       toSectionName: targetSection.sectionName,
       reason: reason || "Semester Retake / Batch Migration",
       migratedAt: new Date(),
-      migratedBy: req.user?._id || null,
+      migratedBy: migratedById,
+      migratedByName: migratedByName,
     });
 
     student.batchId = targetBatch._id;
@@ -1530,12 +1621,10 @@ router.post("/students/:studentId/migrate", requireAuth, async (req, res) => {
     student.status = "active";
     await student.save();
 
-    // Log Activity
+    // Log Migration Activity
     try {
-      await logActivity(
-        req.user?._id,
-        "STUDENT_MIGRATED",
-        `Migrated student ${student.studentName} (${student.studentId}) from Batch ${currentBatch?.name || 'N/A'} (Sec ${currentSection?.sectionName || 'N/A'}) to Batch ${targetBatch.name} (Sec ${targetSection.sectionName}). Reason: ${reason || 'N/A'}`
+      console.log(
+        `[Student Migration] Migrated student ${student.studentName} (${student.studentId}) from Batch ${currentBatch?.name || "N/A"} (Sec ${currentSection?.sectionName || "N/A"}) to Batch ${targetBatch.name} (Sec ${targetSection.sectionName}) by ${migratedByName}. Reason: ${reason || "N/A"}`
       );
     } catch (err) {
       console.warn("Could not log activity:", err.message);
@@ -1547,6 +1636,76 @@ router.post("/students/:studentId/migrate", requireAuth, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: "Error migrating student", error: error.message });
+  }
+});
+
+// Undo / Revert Last Student Batch Migration
+router.post("/students/:studentId/undo-migration", requireAuth, async (req, res) => {
+  try {
+    let student = await Student.findById(req.params.studentId);
+    if (!student) {
+      student = await Student.findOne({ studentId: req.params.studentId });
+    }
+    if (!student) {
+      return res.status(404).json({ message: "Student not found." });
+    }
+
+    if (!student.migrationHistory || student.migrationHistory.length === 0) {
+      return res.status(400).json({ message: "No migration history found for this student to undo." });
+    }
+
+    // Retrieve the last migration record
+    const lastMigration = student.migrationHistory[student.migrationHistory.length - 1];
+
+    if (!lastMigration.fromBatchId || !lastMigration.fromSectionId) {
+      return res.status(400).json({
+        message: "Cannot undo migration: Previous batch or section information is incomplete."
+      });
+    }
+
+    // Verify previous batch and section still exist
+    const [previousBatch, previousSection] = await Promise.all([
+      Batch.findById(lastMigration.fromBatchId),
+      Section.findOne({ _id: lastMigration.fromSectionId, batchId: lastMigration.fromBatchId }),
+    ]);
+
+    if (!previousBatch) {
+      return res.status(400).json({
+        message: `Cannot undo migration: Original Batch (${lastMigration.fromBatchName || "N/A"}) no longer exists.`
+      });
+    }
+    if (!previousSection) {
+      return res.status(400).json({
+        message: `Cannot undo migration: Original Section (${lastMigration.fromSectionName || "N/A"}) no longer exists in Batch ${previousBatch.name}.`
+      });
+    }
+
+    const currentBatchName = lastMigration.toBatchName || "Current Batch";
+    const currentSectionName = lastMigration.toSectionName || "Current Section";
+    const originalBatchName = previousBatch.name;
+    const originalSectionName = previousSection.sectionName;
+
+    // Pop the most recent migration entry
+    student.migrationHistory.pop();
+
+    // Restore batch and section
+    student.batchId = previousBatch._id;
+    student.sectionId = previousSection._id;
+    student.status = "active";
+    await student.save();
+
+    console.log(
+      `[Student Migration Undo] Student ${student.studentName} (${student.studentId}) restored from Batch ${currentBatchName} (${currentSectionName}) back to Batch ${originalBatchName} (${originalSectionName}) by ${req.user?.fullName || req.user?.name || req.user?._id}.`
+    );
+
+    res.status(200).json({
+      message: `Migration successfully undone! Student ${student.studentName} (${student.studentId}) has been restored back to Batch ${originalBatchName} (Section ${originalSectionName}). All academic history remains fully intact.`,
+      student,
+      restoredBatch: { _id: previousBatch._id, name: previousBatch.name },
+      restoredSection: { _id: previousSection._id, name: previousSection.sectionName },
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error undoing student migration", error: error.message });
   }
 });
 

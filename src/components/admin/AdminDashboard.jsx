@@ -6,6 +6,7 @@ import AdminProfileAvatar from "../layout/AdminProfileAvatar";
 import ExcelImportModal from "./ExcelImportModal";
 import StudentBatchMigrationModal from "./StudentBatchMigrationModal";
 import StudentDeleteModal from "./StudentDeleteModal";
+import UndoMigrationModal from "./UndoMigrationModal";
 import {
   Calendar,
   UserPlus,
@@ -28,6 +29,7 @@ import {
   Check,
   GitMerge,
   GitFork,
+  RotateCcw,
   Sparkles,
   CheckSquare,
   ChevronUp,
@@ -161,6 +163,7 @@ export default function AdminDashboard() {
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [migratingStudent, setMigratingStudent] = useState(null);
+  const [undoingStudent, setUndoingStudent] = useState(null);
   const [deletingStudent, setDeletingStudent] = useState(null);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
@@ -3466,7 +3469,18 @@ export default function AdminDashboard() {
                                         required
                                       />
                                     ) : (
-                                      <span className="text-gray-700">{student.name}</span>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-gray-700">{student.name}</span>
+                                        {student.migrationHistory && student.migrationHistory.length > 0 && (
+                                          <span
+                                            className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md"
+                                            title={`Migrated from Batch ${student.migrationHistory[student.migrationHistory.length - 1].fromBatchName} (${student.migrationHistory[student.migrationHistory.length - 1].fromSectionName})`}
+                                          >
+                                            <GitFork size={10} />
+                                            Migrated
+                                          </span>
+                                        )}
+                                      </div>
                                     )}
                                   </td>
                                   <td className="py-3 px-4 text-center">
@@ -5073,6 +5087,19 @@ export default function AdminDashboard() {
             await fetchSectionStudents(selectedBatchId, selectedSectionId);
           }}
           onClose={() => setMigratingStudent(null)}
+        />
+      )}
+
+      {/* ── Student Batch Migration Undo Modal ── */}
+      {undoingStudent && (
+        <UndoMigrationModal
+          isOpen={!!undoingStudent}
+          student={undoingStudent}
+          onSuccess={async (msg) => {
+            alert(msg);
+            await fetchSectionStudents(selectedBatchId, selectedSectionId);
+          }}
+          onClose={() => setUndoingStudent(null)}
         />
       )}
 
