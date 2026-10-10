@@ -229,6 +229,19 @@ export function AuthProvider({ children }) {
         setAdminSession(true);
         apiService.clearCache();
         setStoredToken(null);
+        localStorage.removeItem("selectedOffering");
+        localStorage.removeItem("teacherActiveTab");
+        localStorage.removeItem("adminActiveTab");
+        sessionStorage.setItem("obe_just_logged_in", "true");
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("offering");
+          url.searchParams.delete("course");
+          url.searchParams.delete("batch");
+          url.searchParams.delete("tab");
+          url.searchParams.delete("paper");
+          window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
+        } catch (e) {}
         setUser({
           id: "admin-local",
           fullName: "System Admin",
@@ -260,6 +273,7 @@ export function AuthProvider({ children }) {
       localStorage.removeItem("selectedOffering");
       localStorage.removeItem("teacherActiveTab");
       localStorage.removeItem("adminActiveTab");
+      sessionStorage.setItem("obe_just_logged_in", "true");
       try {
         const url = new URL(window.location.href);
         url.searchParams.delete("offering");

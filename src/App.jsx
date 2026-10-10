@@ -38,13 +38,51 @@ function App() {
   const [selectedOffering, setSelectedOffering] = useState(() => {
     try {
       const saved = localStorage.getItem("selectedOffering");
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      const params = new URLSearchParams(window.location.search);
+      const urlOfferingId = params.get("offering");
+      if (urlOfferingId && parsed && (parsed._id === urlOfferingId || parsed.id === urlOfferingId)) {
+        return parsed;
+      }
+      return parsed;
     } catch {
       return null;
     }
   });
   const [currentStep, setCurrentStep] = useState("students");
-  const prevUserIdRef = useRef(user?.id || user?._id || null);
+  const prevUserIdRef = useRef(null);
+
+  // Restore offering by URL param on reload if not already in state
+  useEffect(() => {
+    if (authLoading || !user || user.role === "admin") return;
+    const params = new URLSearchParams(window.location.search);
+    const urlOfferingId = params.get("offering");
+
+    if (urlOfferingId && (!selectedOffering || (selectedOffering._id !== urlOfferingId && selectedOffering.id !== urlOfferingId))) {
+      try {
+        const saved = localStorage.getItem("selectedOffering");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed._id === urlOfferingId || parsed.id === urlOfferingId) {
+            setSelectedOffering(parsed);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // If missing from localStorage, fetch directly from API to resume current course on reload
+      apiService.getCourseOffering(urlOfferingId)
+        .then((res) => {
+          if (res?.offering) {
+            setSelectedOffering(res.offering);
+            localStorage.setItem("selectedOffering", JSON.stringify(res.offering));
+          }
+        })
+        .catch((err) => {
+          console.warn("Failed to restore course offering from URL parameter:", err);
+        });
+    }
+  }, [authLoading, user, selectedOffering]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -66,8 +104,13 @@ function App() {
         window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
       } catch (e) {}
     } else {
-      // User just logged in or switched -> always reset to main "My Courses" page!
-      if (prevUserIdRef.current !== currentUserId) {
+      // 1. Check if user JUST submitted the login form
+      const isJustLoggedIn = sessionStorage.getItem("obe_just_logged_in") === "true";
+      // 2. Check if user switched to a DIFFERENT account
+      const isUserSwitched = prevUserIdRef.current && prevUserIdRef.current !== currentUserId;
+
+      if (isJustLoggedIn || isUserSwitched) {
+        sessionStorage.removeItem("obe_just_logged_in");
         prevUserIdRef.current = currentUserId;
         setSelectedOffering(null);
         localStorage.removeItem("selectedOffering");
@@ -81,15 +124,19 @@ function App() {
           url.searchParams.delete("paper");
           window.history.replaceState({ view: "dashboard" }, "", url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""));
         } catch (e) {}
-      } else if (selectedOffering) {
-        if (user.role === "admin") {
-          setSelectedOffering(null);
-          localStorage.removeItem("selectedOffering");
-        } else {
-          const teacherId = selectedOffering.teacher?._id || selectedOffering.teacher;
-          if (teacherId && currentUserId && teacherId !== currentUserId) {
+      } else {
+        // Normal page reload or navigation: preserve current page/course!
+        prevUserIdRef.current = currentUserId;
+        if (selectedOffering) {
+          if (user.role === "admin") {
             setSelectedOffering(null);
             localStorage.removeItem("selectedOffering");
+          } else {
+            const teacherId = selectedOffering.teacher?._id || selectedOffering.teacher;
+            if (teacherId && currentUserId && teacherId !== currentUserId) {
+              setSelectedOffering(null);
+              localStorage.removeItem("selectedOffering");
+            }
           }
         }
       }
@@ -106,20 +153,21 @@ function App() {
     }
   }, [user]);
 
-  // Clean up stale offering URL parameters if no offering is actively selected
+  // Clean up stale offering URL parameters ONLY if user is on dashboard with no offering selected
   useEffect(() => {
+    if (authLoading || !user) return;
     if (!selectedOffering) {
       const params = new URLSearchParams(window.location.search);
-      if (params.has("offering") || params.has("tab") || params.has("paper")) {
+      // Only clean up tab/paper if there's no offering in URL either
+      if (!params.has("offering") && (params.has("tab") || params.has("paper"))) {
         const url = new URL(window.location.href);
-        url.searchParams.delete("offering");
         url.searchParams.delete("tab");
         url.searchParams.delete("paper");
         const view = params.has("course") ? "course_group" : "dashboard";
         window.history.replaceState({ view }, "", url.toString());
       }
     }
-  }, [selectedOffering]);
+  }, [selectedOffering, authLoading, user]);
 
   // Offering active state loaded from database
   const [students, setStudents] = useState([]);
@@ -137,30 +185,40 @@ function App() {
   useEffect(() => {
     if (authLoading || !user || user.role === "admin") return;
 
-    // Ensure baseline history state is populated
+    // Ensure baseline history state is populated without clobbering URL parameters on reload
     if (!window.history.state) {
       const params = new URLSearchParams(window.location.search);
       const urlOfferingId = params.get("offering");
+      const urlCourse = params.get("course");
+      const urlBatch = params.get("batch");
       const urlTab = params.get("tab") || "overview";
       const urlPaper = params.get("paper");
 
-      if (urlOfferingId && selectedOffering && (selectedOffering._id === urlOfferingId || selectedOffering.id === urlOfferingId)) {
+      if (urlOfferingId) {
         window.history.replaceState(
           {
             view: urlPaper ? "paper" : "offering",
             offeringId: urlOfferingId,
             tab: urlTab,
+            courseCode: urlCourse,
+            batchName: urlBatch,
             paperId: urlPaper || null,
           },
           "",
           window.location.href
         );
+      } else if (urlCourse) {
+        window.history.replaceState(
+          {
+            view: "course_group",
+            courseCode: urlCourse,
+            batchName: urlBatch,
+          },
+          "",
+          window.location.href
+        );
       } else {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("offering");
-        url.searchParams.delete("tab");
-        url.searchParams.delete("paper");
-        window.history.replaceState({ view: "dashboard" }, "", url.toString());
+        window.history.replaceState({ view: "dashboard" }, "", window.location.href);
       }
     }
 
